@@ -408,11 +408,11 @@ const versionName = (v) => v ? v.tag || v.sha.slice(0, 7) : "";
 
 async function loadSettings(req) {
   try { S.settings = await (req ? api(req.path, req.body) : api("/api/settings")); }
-  catch (e) { S.settings = { ...(S.settings || {}), error: e.message }; }
-  if (S.tab !== "settings") return;
-  renderView();
-  // A failed install.sh leaves the server running; asking again is how the page learns it stopped.
+  // While an update runs, no answer is the expected one: install.sh has quit the server to replace the app.
+  catch (e) { if (!S.settings?.started) S.settings = { ...(S.settings || {}), error: e.message }; }
+  // A failed install.sh leaves the server running; asking again, on any tab, is how the page learns it stopped.
   if (S.settings.started && !S.settingsPoll) S.settingsPoll = setTimeout(() => { S.settingsPoll = null; loadSettings(); }, 3000);
+  if (S.tab === "settings") renderView();
 }
 
 function updatesCard(u) {

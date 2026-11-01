@@ -925,9 +925,27 @@ class UiSmokeTest(UiFixture):
                          f"Installing {SHA_C[:7]}. brewdash quits and opens again when it is done.")
         self.assertEqual([a[1] for a in self.spawned], [SHA_C])
         self.assertTrue(self.page.is_disabled('[data-update="now"]'))
+        self.page.click('nav button[data-tab="history"]')
+        with self.page.expect_request("**/api/settings*", timeout=10000):
+            pass
         self.installers[-1].returncode = 1
-        self.page.wait_for_selector('#content .warn:has-text("install.sh stopped")', timeout=10000)
+        self.page.wait_for_function("S.settings && !S.settings.started", timeout=10000)
+        self.page.click('nav button[data-tab="settings"]')
+        self.page.wait_for_selector('#content .warn:has-text("install.sh stopped")')
         self.assertTrue(self.page.is_enabled('[data-update="now"]'))
+
+    def test_a_server_gone_during_an_update_is_not_shown_as_a_failure(self):
+        self.page.click('nav button[data-tab="settings"]')
+        self.page.wait_for_selector('[data-update="check"]')
+        self.page.evaluate("S.settings = { ...S.settings, started: 1, error: null, latest: { sha: 'c'.repeat(40), tag: 'v9.0.0' } }")
+        self.page.route("**/api/settings*", lambda route: route.abort())
+        try:
+            self.page.evaluate("loadSettings()")
+        finally:
+            self.page.unroute("**/api/settings*")
+        self.assertEqual(self.page.locator("#content .warn").count(), 0)
+        self.assertIn("Installing v9.0.0", self.page.inner_text("#content .info"))
+        self.page.evaluate("clearTimeout(S.settingsPoll); S.settingsPoll = null; S.settings = undefined")
 
     def test_a_copy_without_a_version_says_how_to_get_updates(self):
         self.page.click('nav button[data-tab="settings"]')

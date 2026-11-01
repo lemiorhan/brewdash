@@ -1370,8 +1370,9 @@ class Updater:
     def check(self):
         if not self.installed:
             raise ValueError("this copy has no version.json from install.sh, so it does not update itself")
+        channel = self.settings()["channel"]
         try:
-            target = self.latest(self.settings()["channel"])
+            target = self.latest(channel)
             if not target or target["sha"] == self.installed["sha"]:
                 rel = "same" if target else None
             else:
@@ -1381,7 +1382,10 @@ class Updater:
         except Exception as e:  # urllib raises OSError, but http.client's IncompleteRead and HTTPException are not
             target, rel, err = None, None, str(e) or type(e).__name__
         with self.lock:
-            self.status.update(latest=target, relation=rel, checked=time.time(), error=err)
+            # The channel changed while GitHub answered: this result is for the old one, and installing it would
+            # take the app to a channel the user just left.
+            if self.settings()["channel"] == channel:
+                self.status.update(latest=target, relation=rel, checked=time.time(), error=err)
         return self.view()
 
     def update(self, manual):

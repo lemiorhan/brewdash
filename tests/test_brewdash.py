@@ -1451,6 +1451,18 @@ class UpdaterTest(unittest.TestCase):
         self.assertIsNotNone(u.update(manual=True)["started"])
         self.assertEqual(len(self.spawned), 2)
 
+    def test_a_check_that_outlives_a_channel_switch_keeps_nothing_and_installs_nothing(self):
+        github = FakeGitHub(compare={SHA_B: "ahead"})
+
+        def fetch(url, accept="application/vnd.github+json"):
+            if url.endswith("/tags?per_page=100"):
+                u.save({"channel": "beta"})
+            return github(url, accept)
+        u = self.updater(fetch)
+        view = u.update(manual=False)
+        self.assertEqual((view["channel"], view["latest"], view["relation"], view["checked"], self.spawned),
+                         ("beta", None, None, None, []))
+
     def test_an_update_already_under_way_is_not_started_again(self):
         u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}))
         with u.installing:

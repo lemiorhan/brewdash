@@ -107,7 +107,7 @@ commit other than the latest release.
 The app updates itself from GitHub. Pick how on the **Settings** page:
 
 - **Stable** installs releases: the highest `vX.Y.Z` tag. This is the default.
-- **Beta** installs every commit on `master` as soon as it is pushed.
+- **Beta** installs the latest commit on `master`, whatever its tag.
 - **Update by itself** (on by default) checks GitHub a minute after the app
   starts and every hour after that, and installs a newer version when there
   is one. The intervals are `UPDATE_FIRST_CHECK_SECONDS` and
@@ -119,8 +119,9 @@ The app updates itself from GitHub. Pick how on the **Settings** page:
 
 An update runs the `install.sh` inside the app with the version to install. It
 builds the new app, quits brewdash, replaces the app and opens it again. If it
-fails, the Settings page shows the last line of its log,
-`~/.local/state/brewdash/update.log`. Your choices are kept in
+fails before it quits brewdash, the Settings page shows the last line of its log,
+`~/.local/state/brewdash/update.log`; a failure after it has quit brewdash is
+only in that log. Your choices are kept in
 `~/.local/state/brewdash/settings.json`.
 
 An app installed before brewdash could update itself, an app built from
