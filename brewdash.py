@@ -428,6 +428,142 @@ def authorize(path, headers, token, port):
     return True
 
 
+# ---------- secure-it findings ----------
+
+SECURITY_SCHEMA = 1
+SEVERITIES = ("critical", "high", "medium", "low")
+ALERT_TEXT = ("check_id", "kind", "title", "detail", "remediation", "fix_command")
+IDENTITY_KEYS = ("exe", "plist", "tap")
+FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
+BREW_FORMULA_PATH = re.compile(r"^(?:/opt/homebrew|/usr/local)/(?:Cellar|opt)/([^/]+)/")
+BREW_SERVICE_PLIST = re.compile(r"^homebrew\.mxcl\.(.+)\.plist$")
+
+
+def load_security(path):
+    """secure-it's report.json. The user can write that file, so every field is
+    checked for type and the page escapes all of it; nothing in it becomes a job."""
+    out = {"path": str(path), "found": False, "error": None, "generated_at": None, "alerts": []}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return out
+    except (OSError, ValueError, RecursionError) as e:
+        return {**out, "found": True, "error": f"could not read it: {e}"}
+    out["found"] = True
+    if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != SECURITY_SCHEMA:
+        schema = data.get("schema") if isinstance(data, dict) else None
+        return {**out, "error": f"it has schema {schema!r}; this brewdash reads schema {SECURITY_SCHEMA}"}
+    out["generated_at"] = data["generated_at"] if isinstance(data.get("generated_at"), str) else None
+    for a in data.get("alerts") if isinstance(data.get("alerts"), list) else []:
+        if not isinstance(a, dict) or a.get("severity") not in SEVERITIES or not isinstance(a.get("title"), str):
+            continue
+        rec = {k: a[k] if isinstance(a.get(k), str) else None for k in ALERT_TEXT}
+        rec["severity"] = a["severity"]
+        ident = a["identity"] if isinstance(a.get("identity"), dict) else {}
+        # Only what link_alert reads: a nested value that loads can still be too deep to encode.
+        rec["identity"] = {k: ident[k] for k in IDENTITY_KEYS if isinstance(ident.get(k), str)}
+        rec["fingerprint"] = a["fingerprint"] if FINGERPRINT_RE.fullmatch(str(a.get("fingerprint"))) else None
+        out["alerts"].append(rec)
+    out["alerts"].sort(key=lambda a: SEVERITIES.index(a["severity"]))
+    return out
+
+
+def link_alert(alert, pkg_ids, tap_names):
+    """Where in brewdash an alert can be acted on: a package, a tap, the Shell tab, or nowhere."""
+    ident, check = alert["identity"], alert["check_id"]
+    if check == "exposure.listening":
+        m = BREW_FORMULA_PATH.match(str(ident.get("exe") or ""))
+        if m and "f:" + m.group(1) in pkg_ids:
+            return {"type": "package", "id": "f:" + m.group(1)}
+    if check == "persistence.launchd":
+        m = BREW_SERVICE_PLIST.match(Path(str(ident.get("plist") or "")).name)
+        if m and "f:" + m.group(1) in pkg_ids:
+            return {"type": "package", "id": "f:" + m.group(1)}
+    if check == "packages.brew_taps" and isinstance(ident.get("tap"), str) and ident["tap"] in tap_names:
+        return {"type": "tap", "name": ident["tap"]}
+    if check in ("persistence.path_shadow", "persistence.shell_rc"):
+        return {"type": "tab", "tab": "shell"}
+    return None
+
+
+# ---------- listening ports, app signatures ----------
+
+LSOF = "/usr/sbin/lsof"
+CODESIGN = "/usr/bin/codesign"
+LOOPBACK = ("127.", "::1", "localhost")
+
+
+def run_command(argv, timeout=60):
+    p = subprocess.run(argv, capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, timeout=timeout)
+    return p.returncode, p.stdout, p.stderr
+
+
+def parse_listening(text):
+    """`lsof -F pn` into {pid: [{"address", "port", "exposed"}]}. Connected UDP
+    sockets (`a->b`) are not listeners and are left out."""
+    out, pid = {}, None
+    for line in text.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line.startswith("n") and pid is not None and "->" not in line:
+            address, _, port = line[1:].rpartition(":")
+            if not port.isdigit():
+                continue
+            host = address.strip("[]")
+            entry = {"address": address, "port": int(port), "exposed": not host.startswith(LOOPBACK)}
+            if entry not in out.setdefault(pid, []):
+                out[pid].append(entry)
+    return out
+
+
+def service_ports(model, sysrun):
+    """Listening sockets of every running brew service, by package id. lsof
+    exits 1 when one of the pids is not visible to this user, so its exit code is not read."""
+    by_pid = {p["service"]["pid"]: p["id"] for p in model["packages"]
+              if p.get("service") and isinstance(p["service"].get("pid"), int)}
+    if not by_pid:
+        return {}
+    pids = ",".join(str(pid) for pid in sorted(by_pid))
+    out = {}
+    for proto, sel in (("TCP", ["-iTCP", "-sTCP:LISTEN"]), ("UDP", ["-iUDP"])):
+        _, stdout, _ = sysrun([LSOF, "-nP", "-a", "-p", pids, *sel, "-F", "pn"])
+        for pid, entries in parse_listening(stdout).items():
+            if pid in by_pid:
+                out.setdefault(by_pid[pid], []).extend({"proto": proto, **e} for e in entries)
+    return out
+
+
+def classify_signature(stderr):
+    """`codesign -dv --verbose=2` output: who signed the app as it says. codesign
+    does not verify the signature here, and notarization is not checked."""
+    if "code object is not signed at all" in stderr:
+        return {"kind": "unsigned", "signer": None}
+    authorities = [l[len("Authority="):] for l in stderr.splitlines() if l.startswith("Authority=")]
+    first = authorities[0] if authorities else ""
+    if first in ("Software Signing", "macOS Software Signing"):
+        return {"kind": "apple", "signer": first}
+    if first in ("Apple Mac OS Application Signing", "Apple iPhone OS Application Signing"):
+        return {"kind": "appstore", "signer": first}
+    if first.startswith("Developer ID Application:"):
+        return {"kind": "developer_id", "signer": first[len("Developer ID Application:"):].strip()}
+    if first:
+        return {"kind": "other", "signer": first}
+    if "Signature=adhoc" in stderr:
+        return {"kind": "adhoc", "signer": None}
+    return {"kind": "unknown", "signer": None}
+
+
+def sign_apps(apps, sysrun):
+    def one(app):
+        try:
+            _, _, err = sysrun([CODESIGN, "-dv", "--verbose=2", app["path"]])
+            app["signature"] = classify_signature(err)
+        except Exception as e:  # one app must not hide the others
+            app["signature"] = {"kind": "unknown", "signer": None, "error": str(e)}
+    with ThreadPoolExecutor(8) as ex:
+        list(ex.map(one, apps))
+
+
 # ---------- brew access ----------
 
 class Brew:
@@ -458,12 +594,16 @@ class Brew:
 
 
 class Store:
-    def __init__(self, brew, home=None, app_dirs=None):
+    def __init__(self, brew, home=None, app_dirs=None, sysrun=run_command):
         self.brew = brew
         self.home = home or str(Path.home())
         self.app_dirs = APP_DIRS if app_dirs is None else app_dirs
+        self.sysrun = sysrun
+        self.security_path = Path(self.home) / "secure-it" / "report.json"
+        self._security = (None, None)
         self.apps = None
         self.shell = None
+        self.ports = None
         self.lock = threading.Lock()
         self.model = None
         self.error = None
@@ -537,10 +677,15 @@ class Store:
             doctor = ex.submit(self.brew.run, "doctor")
             cleanup = ex.submit(self.brew.run, "cleanup", "-n")
             env_f = ex.submit(self._environment, model)
+            ports_f = ex.submit(service_ports, model, self.sysrun)
         try:
             sizes = sizes_f.result()
         except Exception:
             sizes = {}
+        try:
+            ports = {"error": None, "by_id": ports_f.result()}
+        except Exception as e:
+            ports = {"error": f"brewdash could not run lsof: {e}", "by_id": {}}
         try:
             rc, out, err = doctor.result()
             _, c_out, c_err = cleanup.result()
@@ -563,6 +708,7 @@ class Store:
             self.health = health
             self.apps = apps
             self.shell = shell
+            self.ports = ports
             self.version += 1
 
     def _names(self):
@@ -581,6 +727,7 @@ class Store:
             match_casks(apps, names["cask"], self.brew)
         except Exception as e:  # one unknown token fails the whole brew info call
             error = f"could not match apps to casks: {e}"
+        sign_apps(apps, self.sysrun)
         installed = {k: {p["name"] for p in model["packages"] if p["kind"] == k} for k in ("formula", "cask")}
         shell = scan_shell(self.home, self.prefix, names, installed)
         return {"error": error, "apps": apps, "names_known": bool(names["cask"])}, shell
@@ -597,11 +744,33 @@ class Store:
         p = subprocess.run(["du", "-sk", *id_by_path], capture_output=True, text=True)
         return parse_du(p.stdout, id_by_path)
 
+    def security(self):
+        """secure-it's report, read again only when the file changed. Links are
+        made on every call, against the packages and taps brewdash has now."""
+        try:
+            st = self.security_path.stat()
+            key = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None
+        with self.lock:
+            cached_key, report = self._security
+        fresh = load_security(self.security_path) if report is None or key != cached_key else None
+        with self.lock:
+            cached_key, report = self._security
+            if fresh and (report is None or key != cached_key):
+                report = {**fresh, "seq": report["seq"] + 1 if report else 1}
+                self._security = (key, report)
+            pkg_ids = {p["id"] for p in self.model["packages"]} if self.model else set()
+            taps = {t["name"] for t in self.model["taps"]} if self.model else set()
+        return {**report, "alerts": [{**a, "link": link_alert(a, pkg_ids, taps)} for a in report["alerts"]]}
+
     def snapshot(self):
+        security = self.security()
         with self.lock:
             return {"version": self.version, "refreshing": self.refreshing, "error": self.error,
                     "last_update": self.last_update, "model": self.model,
-                    "sizes": self.sizes, "health": self.health, "apps": self.apps, "shell": self.shell}
+                    "sizes": self.sizes, "health": self.health, "apps": self.apps, "shell": self.shell,
+                    "ports": self.ports, "security": security}
 
 
 class Runner:
@@ -797,6 +966,8 @@ TOOLS = (  # (name, pattern in an rc line, brew formula that provides it)
     ("zoxide", r"zoxide init", "zoxide"), ("conda", r"conda(\.sh| shell)", None), ("mise", r"mise activate", "mise"),
     ("Homebrew", r"brew shellenv", None),
 )
+SYSTEM_BIN_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+SYNCED_ROOTS = ("Library/CloudStorage", "Library/Mobile Documents", "Dropbox")
 PATH_TOOLS = (  # (piece of a PATH entry, kind, brew name that provides the same tool)
     (".jbang/bin", "formula", "jbang"), (".docker/bin", "cask", "docker-desktop"),
     ("/usr/local/share/dotnet", "cask", "dotnet-sdk"), (".codeium/windsurf/bin", "cask", "windsurf"),
@@ -824,10 +995,14 @@ def scan_shell(home, prefix, names, installed):
         for n, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
             m = PATH_LINE.match(line)
             if m:
+                ahead = True
                 for raw in next(g for g in m.groups() if g is not None).split(":"):
+                    if raw in ("$PATH", "${PATH}") or raw.rstrip("/") in SYSTEM_BIN_DIRS:
+                        ahead = False
                     if not raw or raw in ("$PATH", "${PATH}"):
                         continue
-                    entries.append(_path_entry(rc, n, raw, _expand(raw, home), prefix, names, installed, seen))
+                    entries.append(_path_entry(rc, n, raw, _expand(raw, home), prefix, names, installed, seen,
+                                               ahead and _synced(_expand(raw, home), home)))
                 continue
             if not re.match(r"^\s*(\[.*\]\s*&&\s*)?(source|\\?\.|eval)\s", line):
                 continue
@@ -839,7 +1014,18 @@ def scan_shell(home, prefix, names, installed):
     return {"path": entries, "tools": tools}
 
 
-def _path_entry(rc, n, raw, d, prefix, names, installed, seen):
+def _synced(d, home):
+    """Whether d sits under a cloud-synced folder. Compared without case: APFS is case-insensitive and
+    rc files do write /users/... for /Users/..."""
+    real = os.path.realpath(d).lower()
+    for root in SYNCED_ROOTS:
+        base = os.path.join(home, root)
+        if any(real == c or real.startswith(c + "/") for c in {base.lower(), os.path.realpath(base).lower()}):
+            return True
+    return False
+
+
+def _path_entry(rc, n, raw, d, prefix, names, installed, seen, synced=False):
     entry = {"file": rc, "line": n, "raw": raw, "dir": d, "exists": None, "issue": None, "suggestion": None,
              "alternative": None}
     if "$" in d:
@@ -851,6 +1037,11 @@ def _path_entry(rc, n, raw, d, prefix, names, installed, seen):
     old_prefix = re.match(r"/usr/local/(opt|Cellar)/", d) if prefix != "/usr/local" else None
     if key in seen:
         entry.update(issue="duplicate", suggestion=f"{rc} already adds this directory earlier; this line can go.")
+    elif synced:
+        entry.update(issue="synced", suggestion="A cloud-synced folder comes before the system folders, so a file "
+                                                "that arrives by sync, from another device or a shared folder, runs "
+                                                "in place of the system command of the same name. Move it after "
+                                                "$PATH, or copy the tools to a local folder.")
     elif pinned:
         fixed = f"{prefix}/opt/{pinned.group(1)}{pinned.group(2) or ''}"
         gone = "" if entry["exists"] else " That version is no longer installed."
@@ -1034,9 +1225,10 @@ def make_handler(store, runner, brew, token, port_ref, export):
     return Handler
 
 
-def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True, home=None, app_dirs=None):
+def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True, home=None, app_dirs=None,
+          sysrun=run_command):
     brew = brew or Brew()
-    store = Store(brew, home, app_dirs)
+    store = Store(brew, home, app_dirs, sysrun)
     runner = Runner(brew, store, state_dir)
     token = secrets.token_urlsafe(24)
     port_ref = [port]

@@ -25,7 +25,7 @@ const S = {
 
 const TABS = [
   ["overview", "Overview"], ["requested", "Installed by you"], ["deps", "Dependencies"], ["casks", "Casks"],
-  ["services", "Services"], ["taps", "Taps"], ["health", "Health"],
+  ["services", "Services"], ["taps", "Taps"], ["health", "Health"], ["security", "Security"],
   ["apps", "Apps"], ["shell", "Shell"], ["history", "History"], ["install", "Install"], ["export", "Export"],
 ];
 
@@ -61,7 +61,7 @@ async function loadState() {
     const snap = await api("/api/state");
     $("#error").classList.toggle("hidden", !snap.error);
     $("#error").textContent = snap.error ? "brew error: " + snap.error : "";
-    if (snap.version === S.version && snap.refreshing === S.snap?.refreshing) return;
+    if (snap.version === S.version && snap.refreshing === S.snap?.refreshing && snap.security?.seq === S.snap?.security?.seq) return;
     S.snap = snap; S.version = snap.version;
     S.pkgs = new Map((snap.model?.packages || []).map((p) => [p.id, p]));
     for (const id of [...S.selected]) if (!itemFor(id)) S.selected.delete(id);
@@ -81,6 +81,9 @@ async function loadList(change) {
 }
 
 const appsList = () => S.snap?.apps?.apps || [];
+const alerts = () => S.snap?.security?.alerts || [];
+const portsOf = (id) => S.snap?.ports?.by_id?.[id] || [];
+const alertsFor = (type, key) => alerts().filter((a) => a.link?.type === type && (a.link.id === key || a.link.name === key));
 
 // The Brewfile line an id stands for, or null when it cannot go into a Brewfile.
 function itemFor(id) {
@@ -111,6 +114,7 @@ function counts() {
     taps: S.snap?.model?.taps?.length || 0,
     apps: S.snap?.apps ? appsList().length : null,
     shell: S.snap?.shell ? (S.snap.shell.path || []).filter((e) => e.issue).length : null,
+    security: S.snap?.security?.found ? alerts().length : null,
     export: S.list.items.length,
     outdated: all.filter((p) => p.outdated).length,
     upgradable: all.filter(upgradable).length,
@@ -176,7 +180,7 @@ function renderPackages() {
   const list = visiblePackages();
   const allSel = list.length && list.every((p) => S.selected.has(p.id));
   const arrow = (k) => S.sort.key === k ? (S.sort.dir > 0 ? " ▲" : " ▼") : "";
-  $("#view").innerHTML = `
+  $("#content").innerHTML = `
     <div class="toolbar">
       <input type="search" id="q" placeholder="Search name or description" value="${esc(S.q)}">
       ${FLAGS.map(([k]) => `<label><input type="checkbox" data-flag="${k}" ${S.flags.has(k) ? "checked" : ""}> ${k}</label>`).join("")}
@@ -234,6 +238,7 @@ function renderDetail() {
     </div>
     <p>${esc(p.desc || "No description.")}</p>
     ${renderAdvice(p)}
+    ${alertsFor("package", p.id).length ? `<div class="detail-section"><h4>secure-it findings</h4>${alertsFor("package", p.id).map(alertCard).join("")}</div>` : ""}
     <div class="kv">
       ${p.kind === "cask" && p.display_name !== p.name ? `<div>App</div><div>${esc(p.display_name)}</div>` : ""}
       <div>Version</div><div class="mono">${esc(p.version)}${p.outdated ? ` → <b style="color:var(--accent)">${esc(p.latest)}</b>` : ""}</div>
@@ -251,7 +256,8 @@ function renderDetail() {
     </div>
     ${svc ? `<div class="detail-section"><h4>Service</h4>
       <div class="kv"><div>Status</div><div>${esc(svc.status)}${svc.pid ? ` (pid ${svc.pid})` : ""}</div>
-      ${svc.log_path ? `<div>Log</div><div class="mono">${esc(svc.log_path)}</div>` : ""}</div>
+      ${svc.log_path ? `<div>Log</div><div class="mono">${esc(svc.log_path)}</div>` : ""}
+      ${portsOf(p.id).length ? `<div>Listening</div><div>${listening(p.id)}</div>` : ""}</div>
       <div class="btnrow" style="margin-top:6px">${["start", "stop", "restart"].map((op) => `<button class="small" data-svc="${op}" data-id="${esc(p.id)}">${op}</button>`).join("")}</div></div>` : ""}
     <div class="detail-section"><h4>Depends on (${p.deps.length})</h4><div class="chips">${p.deps.map(chip).join("") || `<span class="muted">nothing</span>`}</div></div>
     <div class="detail-section"><h4>Used by (${p.dependents.length})</h4><div class="chips">${p.dependents.map(chip).join("") || `<span class="muted">nothing installed depends on this directly</span>`}</div>
@@ -259,7 +265,7 @@ function renderDetail() {
     <div class="detail-section"><h4>Graph
       <select id="depth" style="margin-left:8px"><option value="1" ${S.depth === 1 ? "selected" : ""}>1 hop</option><option value="2" ${S.depth === 2 ? "selected" : ""}>2 hops</option><option value="3" ${S.depth === 3 ? "selected" : ""}>3 hops</option></select></h4>
       <div id="graph"></div>
-      <div class="legend"><span><i class="dot" style="background:var(--accent)"></i>selected</span><span><i class="dot" style="background:var(--blue)"></i>installed by you</span><span><i class="dot" style="background:#59606d"></i>dependency</span><span><i class="dot" style="background:var(--purple)"></i>cask</span><span>arrow = depends on</span></div>
+      <div class="legend"><span><i class="dot" style="background:var(--accent)"></i>selected</span><span><i class="dot" style="background:var(--blue)"></i>installed by you</span><span><i class="dot" style="background:var(--graph-dep)"></i>dependency</span><span><i class="dot" style="background:var(--purple)"></i>cask</span><span>arrow = depends on</span></div>
     </div>
     ${p.caveats ? `<div class="detail-section"><h4>Caveats</h4><pre>${esc(p.caveats)}</pre></div>` : ""}`;
   renderGraph(p);
@@ -284,20 +290,21 @@ function neighbourhood(rootId, depth) {
 function renderGraph(p) {
   if (cy) cy.destroy();
   const { nodes, edges } = neighbourhood(p.id, S.depth);
+  const v = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const color = (id) => {
     const n = S.pkgs.get(id);
-    return id === p.id ? "#f2b33d" : n.kind === "cask" ? "#b18cf2" : n.requested ? "#5aa9e6" : "#59606d";
+    return id === p.id ? v("--accent") : n.kind === "cask" ? v("--purple") : n.requested ? v("--blue") : v("--graph-dep");
   };
   cy = cytoscape({
     container: $("#graph"),
     elements: [
-      ...nodes.map((id) => ({ data: { id, label: S.pkgs.get(id).name, color: color(id), border: S.pkgs.get(id).outdated ? "#f2b33d" : "#0b0d10" } })),
+      ...nodes.map((id) => ({ data: { id, label: S.pkgs.get(id).name, color: color(id), border: S.pkgs.get(id).outdated ? v("--accent") : v("--code-bg") } })),
       ...edges.map(([s, t]) => ({ data: { id: s + ">" + t, source: s, target: t } })),
     ],
     style: [
-      { selector: "node", style: { "background-color": "data(color)", label: "data(label)", color: "#cfd3da", "font-size": 9, "text-valign": "bottom", "text-margin-y": 3, width: 14, height: 14, "border-width": 2, "border-color": "data(border)" } },
+      { selector: "node", style: { "background-color": "data(color)", label: "data(label)", color: v("--text"), "font-size": 9, "text-valign": "bottom", "text-margin-y": 3, width: 14, height: 14, "border-width": 2, "border-color": "data(border)" } },
       { selector: `node[id = "${p.id}"]`, style: { width: 22, height: 22, "font-size": 11, "font-weight": 700 } },
-      { selector: "edge", style: { width: 1, "line-color": "#3a414d", "target-arrow-color": "#3a414d", "target-arrow-shape": "triangle", "curve-style": "bezier", "arrow-scale": 0.7 } },
+      { selector: "edge", style: { width: 1, "line-color": v("--graph-edge"), "target-arrow-color": v("--graph-edge"), "target-arrow-shape": "triangle", "curve-style": "bezier", "arrow-scale": 0.7 } },
     ],
     maxZoom: 1.6,
     layout: nodes.length > 40 ? { name: "cose", animate: false, nodeRepulsion: 9000 } : { name: "breadthfirst", directed: true, spacingFactor: 1.1, padding: 10 },
@@ -316,12 +323,19 @@ function select(id) {
 
 // ---------- other tabs ----------
 
+function listening(id) {
+  return portsOf(id).map((e) => `<span class="port mono ${e.exposed ? "exposed" : ""}" title="${e.exposed ? "reachable from other machines on the network" : "this Mac only"}">${esc(e.proto)} ${esc(e.address)}:${esc(e.port)}</span>`).join(" ");
+}
+
 function renderServices() {
   const list = [...S.pkgs.values()].filter((p) => p.service);
-  $("#view").innerHTML = `<table><thead><tr><th>Service</th><th>Status</th><th>PID</th><th>User</th><th>Plist</th><th></th></tr></thead><tbody>
+  const ports = S.snap?.ports;
+  $("#content").innerHTML = `${ports?.error ? `<div class="warn">${esc(ports.error)}</div>` : ""}
+    <table><thead><tr><th>Service</th><th>Status</th><th>PID</th><th>User</th><th>Listening</th><th>Plist</th><th></th></tr></thead><tbody>
     ${list.map((p) => `<tr><td class="name"><span class="chip" data-goto="${esc(p.id)}">${esc(p.name)}</span></td>
       <td class="st ${p.service.running ? "st-succeeded" : "st-queued"}">${esc(p.service.status)}</td>
       <td class="mono">${esc(p.service.pid || "")}</td><td>${esc(p.service.user || "")}</td>
+      <td>${!ports ? `<span class="muted">…</span>` : listening(p.id) || `<span class="muted">${p.service.pid ? "none" : ""}</span>`}</td>
       <td class="mono muted">${esc(p.service.file || "")}</td>
       <td class="btnrow">${["start", "stop", "restart"].map((op) => `<button class="small" data-svc="${op}" data-id="${esc(p.id)}">${op}</button>`).join("")}</td></tr>`).join("")}
   </tbody></table>${list.length ? "" : `<p class="muted">No installed formula defines a service.</p>`}`;
@@ -329,8 +343,8 @@ function renderServices() {
 
 function renderTaps() {
   const taps = S.snap?.model?.taps || [];
-  $("#view").innerHTML = `<table><thead><tr><th></th><th>Tap</th><th>Remote</th><th class="num">Installed from it</th><th class="num">Formulae</th><th class="num">Casks</th><th>Last commit</th></tr></thead><tbody>
-    ${taps.map((t) => `<tr><td><input type="checkbox" data-sel="t:${esc(t.name)}" ${S.selected.has("t:" + t.name) ? "checked" : ""}></td><td class="name">${esc(t.name)}${t.official ? `<span class="badge b-service">official</span>` : ""}${t.private ? `<span class="badge b-pinned">private</span>` : ""}</td>
+  $("#content").innerHTML = `<table><thead><tr><th></th><th>Tap</th><th>Remote</th><th class="num">Installed from it</th><th class="num">Formulae</th><th class="num">Casks</th><th>Last commit</th></tr></thead><tbody>
+    ${taps.map((t) => `<tr><td><input type="checkbox" data-sel="t:${esc(t.name)}" ${S.selected.has("t:" + t.name) ? "checked" : ""}></td><td class="name">${esc(t.name)}${t.official ? `<span class="badge b-service">official</span>` : ""}${t.private ? `<span class="badge b-pinned">private</span>` : ""}${alertsFor("tap", t.name).length ? `<span class="badge b-missing" data-tab="security" title="secure-it flags this tap">secure-it</span>` : ""}</td>
       <td class="mono muted">${esc(t.remote || "")}</td><td class="num">${t.installed.length || `<span class="muted">0 · unused?</span>`}</td>
       <td class="num">${t.formula_count}</td><td class="num">${t.cask_count}</td><td class="muted">${esc(t.last_commit || "")}</td></tr>
       ${t.installed.length && !t.official ? `<tr><td></td><td></td><td colspan="5"><div class="chips">${t.installed.map(chip).join("")}</div></td></tr>` : ""}`).join("")}
@@ -343,7 +357,7 @@ function renderHealth() {
   const missing = all.filter((p) => p.missing_deps.length);
   const deprecated = all.filter((p) => p.deprecated || p.disabled);
   const orphans = all.filter((p) => p.orphan);
-  $("#view").innerHTML = `<div class="cards">
+  $("#content").innerHTML = `<div class="cards">
     <div class="card"><h3>Missing dependencies (${missing.length})</h3>
       ${missing.map((p) => `<div style="margin-bottom:4px">${chip(p.id)} needs <span class="mono" style="color:var(--red)">${esc(p.missing_deps.join(", "))}</span></div>`).join("") || `<span class="muted">None.</span>`}</div>
     <div class="card"><h3>Orphans: autoremove candidates (${orphans.length})</h3>
@@ -362,10 +376,21 @@ function renderHealth() {
 }
 
 const SOURCE = { brew: "brew", appstore: "App Store", manual: "installed by hand" };
+const SIGNATURE = {
+  apple: ["Apple", "ok"], appstore: ["App Store", "ok"], developer_id: ["Developer ID", "ok"], other: ["other signer", "muted"],
+  adhoc: ["ad-hoc, no signer", "bad"], unsigned: ["not signed", "bad"], unknown: ["unknown", "muted"],
+};
+const weakSignature = (a) => ["adhoc", "unsigned"].includes(a.signature?.kind);
+
+function signature(sig) {
+  if (!sig) return `<span class="muted">…</span>`;
+  const [label, cls] = SIGNATURE[sig.kind] || SIGNATURE.unknown;
+  return `<span class="${cls === "bad" ? "sig-bad" : cls}" title="${esc(sig.error || sig.signer || "")}">${label}</span>${sig.kind === "developer_id" || sig.kind === "other" ? ` <span class="muted">${esc(sig.signer)}</span>` : ""}`;
+}
 
 function renderApps() {
   const env = S.snap?.apps;
-  if (!env) { $("#view").innerHTML = `<p class="loading">Scanning /Applications…</p>`; return; }
+  if (!env) { $("#content").innerHTML = `<p class="loading">Scanning /Applications…</p>`; return; }
   const apps = appsList();
   const adoptable = apps.filter((a) => a.source === "manual" && a.cask);
   const row = (a) => {
@@ -376,26 +401,25 @@ function renderApps() {
       : a.cask ? `<button class="small accent" data-adopt="${esc(a.id)}">Bring into brew</button> <span class="mono">${esc(a.cask)}</span>${newer}${a.auto_updates ? ` <span class="muted">updates itself</span>` : ""}`
       : `<button class="small" data-findcask="${esc(a.name)}">Search cask</button>`;
     return `<tr><td>${sel ? `<input type="checkbox" data-sel="${esc(sel)}" ${S.selected.has(sel) ? "checked" : ""}>` : ""}</td>
-      <td class="name">${esc(a.name)}</td><td class="mono">${esc(a.version || "")}</td><td>${SOURCE[a.source]}</td><td>${action}</td></tr>`;
+      <td class="name">${esc(a.name)}</td><td class="mono">${esc(a.version || "")}</td><td>${SOURCE[a.source]}</td><td>${signature(a.signature)}</td><td>${action}</td></tr>`;
   };
-  $("#view").innerHTML = `
+  $("#content").innerHTML = `
     ${env.error ? `<div class="warn">${esc(env.error)}</div>` : ""}
     ${env.names_known ? "" : `<div class="info">Homebrew's cask list is not cached yet, so apps are not matched to casks. Run brew update, then Refresh.</div>`}
     <p class="muted">${adoptable.length} app(s) installed by hand have a matching brew cask. <b>Bring into brew</b> runs <span class="mono">brew install --cask --adopt</span>: brew takes over the existing app, and from then on upgrades and uninstalls it like any cask. A match is shown only when the cask installs exactly that .app.</p>
-    <table><thead><tr><th></th><th>App</th><th>Version</th><th>Installed by</th><th>Brew</th></tr></thead>
+    <p class="muted">Signature shows who signed each app, as the app itself declares it. brewdash does not verify the signature and does not check notarization; <span class="mono">spctl --assess</span> does both, but takes minutes for a full Applications folder.</p>
+    <table><thead><tr><th></th><th>App</th><th>Version</th><th>Installed by</th><th>Signature</th><th>Brew</th></tr></thead>
     <tbody>${apps.map(row).join("")}</tbody></table>`;
 }
 
-const ISSUE = { duplicate: "duplicate", missing: "missing", pinned: "pinned version", old_prefix: "old prefix" };
+const ISSUE = { duplicate: "duplicate", missing: "missing", pinned: "pinned version", old_prefix: "old prefix", synced: "synced folder first" };
 
 function renderShell() {
   const sh = S.snap?.shell;
-  if (!sh) { $("#view").innerHTML = `<p class="loading">Reading shell setup…</p>`; return; }
+  if (!sh) { $("#content").innerHTML = `<p class="loading">Reading shell setup…</p>`; return; }
   const install = (alt) => alt ? `<button class="small" data-install="${esc(alt.kind)}:${esc(alt.name)}">Install ${esc(alt.name)} with brew</button>` : "";
-  $("#view").innerHTML = `
-    ${sh.error ? `<div class="warn">${esc(sh.error)}</div>` : ""}
-    <p class="muted">PATH lines and initialised tools from the shell startup files in your home directory. brewdash never edits these files; copy a suggestion into the file yourself.</p>
-    <h3>PATH</h3>
+  $("#content").innerHTML = `
+    ${sh.error ? `<div class="warn">${esc(sh.error)}</div>` : ""}    <h3>PATH</h3>
     <table><thead><tr><th>File</th><th>Entry</th><th>Status</th><th>What to do</th></tr></thead><tbody>
     ${sh.path.map((e) => `<tr><td class="mono">${esc(e.file)}:${e.line}</td><td class="mono">${esc(e.raw)}</td>
       <td>${e.issue ? `<span class="badge b-missing">${ISSUE[e.issue]}</span>` : e.exists === null ? `<span class="muted">not checked</span>` : `<span class="ok">ok</span>`}</td>
@@ -407,6 +431,47 @@ function renderShell() {
       <td>${t.via_brew ? `<span class="ok">yes</span>` : "no"}</td>
       <td>${t.alternative ? `${install({ kind: "formula", name: t.alternative })} <span class="muted">then point ${esc(t.file)}:${t.line} at brew's copy</span>` : ""}</td></tr>`).join("")}
     </tbody></table>`;
+}
+
+// ---------- secure-it ----------
+
+const SEVERITY_LEVEL = { critical: "critical", high: "critical", medium: "warning", low: "info" };
+
+function alertLink(l) {
+  if (!l) return "";
+  if (l.type === "package") return `<div class="chips" style="margin-top:6px"><span class="muted">Package:</span>${chip(l.id)}</div>`;
+  if (l.type === "tap") return `<div style="margin-top:6px"><button class="small" data-tab="taps">Open ${esc(l.name)} in Taps</button></div>`;
+  const label = TABS.find(([k]) => k === l.tab)?.[1] || l.tab;
+  return `<div style="margin-top:6px"><button class="small" data-tab="${esc(l.tab)}">Open ${esc(label)}</button></div>`;
+}
+
+// Commands are shown to copy, never run: brewdash does not run what a file in the user's home tells it to.
+function alertCard(a) {
+  const accept = a.fingerprint ? `sudo secure-it accept ${a.fingerprint.slice(0, 12)} --note "why this is fine"` : "";
+  return `<div class="alert sev-${esc(a.severity)}">
+    <div><span class="sev">${esc(a.severity)}</span> <b>${esc(a.title)}</b> <span class="muted mono">${esc(a.check_id)}</span></div>
+    ${a.detail ? `<div class="muted" style="margin-top:4px">${esc(a.detail)}</div>` : ""}
+    ${a.remediation ? `<div style="margin-top:6px">${esc(a.remediation)}</div>` : ""}
+    ${a.fix_command ? `<div class="cmd"><span class="muted">Fix:</span><pre>${esc(a.fix_command)}</pre><button class="small" data-copytext="${esc(a.fix_command)}">Copy</button></div>` : ""}
+    ${accept ? `<div class="cmd"><span class="muted">If it is expected:</span><pre>${esc(accept)}</pre><button class="small" data-copytext="${esc(accept)}">Copy</button></div>` : ""}
+    ${alertLink(a.link)}</div>`;
+}
+
+function renderSecurity() {
+  const sec = S.snap?.security;
+  if (!sec?.found) {
+    $("#content").innerHTML = `<div class="card"><h3>secure-it is not set up</h3>
+      <p><a href="https://github.com/lemiorhan/secure-it" target="_blank" rel="noopener">secure-it</a> is a separate, root-run scanner for macOS security settings, persistence, listening ports and installed packages. After each scan it writes <span class="mono">${esc(sec?.path || "~/secure-it/report.json")}</span>, and brewdash shows those findings here, next to the packages they concern.</p>
+      <pre>git clone https://github.com/lemiorhan/secure-it.git\ncd secure-it && sudo ./install.sh\nsudo secure-it scan</pre></div>`;
+    return;
+  }
+  const list = alerts();
+  const by = (s) => list.filter((a) => a.severity === s).length;
+  $("#content").innerHTML = `
+    ${sec.error ? `<div class="warn">brewdash could not use ${esc(sec.path)}: ${esc(sec.error)}</div>` : ""}
+    <p class="muted">From <span class="mono">${esc(sec.path)}</span>, scan of ${esc(sec.generated_at || "unknown time")}. Only findings you have not accepted are listed.
+      ${["critical", "high", "medium", "low"].map((s) => by(s) ? `<span class="sev-count sev-${s}">${by(s)} ${s}</span>` : "").join(" ")}</p>
+    ${list.length ? list.map(alertCard).join("") : sec.error ? "" : `<p class="ok">✔ secure-it reports nothing open.</p>`}`;
 }
 
 // ---------- overview ----------
@@ -437,7 +502,18 @@ function attention() {
   addPerTab("warning", ["outdated", "pinned"], "outdated but pinned", (names) => `${names}: brew upgrade skips these until they are unpinned.`);
   add("warning", daysSinceUpdate() > STALE_UPDATE_DAYS, "brew update is stale", `Last run ${fmtAgo(S.snap?.last_update)}; the outdated list is only as fresh as that.`, "update");
   const pathIssues = (S.snap?.shell?.path || []).filter((e) => e.issue);
-  add("warning", pathIssues.length, "PATH problems", "Duplicate, missing or outdated entries in your shell startup files.", "shell");
+  const synced = pathIssues.filter((e) => e.issue === "synced");
+  add("warning", synced.length, "synced folders ahead in PATH", `${synced.map((e) => e.raw).join(", ")}: a file that arrives by sync runs in place of the system command of the same name.`, "shell");
+  add("warning", pathIssues.length - synced.length, "PATH problems", "Duplicate, missing or outdated entries in your shell startup files.", "shell");
+  for (const level of ["critical", "warning", "info"]) {
+    const hits = alerts().filter((a) => SEVERITY_LEVEL[a.severity] === level);
+    add(level, hits.length, "secure-it findings", hits.slice(0, 3).map((a) => a.title).join("; ") + (hits.length > 3 ? "; …" : ""), "security");
+  }
+  if (S.snap?.security?.error) add("warning", true, "secure-it report unreadable", S.snap.security.error, "security");
+  const exposed = all.filter((p) => portsOf(p.id).some((e) => e.exposed));
+  add("warning", exposed.length, "services reachable from the network", `${exposed.map((p) => p.name).join(", ")}: listening on all interfaces, not only this Mac.`, "services");
+  const weak = appsList().filter(weakSignature);
+  add("warning", weak.length, "apps without a real signature", `${weak.map((a) => a.name).join(", ")}: not signed, or signed ad-hoc with no identity behind it.`, "apps");
   const orphans = all.filter((p) => p.orphan);
   add("info", orphans.length, "orphans", "Installed as dependencies; nothing needs them any more. Autoremove takes them out.", "health");
   add("info", !!h?.cleanup_reclaim, "cleanup", `${h?.cleanup_reclaim} can be freed with brew cleanup.`, "health");
@@ -445,7 +521,8 @@ function attention() {
   add("info", adoptable.length, "apps brew could manage", `${adoptable.map((a) => a.name).join(", ")}: installed by hand, and a cask installs exactly that app.`, "apps");
   const unusedTaps = (S.snap?.model?.taps || []).filter((t) => !t.official && !t.installed.length);
   add("info", unusedTaps.length, "unused taps", `${unusedTaps.map((t) => t.name).join(", ")}: nothing installed comes from them.`, "taps");
-  return items;
+  const rank = ["critical", "warning", "info"];
+  return items.sort((a, b) => rank.indexOf(a.level) - rank.indexOf(b.level));
 }
 
 const LEVEL = { critical: ["✖", "var(--red)"], warning: ["▲", "var(--accent)"], info: ["●", "var(--blue)"] };
@@ -510,7 +587,7 @@ function renderOverview() {
   const issues = attention();
   const worst = issues[0]?.level;
   const kindSize = (fn) => all.filter(fn).reduce((a, p) => a + (sizes[p.id] || 0), 0);
-  $("#view").innerHTML = `<div class="ov">
+  $("#content").innerHTML = `<div class="ov">
     <div class="tiles">
       ${tile(S.pkgs.size, "packages", `${c.requested} by you · ${c.deps} dependencies · ${c.casks} casks`)}
       ${tile(total ? fmtSize(total) : "…", "on disk", total ? `formulae ${fmtSize(kindSize((p) => p.kind === "formula"))} · casks ${fmtSize(kindSize((p) => p.kind === "cask"))}` : "computing")}
@@ -551,9 +628,7 @@ const LIST_GROUPS = [["tap", "Taps"], ["brew", "Formulae"], ["cask", "Casks and 
 function renderExport() {
   const items = S.list.items;
   const deps = items.filter((i) => i.type === "brew" && [...S.pkgs.values()].some((p) => p.full_name === i.name && p.kind === "formula" && !p.requested));
-  $("#view").innerHTML = `
-    <p class="muted">Select packages, taps or apps in any tab and press <b>Add to list</b>. The list is kept between runs.</p>
-    ${items.length ? "" : `<p class="muted">The list is empty.</p>`}
+  $("#content").innerHTML = `    ${items.length ? "" : `<p class="muted">The list is empty.</p>`}
     <div class="cards">${LIST_GROUPS.map(([type, label]) => {
       const group = items.filter((i) => i.type === type);
       return group.length ? `<div class="card"><h3>${label} (${group.length})</h3>${group.map((i) =>
@@ -583,8 +658,7 @@ async function downloadBrewfile() {
 async function renderHistory() {
   try { S.history = await api("/api/history"); } catch (e) { S.history = []; }
   if (S.tab !== "history") return;
-  $("#view").innerHTML = `<p class="muted">Brewfile snapshots are written before every uninstall, autoremove and multi-package action. Restore with <span class="mono">brew bundle install --file=&lt;snapshot&gt;</span>.</p>
-    <table><thead><tr><th>When</th><th>Action</th><th>Status</th><th>Commands</th><th>Snapshot</th></tr></thead><tbody>
+  $("#content").innerHTML = `<table><thead><tr><th>When</th><th>Action</th><th>Status</th><th>Commands</th><th>Snapshot</th></tr></thead><tbody>
     ${S.history.map((h) => `<tr><td class="mono">${new Date(h.created * 1000).toLocaleString()}</td><td>${esc(h.title)}</td>
       <td class="st st-${esc(h.status)}">${esc(h.status)}${h.exit_code ? ` (${h.exit_code})` : ""}</td>
       <td class="mono">${h.commands.map(esc).join("<br>")}</td><td class="mono muted">${esc(h.snapshot || "")}</td></tr>`).join("")}
@@ -597,7 +671,7 @@ function renderInstall() {
   const box = $("#search-q");
   const draft = box ? box.value : s.q;
   const focus = box && document.activeElement === box ? [box.selectionStart, box.selectionEnd] : null;
-  $("#view").innerHTML = `
+  $("#content").innerHTML = `
     <div class="toolbar"><input type="search" id="search-q" placeholder="Search Homebrew (formulae and casks), press Enter" value="${esc(draft)}" style="width:420px">
       <button id="search-go">Search</button>${s.busy ? `<span class="muted">searching…</span>` : ""}</div>
     <div style="display:flex;gap:16px;align-items:start">
@@ -732,11 +806,61 @@ function renderJobs() {
 
 // ---------- render root ----------
 
+// What each page shows, and what you can do there. [title, what it is, what to do]
+const INTRO = {
+  requested: ["Installed by you", "Formulae you asked for with <b>brew install</b>. These are the roots: everything in Dependencies is here because one of them needs it.",
+    "Click a row for its details, dependency graph and advice. Tick rows to upgrade, pin, uninstall or add them to the export list in one go. Uninstall first shows what would break."],
+  deps: ["Dependencies", "Formulae that brew installed because another package needs them. An <b>orphan</b> is one that nothing needs any more.",
+    "You rarely act here directly. Use the <b>orphan</b> filter and <b>Autoremove</b> to clear leftovers; if you use one of these tools yourself, keep it installed by you instead."],
+  casks: ["Casks", "Apps and other binaries installed with <b>brew install --cask</b>.",
+    "Upgrade, pin or uninstall them like formulae. Casks that update themselves may look outdated here while the app is current; their detail panel says so."],
+  services: ["Services", "Formulae that can run in the background through <b>brew services</b> (databases, queues, web servers), with their state and the ports they listen on.",
+    "Start, stop or restart a service. A port marked in amber listens on every network interface, so other machines on your network can reach it; stop the service or bind it to 127.0.0.1 if that is not what you want."],
+  taps: ["Taps", "The repositories brew reads formulae and casks from. <b>homebrew/core</b> and <b>homebrew/cask</b> are Homebrew's own; every other tap is code from a third party that brew runs as you.",
+    "Untap a tap nothing is installed from. Keep a third-party tap only if you trust its owner; a <b>secure-it</b> badge means the scanner flagged it."],
+  health: ["Health", "What brew itself reports: missing dependencies, deprecated or disabled packages, orphans, cache that cleanup can free, and the full <b>brew doctor</b> output.",
+    "Work from the top: missing dependencies break packages now, deprecated ones will. Then autoremove and clean up to win back disk space."],
+  security: ["Security", "Findings from <b>secure-it</b>, a separate scanner that runs as root and checks macOS settings, startup items, open ports, shell files and packages. brewdash only reads the report it leaves in your home folder.",
+    "Read each finding and fix it with the command shown, or accept it in secure-it if it is expected. brewdash copies commands for you to run in Terminal; it never runs them itself."],
+  apps: ["Apps", "Every app in /Applications and ~/Applications: how it got there (brew, App Store or by hand) and who signed it.",
+    "<b>Bring into brew</b> lets Homebrew take over an app you installed by hand, so it upgrades with everything else. Check apps marked <b>not signed</b> or <b>ad-hoc</b>: nothing vouches for who built them."],
+  shell: ["Shell", "The PATH lines and tools your shell startup files (.zshrc, .zprofile, .bashrc and friends) set up.",
+    "Fix what is flagged by editing the file yourself; brewdash never edits these files. A <b>synced folder first</b> entry puts a Dropbox or iCloud folder before the system folders, so a file that arrives by sync runs in place of a system command."],
+  history: ["History", "Every action brewdash ran, with its commands and exit status. Before each uninstall, autoremove or multi-package action, brewdash writes a Brewfile snapshot of what was installed.",
+    "To undo, restore a snapshot with <span class=\"mono\">brew bundle install --file=&lt;snapshot&gt;</span>."],
+  install: ["Install", "Search Homebrew's formulae and casks, and see what an install would bring with it before you run it.",
+    "Search, click a result to preview its new dependencies and caveats, then install."],
+  export: ["Export", "A list of taps, formulae and casks to set up another Mac with, written as a Brewfile.",
+    "Select packages, taps or apps in any tab and press <b>Add to list</b>; the list is kept between runs. Then download the Brewfile and run <span class=\"mono\">brew bundle</span> on the new Mac."],
+};
+
+function renderIntro() {
+  if (S.tab === "overview") { $("#intro").innerHTML = hero(); return; }
+  const [title, what, todo] = INTRO[S.tab];
+  $("#intro").innerHTML = `<div class="intro"><h2>${title}</h2><p>${what}</p><p><b>What to do:</b> ${todo}</p></div>`;
+}
+
+function hero() {
+  return `<div class="hero"><div>
+      <h1>brew<span>dash</span></h1>
+      <p class="lead">A local dashboard for Homebrew: see what is installed on this Mac, why it is there, and what needs your attention.</p>
+      <ul>
+        <li><b>Understand</b> every formula, cask, service and tap, with dependency graphs that show who needs what.</li>
+        <li><b>Clean up</b> orphans, stale caches, pinned and deprecated packages, with a Brewfile snapshot before anything is removed.</li>
+        <li><b>Stay safe</b>: ports your services open to the network, unsigned apps, risky PATH entries and, with <a href="https://github.com/lemiorhan/secure-it" target="_blank" rel="noopener">secure-it</a>, a full security scan.</li>
+        <li><b>Move</b> to a new Mac with an exported Brewfile.</li>
+      </ul></div>
+    <div class="hero-side"><h4>How it works</h4>
+      <p>brewdash runs on 127.0.0.1 only and every request carries a one-time token. It reads brew's own JSON output and your files, and changes nothing until you press a button and confirm the exact commands it will run.</p>
+      <p>Start below with <b>Needs attention</b>; each line opens the page where you can act on it.</p></div></div>`;
+}
+
 function renderView() {
-  if (!S.snap?.model) { $("#view").innerHTML = `<p class="loading">${S.snap?.error ? "Failed to read brew state." : "Reading Homebrew state…"}</p>`; return; }
+  renderIntro();
+  if (!S.snap?.model) { $("#content").innerHTML = `<p class="loading">${S.snap?.error ? "Failed to read brew state." : "Reading Homebrew state…"}</p>`; return; }
   if (PKG_TABS[S.tab]) renderPackages();
   else ({ overview: renderOverview, services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall,
-    apps: renderApps, shell: renderShell, export: renderExport })[S.tab]();
+    apps: renderApps, shell: renderShell, export: renderExport, security: renderSecurity })[S.tab]();
 }
 
 function renderAll() {
@@ -785,6 +909,7 @@ document.addEventListener("click", (e) => {
   if (d("install")) { const [k, ...n] = d("install").split(":"); confirmAction({ action: "install", kind: k, name: n.join(":") }); return; }
   if (t.id === "search-go") { doSearch(); return; }
   if (d("copy")) { const j = S.jobs.find((x) => x.id === +d("copy")); navigator.clipboard.writeText(j.commands.join(" && ")); t.textContent = "Copied"; return; }
+  if (t.matches("[data-copytext]")) { navigator.clipboard.writeText(t.dataset.copytext); t.textContent = "Copied"; return; }
   if (d("job")) { const id = +d("job"); S.openJobs.has(id) ? S.openJobs.delete(id) : S.openJobs.add(id); loadJobs(); return; }
   if (t.closest("#jobs-head")) { $("#jobs").classList.toggle("collapsed"); return; }
   const row = t.closest("tr.row[data-id]");
@@ -803,6 +928,9 @@ $("#btn-refresh").onclick = () => api("/api/refresh", {}).then(loadState);
 $("#btn-update").onclick = () => confirmAction({ action: "update" });
 $("#btn-upgrade-all").onclick = () => confirmAction({ action: "upgrade_all" });
 $("#btn-autoremove").onclick = () => confirmAction({ action: "autoremove" });
+$("#btn-theme").onclick = () => { applyTheme(THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length]); renderDetail(); };
+applyTheme(currentTheme());
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => renderDetail());
 
 // ---------- polling ----------
 

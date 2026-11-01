@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import plistlib
 import subprocess
 import sys
@@ -612,6 +613,22 @@ class FakeBrew:
                                 stdin=subprocess.DEVNULL, text=True)
 
 
+NOT_SIGNED = "/A: code object is not signed at all\n"
+
+
+def no_listeners_unsigned(argv, timeout=60):
+    """Stands in for lsof and codesign, so no test reads this Mac's processes or apps."""
+    return (1, "", NOT_SIGNED if argv[0] == brewdash.CODESIGN else "")
+
+
+EMPTY_HOME = tempfile.TemporaryDirectory()
+
+
+def store_of(*args, **kw):
+    """A Store that reads none of this Mac's home, apps, processes or signatures."""
+    return brewdash.Store(*args, **{"sysrun": no_listeners_unsigned, "home": EMPTY_HOME.name, "app_dirs": [], **kw})
+
+
 def wait_for(fn, timeout=10):
     end = time.time() + timeout
     while time.time() < end:
@@ -631,7 +648,7 @@ class RunnerTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_job(self, brew, title, cmds, snapshot):
-        store = brewdash.Store(brew)
+        store = store_of(brew)
         runner = brewdash.Runner(brew, store, self.state)
         job = runner.submit(title, cmds, snapshot)
         return wait_for(lambda: job if job["status"] in ("succeeded", "failed") else None), runner
@@ -647,7 +664,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_history_is_newest_first(self):
         brew = FakeBrew()
-        store = brewdash.Store(brew)
+        store = store_of(brew)
         runner = brewdash.Runner(brew, store, self.state)
         runner.submit("first", [["brew", "a"]], False)
         last = runner.submit("second", [["brew", "b"]], False)
@@ -675,7 +692,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_jobs_run_one_at_a_time_in_order(self):
         brew = FakeBrew({("a",): "sleep 0.3; echo a", ("b",): "echo b"})
-        store = brewdash.Store(brew)
+        store = store_of(brew)
         runner = brewdash.Runner(brew, store, self.state)
         ja = runner.submit("a", [["brew", "a"]], False)
         jb = runner.submit("b", [["brew", "b"]], False)
@@ -695,7 +712,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_worker_survives_an_exception_and_runs_the_next_job(self):
         brew = FakeBrew(raises={("boom",)})
-        store = brewdash.Store(brew)
+        store = store_of(brew)
         runner = brewdash.Runner(brew, store, self.state)
         bad = runner.submit("bad", [["brew", "boom"]], False)
         good = runner.submit("good", [["brew", "fine"]], False)
@@ -707,7 +724,7 @@ class RunnerTest(unittest.TestCase):
         blocked = self.state / "not-a-dir"
         blocked.write_text("")
         brew = FakeBrew()
-        runner = brewdash.Runner(brew, brewdash.Store(brew), blocked)
+        runner = brewdash.Runner(brew, store_of(brew), blocked)
         first = runner.submit("a", [["brew", "a"]], False)
         second = runner.submit("b", [["brew", "b"]], False)
         wait_for(lambda: second["status"] == "succeeded")
@@ -716,7 +733,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_store_is_refreshed_after_every_job(self):
         brew = FakeBrew()
-        store = brewdash.Store(brew)
+        store = store_of(brew)
         runner = brewdash.Runner(brew, store, self.state)
         self.assertIsNone(store.model)
         runner.submit("x", [["brew", "x"]], False)
@@ -767,7 +784,7 @@ class StoreTest(unittest.TestCase):
                         return {"formulae": [formula("before")], "casks": []}
                 return super().json(*args)
 
-        store = brewdash.Store(SlowBrew())
+        store = store_of(SlowBrew())
         first = threading.Thread(target=store.refresh)
         first.start()
         wait_for(lambda: calls)
@@ -785,7 +802,7 @@ class StoreTest(unittest.TestCase):
             (Path(prefix) / "Cellar" / "libA").mkdir(parents=True)
             (Path(prefix) / "Cellar" / "libA" / "f").write_bytes(b"x" * 8192)
             (Path(prefix) / "Caskroom" / "gui").mkdir(parents=True)
-            store = brewdash.Store(FakeBrew(prefix=prefix))
+            store = store_of(FakeBrew(prefix=prefix))
             store.refresh()
             wait_for(lambda: store.health)
             snap = store.snapshot()
@@ -803,7 +820,7 @@ class StoreTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as prefix:
             (Path(prefix) / "Cellar" / "libA").mkdir(parents=True)
-            store = brewdash.Store(BrokenDoctor(prefix=prefix))
+            store = store_of(BrokenDoctor(prefix=prefix))
             store.refresh()
             health = wait_for(lambda: store.health)
         self.assertFalse(health["doctor_ok"])
@@ -824,7 +841,7 @@ class StoreTest(unittest.TestCase):
                     return 0, "new", ""
                 return super().run(*args)
 
-        store = brewdash.Store(SlowFirstDoctor())
+        store = store_of(SlowFirstDoctor())
         store.refresh()
         wait_for(lambda: doctors)
         store.refresh()
@@ -834,7 +851,7 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(store.health["doctor"], "new")
 
     def test_stale_slow_result_does_not_overwrite_a_newer_one(self):
-        store = brewdash.Store(FakeBrew())
+        store = store_of(FakeBrew())
         store.generation = 2
         store._slow({"packages": []}, 1)
         self.assertIsNone(store.health)
@@ -894,6 +911,9 @@ def make_app(folder, name, version=None, bundle_id=None, app_store=False, plist=
     if app_store:
         (contents / "_MASReceipt").mkdir()
     return str(contents.parent)
+
+
+UNSIGNED = {"kind": "unsigned", "signer": None}
 
 
 def app_record(path, name, source, version=None, bundle_id=None, brew_id=None, **extra):
@@ -958,11 +978,12 @@ class AppsTest(unittest.TestCase):
         apps_dir = Path(self.dir) / "Applications"
         zed = make_app(apps_dir, "Zed", "0.8")
         ghost = make_app(apps_dir, "Ghost", "1.0")
-        store = brewdash.Store(FakeBrew(cache=str(cache), casks=APP_CASKS), home=self.dir, app_dirs=[str(apps_dir)])
+        store = store_of(FakeBrew(cache=str(cache), casks=APP_CASKS), home=self.dir, app_dirs=[str(apps_dir)])
         store.refresh()
         env = wait_for(lambda: store.apps)
         self.assertEqual(env, {"error": "could not match apps to casks: Cask 'ghost' is unavailable",
-                               "apps": [app_record(ghost, "Ghost", "manual", "1.0"), app_record(zed, "Zed", "manual", "0.8")],
+                               "apps": [app_record(ghost, "Ghost", "manual", "1.0", signature=UNSIGNED),
+                                        app_record(zed, "Zed", "manual", "0.8", signature=UNSIGNED)],
                                "names_known": True})
         self.assertEqual(store.snapshot()["shell"], {"path": [], "tools": []})
 
@@ -974,12 +995,12 @@ class AppsTest(unittest.TestCase):
         zed = make_app(apps_dir, "Zed", "0.8")
         gui = make_app(apps_dir, "Gui", "2.0")
         info = {"formulae": [], "casks": [cask("gui", artifacts=[{"app": ["Gui.app"], "target": gui}])]}
-        store = brewdash.Store(FakeBrew(cache=str(cache), casks=APP_CASKS, info=info), home=self.dir, app_dirs=[str(apps_dir)])
+        store = store_of(FakeBrew(cache=str(cache), casks=APP_CASKS, info=info), home=self.dir, app_dirs=[str(apps_dir)])
         store.refresh()
         # gui is in cask_names but not in APP_CASKS: asking brew about it would set an error.
         self.assertEqual(wait_for(lambda: store.apps), {"error": None, "names_known": True, "apps": [
-            app_record(gui, "Gui", "brew", "2.0", brew_id="c:gui"),
-            app_record(zed, "Zed", "manual", "0.8", cask="zed", cask_version="0.9", auto_updates=True)]})
+            app_record(gui, "Gui", "brew", "2.0", brew_id="c:gui", signature=UNSIGNED),
+            app_record(zed, "Zed", "manual", "0.8", cask="zed", cask_version="0.9", auto_updates=True, signature=UNSIGNED)]})
 
 
 class ShellTest(unittest.TestCase):
@@ -1030,6 +1051,31 @@ class ShellTest(unittest.TestCase):
             self.entry(".zshrc", 7, "$FOO/bin", "$FOO/bin", None),
             self.entry(".bashrc", 1, "$HOME/bin", f"{h}/bin", True),
         ])
+
+    def test_a_synced_folder_ahead_of_the_system_is_a_warning(self):
+        moved = Path(self.tmp.name) / "Volumes" / "Dropbox"
+        (moved / "bin").mkdir(parents=True)
+        (Path(self.home) / "Dropbox").symlink_to(moved)
+        (Path(self.home) / "Library" / "Mobile Documents").mkdir(parents=True)
+        lower = self.home.replace("/home", "/HOME")
+        self.write(".zshrc",
+                   'export PATH="$HOME/Dropbox/bin:$PATH"',
+                   f'export PATH="{lower}/Dropbox/gone:$PATH"',
+                   'export PATH="$HOME/Library/Mobile Documents/x:$PATH"',
+                   'export PATH="$PATH:$HOME/Dropbox/bin"',
+                   'export PATH="/usr/bin:$HOME/Dropbox/late:/bin"',
+                   'export PATH="$HOME/Library/Mobile DocumentsNot/bin:$PATH"',
+                   'export PATH="$HOME/Dropbox/bin:$PATH"',
+                   'export PATH="$HOME/Library/CloudStorage/GoogleDrive/bin:$PATH"')
+        self.assertEqual([(e["line"], e["issue"]) for e in self.scan()["path"]], [
+            (1, "synced"), (2, "synced"), (3, "synced"), (4, "duplicate"),
+            (5, None), (5, "missing"), (5, None), (6, "missing"), (7, "duplicate"), (8, "synced")])
+        self.assertIn("runs in place of the system command", self.scan()["path"][0]["suggestion"])
+
+    def test_a_synced_root_itself_on_the_path_is_a_warning(self):
+        (Path(self.home) / "Dropbox").mkdir()
+        self.write(".zshrc", 'export PATH="$HOME/Dropbox:$HOME/Library/CloudStorage:$PATH"')
+        self.assertEqual([e["issue"] for e in self.scan()["path"]], ["synced", "synced"])
 
     def test_an_existing_pinned_version_still_gets_the_opt_path(self):
         cellar = Path(self.prefix) / "Cellar" / "node@20" / "20.1" / "bin"
@@ -1148,7 +1194,8 @@ class ServerWiringTest(unittest.TestCase):
         (root / "home" / ".zshrc").write_text("export PATH=/nope/bin:$PATH\n")
         brew = FakeBrew(cache=str(root / "cache"), casks=APP_CASKS)
         cls.server, url, cls.token = brewdash.serve(port=0, open_browser=False, brew=brew, state_dir=str(root / "state"),
-                                                    home=str(root / "home"), app_dirs=[str(root / "Applications")])
+                                                    home=str(root / "home"), app_dirs=[str(root / "Applications")],
+                                                    sysrun=no_listeners_unsigned)
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 
@@ -1277,6 +1324,206 @@ class ServerWiringTest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/vendor/cytoscape.min.js", token=False)[0], 200)
         self.assertEqual(self.request("GET", "/../brewdash.py", token=False)[0], 404)
         self.assertEqual(self.request("GET", "/%2e%2e/brewdash.py", token=False)[0], 404)
+
+
+FP = "a" * 64
+
+
+def alert(severity="high", check_id="exposure.listening", identity=None, **extra):
+    return {"fingerprint": FP, "check_id": check_id, "kind": "open_port", "severity": severity, "title": "t",
+            "detail": "d", "remediation": "r", "fix_command": None, "identity": identity or {}, **extra}
+
+
+class SecurityReportTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "report.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def load(self, data):
+        self.path.write_text(data if isinstance(data, str) else json.dumps(data))
+        return brewdash.load_security(self.path)
+
+    def test_no_file_is_not_an_error(self):
+        r = brewdash.load_security(self.path)
+        self.assertEqual((r["found"], r["error"], r["alerts"]), (False, None, []))
+
+    def test_a_broken_or_foreign_file_is_reported(self):
+        self.assertIn("could not read it", self.load("{nope")["error"])
+        self.assertEqual(self.load({"schema": 2, "alerts": [alert()]})["error"],
+                         "it has schema 2; this brewdash reads schema 1")
+        r = self.load([alert()])
+        self.assertEqual((r["found"], r["error"], r["alerts"]), (True, "it has schema None; this brewdash reads schema 1", []))
+        self.assertEqual(self.load({"schema": True, "alerts": [alert()]})["error"],
+                         "it has schema True; this brewdash reads schema 1")
+        self.assertIn("could not read it", self.load("[" * 200000)["error"])
+
+    def test_a_fingerprint_with_a_trailing_newline_is_not_one(self):
+        [a] = self.load({"schema": 1, "alerts": [alert(fingerprint=FP + "\n")]})["alerts"]
+        self.assertIsNone(a["fingerprint"])
+
+    def test_an_identity_of_the_wrong_type_links_nowhere_and_does_not_raise(self):
+        self.assertIsNone(brewdash.link_alert(alert(check_id="packages.brew_taps", identity={"tap": ["x"]}), set(), {"x"}))
+
+    def test_test_stores_read_no_real_home_or_apps(self):
+        store = store_of(FakeBrew())
+        self.assertEqual((store.home, store.app_dirs), (EMPTY_HOME.name, []))
+        self.assertEqual(os.listdir(EMPTY_HOME.name), [])
+
+    def test_alerts_are_typed_sorted_and_cleaned(self):
+        r = self.load({"schema": 1, "generated_at": "2026-11-01T10:00:00", "alerts": [
+            alert("low", title="<img src=x onerror=alert(1)>"),
+            alert("bogus"), "not a dict", alert("high", title=None),
+            alert("critical", fingerprint="../../x", detail=7, identity=["x"]),
+            alert("medium", fix_command="brew untap me/tap"),
+        ]})
+        self.assertEqual(r["generated_at"], "2026-11-01T10:00:00")
+        self.assertEqual([a["severity"] for a in r["alerts"]], ["critical", "medium", "low"])
+        crit, med, low = r["alerts"]
+        self.assertEqual((crit["fingerprint"], crit["detail"], crit["identity"]), (None, None, {}))
+        self.assertEqual((med["fingerprint"], med["fix_command"]), (FP, "brew untap me/tap"))
+        self.assertEqual(low["title"], "<img src=x onerror=alert(1)>")
+        self.assertEqual(sorted(low), sorted([*brewdash.ALERT_TEXT, "severity", "identity", "fingerprint"]))
+
+    def test_identity_keeps_only_the_strings_links_are_made_from(self):
+        [a] = self.load({"schema": 1, "alerts": [alert(identity={
+            "exe": "/opt/homebrew/bin/x", "plist": 5, "tap": "me/tap", "shadowed": ["git"]})]})["alerts"]
+        self.assertEqual(a["identity"], {"exe": "/opt/homebrew/bin/x", "tap": "me/tap"})
+
+    def test_an_identity_too_deep_to_encode_cannot_break_the_state(self):
+        deep = "[" * 120000 + "]" * 120000
+        text = json.dumps({"schema": 1, "alerts": [alert(identity={"exe": "X"})]}).replace('"X"', deep)
+        r = self.load(text)
+        json.dumps({**r, "alerts": [{**a, "link": brewdash.link_alert(a, set(), set())} for a in r["alerts"]]})
+
+    def test_alerts_link_to_where_brewdash_can_act(self):
+        pkgs, taps = {"f:redis"}, {"me/tap"}
+        link = lambda **kw: brewdash.link_alert(alert(**kw), pkgs, taps)
+        self.assertEqual(link(identity={"exe": "/opt/homebrew/Cellar/redis/7.2/bin/redis-server"}),
+                         {"type": "package", "id": "f:redis"})
+        self.assertEqual(link(identity={"exe": "/usr/local/opt/redis/bin/redis-server"}), {"type": "package", "id": "f:redis"})
+        self.assertIsNone(link(identity={"exe": "/opt/homebrew/Cellar/nginx/1/bin/nginx"}))
+        self.assertIsNone(link(identity={"exe": "/Applications/Redis.app/redis"}))
+        self.assertEqual(link(check_id="persistence.launchd", identity={"plist": "/Library/LaunchDaemons/homebrew.mxcl.redis.plist"}),
+                         {"type": "package", "id": "f:redis"})
+        self.assertIsNone(link(check_id="persistence.launchd", identity={"plist": "/x/com.redis.plist"}))
+        self.assertEqual(link(check_id="packages.brew_taps", identity={"tap": "me/tap"}), {"type": "tap", "name": "me/tap"})
+        self.assertIsNone(link(check_id="packages.brew_taps", identity={"tap": "gone/tap"}))
+        self.assertEqual(link(check_id="persistence.path_shadow"), {"type": "tab", "tab": "shell"})
+        self.assertEqual(link(check_id="persistence.shell_rc"), {"type": "tab", "tab": "shell"})
+        self.assertIsNone(link(check_id="system.firewall"))
+        self.assertIsNone(link(check_id="exposure.listening", identity={"exe": 5}))
+
+    def test_store_reads_the_report_again_only_when_it_changes(self):
+        home = Path(self.tmp.name)
+        (home / "secure-it").mkdir()
+        report = home / "secure-it" / "report.json"
+        store = store_of(FakeBrew(), home=str(home))
+        self.assertEqual((store.security()["found"], store.security()["seq"]), (False, 1))
+        report.write_text(json.dumps({"schema": 1, "alerts": [alert(identity={"exe": "/opt/homebrew/opt/tool/bin/tool"})]}))
+        first = store.security()
+        self.assertEqual((first["found"], first["seq"], first["alerts"][0]["link"]), (True, 2, None))
+        self.assertEqual(store.security()["seq"], 2)
+        store.refresh()
+        wait_for(lambda: store.model)
+        self.assertEqual(store.security()["alerts"][0]["link"], {"type": "package", "id": "f:tool"})
+        self.assertEqual(store.security()["seq"], 2)
+        before = report.stat().st_mtime_ns
+        report.write_text(json.dumps({"schema": 1, "alerts": []}))
+        os.utime(report, ns=(before, before))
+        self.assertEqual((store.security()["seq"], store.security()["alerts"]), (3, []))
+        self.assertEqual(store.snapshot()["security"]["seq"], 3)
+
+
+LSOF_TCP = "p42\nf7\nn*:6379\nf8\nn[::1]:6379\nf9\nn127.0.0.1:6380\np99\nf3\nn*:22\n"
+LSOF_UDP = "p42\nf10\nn*:5353\nf11\nn10.0.0.2:5000->10.0.0.9:53\nf12\nn*:*\n"
+CODESIGN_OUT = {
+    "/bin/ls": "Executable=/bin/ls\nIdentifier=com.apple.ls\nAuthority=macOS Software Signing\n"
+               "Authority=Apple Code Signing Certification Authority\nAuthority=Apple Root CA\n",
+    "/A/1Password.app": "Authority=Developer ID Application: AgileBits Inc. (2BUA8C4S2C)\n"
+                        "Authority=Developer ID Certification Authority\nAuthority=Apple Root CA\nNotarization Ticket=stapled\n",
+    "/A/Store.app": "Authority=Apple Mac OS Application Signing\nAuthority=Apple Worldwide Developer Relations Certification Authority\n",
+    "/A/Phone.app": "Authority=Apple iPhone OS Application Signing\n",
+    "/A/Corp.app": "Authority=Corp Internal CA\n",
+    "/opt/homebrew/bin/jq": "Executable=/opt/homebrew/bin/jq\nSignature=adhoc\nTotal signatures=1\n",
+    "/A/Plain.app": "/A/Plain.app: code object is not signed at all\n",
+    "/A/Odd.app": "something else\n",
+}
+
+
+class ListeningAndSignatureTest(unittest.TestCase):
+    def test_lsof_output_becomes_listeners_by_pid(self):
+        self.assertEqual(brewdash.parse_listening(LSOF_TCP), {
+            42: [{"address": "*", "port": 6379, "exposed": True}, {"address": "[::1]", "port": 6379, "exposed": False},
+                 {"address": "127.0.0.1", "port": 6380, "exposed": False}],
+            99: [{"address": "*", "port": 22, "exposed": True}]})
+        self.assertEqual(brewdash.parse_listening(LSOF_UDP), {42: [{"address": "*", "port": 5353, "exposed": True}]})
+        self.assertEqual(brewdash.parse_listening("p1\nn*:80\nn*:80\n"), {1: [{"address": "*", "port": 80, "exposed": True}]})
+
+    def test_service_ports_ask_lsof_for_running_services_only(self):
+        calls = []
+
+        def sysrun(argv, timeout=60):
+            calls.append(argv)
+            return 1, LSOF_TCP if "-iTCP" in argv else LSOF_UDP, "lsof: some pids hidden"
+        model = {"packages": [{"id": "f:redis", "service": {"pid": 42}}, {"id": "f:off", "service": {"pid": None}},
+                              {"id": "f:plain", "service": None}, {"id": "f:other", "service": {"pid": 7}}]}
+        self.assertEqual(brewdash.service_ports(model, sysrun), {"f:redis": [
+            {"proto": "TCP", "address": "*", "port": 6379, "exposed": True},
+            {"proto": "TCP", "address": "[::1]", "port": 6379, "exposed": False},
+            {"proto": "TCP", "address": "127.0.0.1", "port": 6380, "exposed": False},
+            {"proto": "UDP", "address": "*", "port": 5353, "exposed": True}]})
+        self.assertEqual(calls, [[brewdash.LSOF, "-nP", "-a", "-p", "7,42", "-iTCP", "-sTCP:LISTEN", "-F", "pn"],
+                                 [brewdash.LSOF, "-nP", "-a", "-p", "7,42", "-iUDP", "-F", "pn"]])
+        self.assertEqual(brewdash.service_ports({"packages": [{"id": "f:off", "service": {"pid": None}}]},
+                                                lambda *a, **k: self.fail("lsof without a pid")), {})
+
+    def test_codesign_output_says_who_signed(self):
+        kinds = {p: brewdash.classify_signature(out) for p, out in CODESIGN_OUT.items()}
+        self.assertEqual(kinds, {
+            "/bin/ls": {"kind": "apple", "signer": "macOS Software Signing"},
+            "/A/1Password.app": {"kind": "developer_id", "signer": "AgileBits Inc. (2BUA8C4S2C)"},
+            "/A/Store.app": {"kind": "appstore", "signer": "Apple Mac OS Application Signing"},
+            "/A/Phone.app": {"kind": "appstore", "signer": "Apple iPhone OS Application Signing"},
+            "/A/Corp.app": {"kind": "other", "signer": "Corp Internal CA"},
+            "/opt/homebrew/bin/jq": {"kind": "adhoc", "signer": None},
+            "/A/Plain.app": {"kind": "unsigned", "signer": None},
+            "/A/Odd.app": {"kind": "unknown", "signer": None}})
+        self.assertEqual(brewdash.classify_signature("Authority=Software Signing\n")["kind"], "apple")
+
+    def test_every_app_gets_a_signature_and_one_failure_stays_local(self):
+        def sysrun(argv, timeout=60):
+            if argv[-1] == "/A/Boom.app":
+                raise OSError("codesign vanished")
+            self.assertEqual(argv[:3], [brewdash.CODESIGN, "-dv", "--verbose=2"])
+            return 0, "", CODESIGN_OUT[argv[-1]]
+        apps = [{"path": "/A/1Password.app"}, {"path": "/A/Boom.app"}, {"path": "/A/Plain.app"}]
+        brewdash.sign_apps(apps, sysrun)
+        self.assertEqual([a["signature"] for a in apps], [
+            {"kind": "developer_id", "signer": "AgileBits Inc. (2BUA8C4S2C)"},
+            {"kind": "unknown", "signer": None, "error": "codesign vanished"},
+            {"kind": "unsigned", "signer": None}])
+
+    def test_snapshot_carries_the_ports_of_running_services(self):
+        def sysrun(argv, timeout=60):
+            return 1, LSOF_TCP if "-iTCP" in argv else "", ""
+        store = brewdash.Store(FakeBrew(), home=tempfile.gettempdir() + "/brewdash-no-home", app_dirs=[], sysrun=sysrun)
+        store.refresh()
+        wait_for(lambda: store.ports)
+        self.assertEqual(store.snapshot()["ports"], {"error": None, "by_id": {"f:tool": [
+            {"proto": "TCP", "address": "*", "port": 6379, "exposed": True},
+            {"proto": "TCP", "address": "[::1]", "port": 6379, "exposed": False},
+            {"proto": "TCP", "address": "127.0.0.1", "port": 6380, "exposed": False}]}})
+
+    def test_lsof_failure_is_reported(self):
+        def sysrun(argv, timeout=60):
+            raise OSError("no lsof")
+        store = brewdash.Store(FakeBrew(), home=tempfile.gettempdir() + "/brewdash-no-home", app_dirs=[], sysrun=sysrun)
+        store.refresh()
+        wait_for(lambda: store.ports)
+        self.assertEqual(store.ports, {"error": "brewdash could not run lsof: no lsof", "by_id": {}})
 
 
 if __name__ == "__main__":
