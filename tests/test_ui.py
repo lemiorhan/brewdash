@@ -520,6 +520,81 @@ class UiSmokeTest(unittest.TestCase):
         self.page.click('nav button[data-tab="overview"]')
         self.assertTrue(self.page.get_attribute('.bar-row[data-goto="f:jq"]', "title").endswith(" — jq desc"))
 
+    def records(self):
+        sub = lambda r: r.locator(".rec-sub").text_content() if r.locator(".rec-sub").count() else ""  # noqa: E731
+        return {r.locator(".rec-title").text_content(): (r.locator(".rec-name").text_content(),
+                                                         r.locator(".rec-value").text_content(), sub(r))
+                for r in self.page.locator(".rec").all()}
+
+    def test_records_name_the_package_its_value_and_its_ties(self):
+        recs = self.records()
+        self.assertEqual(recs["Most dependencies"], ("ytdl", "2 packages", "1 direct"))
+        self.assertEqual(recs["Most depended on"], ("ssl@1", "2 packages", "1 direct"))
+        self.assertEqual(recs["Longest dependency chain"], ("ytdl", "2 levels", "ytdl → py → ssl@1"))
+        self.assertEqual(recs["Shortest name"], ("jq", "2 characters", "also py"))
+        self.assertEqual(recs["Longest name"], ("php@8.0", "7 characters", ""))
+        self.assertEqual(recs["Highest version"], ("drv", "2.0", ""))
+        self.assertEqual(recs["Newest install"][0], "drv")
+        name, _, sub = recs["Longest without an upgrade"]
+        self.assertEqual(name, "held")
+        self.assertTrue(sub.endswith(" · also jq, odd, php@8.0 and 3 more"), sub)
+        self.page.click('.rec-also[data-goto="f:py"]')
+        self.assertEqual(self.page.inner_text("#detail h2.detail-title"), "py")
+
+    def test_numbers_count_what_their_label_says(self):
+        rows = {r.locator("span").first.text_content(): (r.locator(".num-value").text_content(), r.get_attribute("title"))
+                for r in self.page.locator(".num-row").all()}
+        values = {k: v for k, (v, _) in rows.items()}
+        self.assertEqual({k: values[k] for k in ("Dependencies per formula you installed", "Direct dependency links",
+                                                 "Need nothing, needed by nothing", "Versioned (name@version)",
+                                                 "Different licenses", "Formulae without a license")},
+                         {"Dependencies per formula you installed": "0.4 on average", "Direct dependency links": "2",
+                          "Need nothing, needed by nothing": "5", "Versioned (name@version)": "2",
+                          "Different licenses": "1", "Formulae without a license": "0"})
+        self.assertTrue(rows["Versioned (name@version)"][1].endswith("\n\nphp@8.0, ssl@1"))
+
+    def test_distribution_bars_are_groups_that_name_their_packages(self):
+        page = self.browser.new_page(timezone_id="UTC")
+        self.addCleanup(page.close)
+        page.goto(self.url)
+        page.wait_for_selector(".ov .att")
+        bars = lambda title: [(r.locator(".bar-label").text_content(), r.locator(".bar-value").text_content(),  # noqa: E731
+                               r.get_attribute("title")) for r in page.locator(f'.card:has(> h3:text-is("{title}")) .bar-row').all()]
+        days = bars("Installs by weekday")
+        self.assertEqual([(d, n) for d, n, _ in days], [("Monday", "0 pkg"), ("Tuesday", "8 pkg"), ("Wednesday", "0 pkg"),
+                                                        ("Thursday", "0 pkg"), ("Friday", "0 pkg"), ("Saturday", "0 pkg"),
+                                                        ("Sunday", "0 pkg")])
+        self.assertEqual(days[1][2], "Tuesday: 8 pkg\ndrv, held, jq, odd, php@8.0, py, ssl@1, ytdl")
+        self.assertEqual([(r, n) for r, n, _ in bars("Dependencies each package brings")][:3],
+                         [("none", "6 pkg"), ("1", "1 pkg"), ("2–5", "1 pkg")])
+        self.assertEqual(page.locator("h3.ov-section + .cards .card").count(), 6)
+        self.assertGreater(page.locator("h3.ov-section + .cards .bar-row").count(), 0)
+        self.assertEqual(page.locator("h3.ov-section + .cards .bar-row[data-goto]").count(), 0)
+
+    def test_overview_helpers(self):
+        ev = self.page.evaluate
+        self.assertEqual(ev("""() => {
+            const score = (p) => ({ a: 2, b: 2, c: 1 })[p.name] ?? null;
+            const ps = ["b", "a", "c", "d"].map((name) => ({ name }));
+            return [best(ps, score), best(ps, score, true)].map((r) => [r.top.map((p) => p.name), r.value]);
+        }"""), [[["a", "b"], 2], [["c"], 1]])
+        self.assertEqual(ev("ranges([1023, 1024, 10239, 10240, 2000000].map((kb) => ({ kb })), (p) => p.kb, SIZE_RANGES)"
+                            ".map((r) => [r.label, r.value])"),
+                         [["under 1 MB", 1], ["1–10 MB", 2], ["10–100 MB", 1], ["100 MB–1 GB", 0], ["1 GB or more", 1]])
+        self.assertEqual(ev("topGroups([['x', [1, 2, 3]], ['y', [1, 2]], ['z', [1]], ['w', [1]]], 2).map((r) => [r.label, r.value])"),
+                         [["x", 3], ["y", 2], ["2 others", 2]])
+        self.assertEqual(ev("groupsBy(['b', 'a', 'b', 'c', 'a'].map((n) => ({ n })), (p) => p.n).map(([k, ps]) => [k, ps.length])"),
+                         [["a", 2], ["b", 2], ["c", 1]])
+        self.assertEqual(ev("['2026.4.1', '2026-10-20', '20240101', '577.0.0', '20.11.1', 'r3108']"
+                            ".map((version) => majorVersion({ version }))"), [None, None, None, 577, 20, None])
+        self.assertEqual(ev("""() => {
+            S.pkgs = new Map([["a", ["b"]], ["b", ["c"]], ["c", []], ["d", ["b", "c"]], ["e", ["f"]], ["f", ["e"]]]
+              .map(([id, deps]) => [id, { deps }]));
+            const reach = dependencyReach();
+            return ["a", "b", "c", "d"].map((id) => [[...reach.get(id).all].sort(), reach.get(id).chain])
+              .concat([reach.has("e") && reach.has("f")]);
+        }"""), [[["b", "c"], ["a", "b", "c"]], [["c"], ["b", "c"]], [[], ["c"]], [["b", "c"], ["d", "b", "c"]], True])
+
     def test_detail_lists_indirect_dependents(self):
         self.open("deps", "f:ssl@1")
         self.assertIn("Also needed indirectly by:\nytdl", self.page.inner_text("#detail"))

@@ -1,4 +1,6 @@
+import contextlib
 import http.client
+import io
 import json
 import os
 import plistlib
@@ -9,6 +11,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import brewdash  # noqa: E402
@@ -1221,6 +1224,15 @@ class ServerWiringTest(unittest.TestCase):
         snap = json.loads(data)
         return snap if snap["model"] else None
 
+    def test_every_web_file_is_served_with_its_type(self):
+        types = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
+                 ".png": "image/png"}
+        files = [f for f in brewdash.WEB.rglob("*") if f.is_file()]
+        self.assertLessEqual({"index.html", "app.js", "logo.svg", "favicon-32.png"}, {f.name for f in files})
+        for f in files:
+            r, data = self.request("GET", "/" + f.relative_to(brewdash.WEB).as_posix(), token=False, response=True)
+            self.assertEqual((r.status, r.getheader("Content-Type"), data), (200, types[f.suffix], f.read_bytes()), f)
+
     def test_api_rejects_missing_token_and_foreign_host(self):
         self.assertEqual(self.request("GET", "/api/state", token=False)[0], 403)
         self.assertEqual(self.request("GET", "/api/state", host=f"evil.test:{self.port}")[0], 403)
@@ -1524,6 +1536,47 @@ class ListeningAndSignatureTest(unittest.TestCase):
         store.refresh()
         wait_for(lambda: store.ports)
         self.assertEqual(store.ports, {"error": "brewdash could not run lsof: no lsof", "by_id": {}})
+
+
+class StopWithParentTest(unittest.TestCase):
+    class Server:
+        def __init__(self):
+            self.stopped = threading.Event()
+
+        def shutdown(self):
+            self.stopped.set()
+
+    def test_the_server_stops_once_the_parent_is_gone_and_not_before(self):
+        parent = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        server = self.Server()
+        try:
+            brewdash.stop_with(parent.pid, server, interval=0.02)
+            self.assertFalse(server.stopped.wait(0.3))
+        finally:
+            parent.kill()
+            parent.wait()
+        self.assertTrue(server.stopped.wait(2))
+
+    @unittest.skipIf(os.geteuid() == 0, "root may signal any process")
+    def test_a_pid_that_now_belongs_to_another_user_counts_as_gone(self):
+        server = self.Server()
+        brewdash.stop_with(1, server, interval=0.02)
+        self.assertTrue(server.stopped.wait(2))
+
+    def main_with(self, *argv):
+        server = mock.Mock()
+        with mock.patch.object(brewdash, "serve", return_value=(server, "http://127.0.0.1:1/?t=x", "x")), \
+                mock.patch.object(brewdash, "stop_with") as stop_with, \
+                mock.patch.object(sys, "argv", ["brewdash.py", "--no-browser", *argv]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            brewdash.main()
+        return server, stop_with
+
+    def test_main_watches_the_process_given_with_parent(self):
+        server, stop_with = self.main_with("--parent", "4242")
+        stop_with.assert_called_once_with(4242, server)
+        server.serve_forever.assert_called_once()
+        self.main_with()[1].assert_not_called()
 
 
 if __name__ == "__main__":

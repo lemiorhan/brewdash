@@ -719,7 +719,7 @@ function recordsCard(all, sizes, reach) {
     recordTile("Most depended on", best(all, (p) => p.required_by.length || null), pkgs, (p) => `${p.dependents.length} direct`),
     recordTile("Longest dependency chain", best(all, (p) => reach.get(p.id).chain.length - 1 || null), (n) => plural(n, "level"),
       (p) => reach.get(p.id).chain.map((id) => S.pkgs.get(id).name).join(" → ")),
-    recordTile("Oldest install", best(all, (p) => p.installed_time || null, true), fmtDate, (p) => fmtAgo(p.installed_time)),
+    recordTile("Longest without an upgrade",best(all, (p) => p.installed_time || null, true), fmtDate, (p) => fmtAgo(p.installed_time)),
     recordTile("Newest install", best(all, (p) => p.installed_time || null), fmtDate, (p) => fmtAgo(p.installed_time)),
     recordTile("Shortest name", best(all, (p) => p.name.length, true), (n) => plural(n, "character")),
     recordTile("Longest name", best(all, (p) => p.name.length), (n) => plural(n, "character")),
