@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>brewdash: a dashboard for Homebrew on your Mac</title>
-<meta name="description" content="See why every Homebrew package on your Mac is there, what is out of date or broken, and what needs your attention. Fix it from the browser, with every command shown before it runs.">
+<title data-i18n="doc.title">brewdash: a dashboard for Homebrew on your Mac</title>
+<meta name="description" data-i18n-attr="content:doc.description" content="See why every Homebrew package on your Mac is there, what is out of date or broken, and what needs your attention. Fix it from the browser, with every command shown before it runs.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#151a22" media="(prefers-color-scheme: dark)">
@@ -13,11 +13,26 @@
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <link rel="canonical" href="https://lemiorhan.github.io/brewdash/">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="brewdash">
 <meta property="og:title" content="brewdash: brew list, explained">
 <meta property="og:description" content="A local dashboard for Homebrew. See why every package is there and what needs your attention.">
 <meta property="og:url" content="https://lemiorhan.github.io/brewdash/">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="tr_TR">
+<meta property="og:locale:alternate" content="es_ES">
+<meta property="og:locale:alternate" content="zh_CN">
 <meta property="og:image" content="https://lemiorhan.github.io/brewdash/assets/social.png">
+<meta property="og:image:secure_url" content="https://lemiorhan.github.io/brewdash/assets/social.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The brewdash logo, a mug holding a bar chart, beside the text: A local dashboard for Homebrew. See what is installed, and why.">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="brewdash: brew list, explained">
+<meta name="twitter:description" content="A local dashboard for Homebrew. See why every package is there and what needs your attention.">
+<meta name="twitter:image" content="https://lemiorhan.github.io/brewdash/assets/social.png">
+<meta name="twitter:image:alt" content="The brewdash logo, a mug holding a bar chart, beside the text: A local dashboard for Homebrew. See what is installed, and why.">
+<meta name="author" content="Lemi Orhan Ergin">
 <style>
 :root {
   --paper: #f4f6f9;
@@ -85,6 +100,20 @@ img { display: block; max-width: 100%; height: auto; }
 .top nav { display: flex; gap: 26px; font-size: 15px; }
 .top nav a { color: var(--muted); text-decoration: none; }
 .top nav a:hover { color: var(--ink); }
+.lang { position: relative; display: inline-flex; align-items: center; color: var(--muted); }
+.lang:hover { color: var(--ink); }
+.lang select {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0 14px 0 0;
+  cursor: pointer;
+}
+.lang::after { content: "▾"; position: absolute; right: 0; font-size: 11px; pointer-events: none; }
+.lang option { color: var(--ink); background: var(--surface); }
 
 /* Hero */
 .hero {
@@ -282,36 +311,42 @@ footer a { color: var(--muted); }
 <body>
 
 <header class="wrap top">
-  <a class="wordmark" href="./" aria-label="brewdash home"><img src="assets/logo.svg" alt="">brew<span>dash</span></a>
-  <nav aria-label="Page">
-    <a href="#tour">Tour</a>
-    <a href="#safety">Safety</a>
-    <a href="#install">Install</a>
+  <a class="wordmark" href="./" aria-label="brewdash home" data-i18n-attr="aria-label:home.aria"><img src="assets/logo.svg" alt="">brew<span>dash</span></a>
+  <nav aria-label="Page" data-i18n-attr="aria-label:nav.aria">
+    <a href="#tour" data-i18n="nav.tour">Tour</a>
+    <a href="#safety" data-i18n="nav.safety">Safety</a>
+    <a href="#install" data-i18n="nav.install">Install</a>
     <a class="gh" href="https://github.com/lemiorhan/brewdash">GitHub</a>
+    <label class="lang"><select id="lang" aria-label="Language" data-i18n-attr="aria-label:lang.label">
+      <option value="en" lang="en">English</option>
+      <option value="tr" lang="tr">Türkçe</option>
+      <option value="es" lang="es">Español</option>
+      <option value="zh-CN" lang="zh-CN">简体中文</option>
+    </select></label>
   </nav>
 </header>
 
 <main>
   <section class="wrap hero">
     <div class="hero-text">
-      <h1><code>brew list</code>, explained.</h1>
-      <p class="lede">brewdash is a dashboard for Homebrew that runs on your Mac. It shows <strong>why each package is there</strong>, what is out of date or broken, and what needs your attention. Then it fixes it, with every command shown to you before it runs.</p>
+      <h1 data-i18n-html="hero.title"><code>brew list</code>, explained.</h1>
+      <p class="lede" data-i18n-html="hero.lede">brewdash is a dashboard for Homebrew that runs on your Mac. It shows <strong>why each package is there</strong>, what is out of date or broken, and what needs your attention. Then it fixes it, with every command shown to you before it runs.</p>
     </div>
 
     <div class="install" id="install">
-      <div class="install-tabs" role="tablist" aria-label="Download with">
+      <div class="install-tabs" role="tablist" aria-label="Download with" data-i18n-attr="aria-label:install.tabsAria">
         <button type="button" role="tab" aria-selected="true" aria-controls="install-command" data-command="curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash">curl</button>
         <button type="button" role="tab" aria-selected="false" aria-controls="install-command" data-command="wget -qO- https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash">wget</button>
       </div>
       <div class="command">
         <pre id="install-command" role="tabpanel" tabindex="0">curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash</pre>
-        <button type="button" class="copy" data-copy="install-command">Copy</button>
+        <button type="button" class="copy" data-copy="install-command" data-i18n="copy.button">Copy</button>
       </div>
-      <p class="install-note">Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a href="https://github.com/lemiorhan/brewdash/blob/master/install.sh">Read the script first</a>.</p>
+      <p class="install-note" data-i18n-html="install.note">Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a href="https://github.com/lemiorhan/brewdash/blob/master/install.sh">Read the script first</a>.</p>
       <p class="install-note" role="status" aria-live="polite" id="copy-status"></p>
     </div>
 
-    <figure class="terminal" aria-label="brew list output with what brewdash tells you about each package">
+    <figure class="terminal" aria-label="brew list output with what brewdash tells you about each package" data-i18n-attr="aria-label:terminal.aria">
       <span class="prompt">$</span> brew list
       <ol>
         <li style="--i:0"><span class="pkg">awscli</span><span class="why warning">2.19.1 is out, you have 2.18.0</span></li>
@@ -323,24 +358,24 @@ footer a { color: var(--muted); }
         <li style="--i:6"><span class="pkg">redis</span><span class="why critical">listens on every network interface</span></li>
         <li style="--i:7"><span class="pkg">wget</span><span class="why warning">pinned, so brew upgrade skips 1.25.0</span></li>
       </ol>
-      <figcaption>Each comment is something brewdash tells you about that package. These come from its demo data.</figcaption>
+      <figcaption data-i18n="terminal.caption">Each comment is something brewdash tells you about that package. These come from its demo data.</figcaption>
     </figure>
   </section>
 
   <section class="section" id="tour" aria-labelledby="tour-title">
     <div class="wrap">
-      <h2 id="tour-title">Everything brew knows, on one page</h2>
-      <p class="intro">brewdash reads Homebrew's own output and your shell files. Pick a view to see it.</p>
+      <h2 id="tour-title" data-i18n="tour.title">Everything brew knows, on one page</h2>
+      <p class="intro" data-i18n="tour.intro">brewdash reads Homebrew's own output and your shell files. Pick a view to see it.</p>
       <div class="tour">
-        <div role="tablist" aria-label="Views" aria-orientation="vertical">
-          <button type="button" role="tab" aria-selected="true" aria-controls="tour-shot" data-shot="overview" data-alt="The overview: totals, disk use and a Needs attention list ordered worst first"><b>Overview</b><span>Totals, disk use, records and charts, and a Needs attention list ordered worst first. Each line opens the page where you can act on it.</span></button>
-          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="packages" data-alt="The package list with the detail panel and dependency graph of node"><b>Packages</b><span>Version, size, install date and what uses each package. The detail panel draws the dependency graph and says whether removing it is safe.</span></button>
-          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="services" data-alt="Brew services with the ports each one listens on"><b>Services</b><span>Start, stop and restart brew services, and see which ports each one opens. A port other machines can reach is flagged.</span></button>
-          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="apps" data-alt="Apps with how each was installed and who signed it"><b>Apps</b><span>Every app in your Applications folders, how it got there and who signed it. Hand Homebrew an app you installed by hand.</span></button>
-          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="shell" data-alt="PATH entries from shell startup files with problems flagged"><b>Shell</b><span>The PATH lines in your shell startup files, with missing, duplicated and risky entries flagged.</span></button>
-          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="security" data-alt="secure-it findings in the Security tab"><b>Security</b><span>Findings from secure-it, a separate macOS security scanner, shown next to the packages, taps and shell files they concern.</span></button>
+        <div role="tablist" aria-label="Views" data-i18n-attr="aria-label:tour.viewsAria" aria-orientation="vertical">
+          <button type="button" role="tab" aria-selected="true" aria-controls="tour-shot" data-shot="overview" data-alt="The overview: totals, disk use and a Needs attention list ordered worst first" data-i18n-attr="data-alt:tour.overview.alt"><b data-i18n="tour.overview.name">Overview</b><span data-i18n="tour.overview.desc">Totals, disk use, records and charts, and a Needs attention list ordered worst first. Each line opens the page where you can act on it.</span></button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="packages" data-alt="The package list with the detail panel and dependency graph of node" data-i18n-attr="data-alt:tour.packages.alt"><b data-i18n="tour.packages.name">Packages</b><span data-i18n="tour.packages.desc">Version, size, install date and what uses each package. The detail panel draws the dependency graph and says whether removing it is safe.</span></button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="services" data-alt="Brew services with the ports each one listens on" data-i18n-attr="data-alt:tour.services.alt"><b data-i18n="tour.services.name">Services</b><span data-i18n="tour.services.desc">Start, stop and restart brew services, and see which ports each one opens. A port other machines can reach is flagged.</span></button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="apps" data-alt="Apps with how each was installed and who signed it" data-i18n-attr="data-alt:tour.apps.alt"><b data-i18n="tour.apps.name">Apps</b><span data-i18n="tour.apps.desc">Every app in your Applications folders, how it got there and who signed it. Hand Homebrew an app you installed by hand.</span></button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="shell" data-alt="PATH entries from shell startup files with problems flagged" data-i18n-attr="data-alt:tour.shell.alt"><b data-i18n="tour.shell.name">Shell</b><span data-i18n="tour.shell.desc">The PATH lines in your shell startup files, with missing, duplicated and risky entries flagged.</span></button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="security" data-alt="secure-it findings in the Security tab" data-i18n-attr="data-alt:tour.security.alt"><b data-i18n="tour.security.name">Security</b><span data-i18n="tour.security.desc">Findings from secure-it, a separate macOS security scanner, shown next to the packages, taps and shell files they concern.</span></button>
         </div>
-        <div id="tour-shot" role="tabpanel" aria-label="Screenshot">
+        <div id="tour-shot" role="tabpanel" aria-label="Screenshot" data-i18n-attr="aria-label:tour.shotAria">
           <figure class="shot">
             <picture>
               <source media="(prefers-color-scheme: dark)" srcset="screenshots/overview-dark.png">
@@ -355,20 +390,20 @@ footer a { color: var(--muted); }
 
   <section class="section" id="safety" aria-labelledby="safety-title">
     <div class="wrap">
-      <h2 id="safety-title">Nothing changes until you confirm it</h2>
-      <p class="intro">Looking around is free. brewdash runs a brew command only when you press a button and agree to what it shows you.</p>
+      <h2 id="safety-title" data-i18n="safety.title">Nothing changes until you confirm it</h2>
+      <p class="intro" data-i18n="safety.intro">Looking around is free. brewdash runs a brew command only when you press a button and agree to what it shows you.</p>
       <ul class="facts">
         <li>
-          <h3>Only your Mac can reach it</h3>
-          <p>The server listens on <code>127.0.0.1</code>, and each start makes a new token that every API call has to carry.</p>
+          <h3 data-i18n="safety.local.title">Only your Mac can reach it</h3>
+          <p data-i18n-html="safety.local.body">The server listens on <code>127.0.0.1</code>, and each start makes a new token that every API call has to carry.</p>
         </li>
         <li>
-          <h3>You see every command first</h3>
-          <p>Each action opens a dialog with the exact brew commands it will run. If a removal would break other packages, the dialog names them.</p>
+          <h3 data-i18n="safety.preview.title">You see every command first</h3>
+          <p data-i18n="safety.preview.body">Each action opens a dialog with the exact brew commands it will run. If a removal would break other packages, the dialog names them.</p>
         </li>
         <li>
-          <h3>A removal can be undone</h3>
-          <p>Before every uninstall brewdash saves a Brewfile snapshot. <code>brew bundle install --file=&lt;snapshot&gt;</code> puts it all back.</p>
+          <h3 data-i18n="safety.undo.title">A removal can be undone</h3>
+          <p data-i18n-html="safety.undo.body">Before every uninstall brewdash saves a Brewfile snapshot. <code>brew bundle install --file=&lt;snapshot&gt;</code> puts it all back.</p>
         </li>
       </ul>
     </div>
@@ -376,20 +411,20 @@ footer a { color: var(--muted); }
 
   <section class="section" id="app" aria-labelledby="app-title">
     <div class="wrap">
-      <h2 id="app-title">Opens like any other Mac app</h2>
-      <p class="intro">The install command builds brewdash.app on your Mac. The dashboard itself opens in your browser.</p>
+      <h2 id="app-title" data-i18n="app.title">Opens like any other Mac app</h2>
+      <p class="intro" data-i18n="app.intro">The install command builds brewdash.app on your Mac. The dashboard itself opens in your browser.</p>
       <ol class="steps">
         <li>
-          <h3>Install</h3>
-          <p>Paste the command above in Terminal. To update later, run the same command again.</p>
+          <h3 data-i18n="app.install.title">Install</h3>
+          <p data-i18n="app.install.body">Paste the command above in Terminal. To update later, run the same command again.</p>
         </li>
         <li>
-          <h3>Open</h3>
-          <p>Start brewdash from Launchpad, Spotlight or the Dock. Click its Dock icon to bring the dashboard back.</p>
+          <h3 data-i18n="app.open.title">Open</h3>
+          <p data-i18n="app.open.body">Start brewdash from Launchpad, Spotlight or the Dock. Click its Dock icon to bring the dashboard back.</p>
         </li>
         <li>
-          <h3>Quit</h3>
-          <p>Press <kbd>⌘</kbd> <kbd>Q</kbd> to quit brewdash. Its server stops with it.</p>
+          <h3 data-i18n="app.quit.title">Quit</h3>
+          <p data-i18n-html="app.quit.body">Press <kbd>⌘</kbd> <kbd>Q</kbd> to quit brewdash. Its server stops with it.</p>
         </li>
       </ol>
     </div>
@@ -397,27 +432,27 @@ footer a { color: var(--muted); }
 
   <section class="section" id="details" aria-labelledby="details-title">
     <div class="wrap">
-      <h2 id="details-title">The details</h2>
+      <h2 id="details-title" data-i18n="details.title">The details</h2>
       <div class="details">
         <div>
-          <h3>What you need</h3>
-          <p>macOS, <a href="https://brew.sh">Homebrew</a> and Python 3.9 or newer. The <code>python3</code> that comes with the Xcode Command Line Tools is enough; brewdash needs no other packages.</p>
+          <h3 data-i18n="details.needs.title">What you need</h3>
+          <p data-i18n-html="details.needs.body">macOS, <a href="https://brew.sh">Homebrew</a> and Python 3.9 or newer. The <code>python3</code> that comes with the Xcode Command Line Tools is enough; brewdash needs no other packages.</p>
         </div>
         <div>
-          <h3>Removing it</h3>
-          <p>This deletes the app. Your settings and Brewfile snapshots stay in <code>~/.local/state/brewdash</code>.</p>
+          <h3 data-i18n="details.remove.title">Removing it</h3>
+          <p data-i18n-html="details.remove.body">This deletes the app. Your settings and Brewfile snapshots stay in <code>~/.local/state/brewdash</code>.</p>
           <pre class="snippet">curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall</pre>
         </div>
         <div>
-          <h3>Try it without your own setup</h3>
-          <p>The demo serves made-up packages and only prints the commands it would run.</p>
+          <h3 data-i18n="details.demo.title">Try it without your own setup</h3>
+          <p data-i18n="details.demo.body">The demo serves made-up packages and only prints the commands it would run.</p>
           <pre class="snippet">git clone https://github.com/lemiorhan/brewdash.git
 cd brewdash
 python3 scripts/demo.py</pre>
         </div>
         <div>
-          <h3>Run it from the source</h3>
-          <p>brewdash is one Python file and a small web page, under the Apache License 2.0.</p>
+          <h3 data-i18n="details.source.title">Run it from the source</h3>
+          <p data-i18n="details.source.body">brewdash is one Python file and a small web page, under the Apache License 2.0.</p>
           <pre class="snippet">python3 brewdash.py                <span class="c"># opens your browser</span>
 python3 brewdash.py --port 8765    <span class="c"># on a fixed port</span></pre>
         </div>
@@ -429,16 +464,347 @@ python3 brewdash.py --port 8765    <span class="c"># on a fixed port</span></pre
 <footer>
   <div class="wrap">
     <a class="wordmark" href="./"><img src="assets/logo.svg" alt="">brew<span>dash</span></a>
-    <nav aria-label="Project">
-      <a href="https://github.com/lemiorhan/brewdash">Source on GitHub</a>
-      <a href="https://github.com/lemiorhan/brewdash/blob/master/SECURITY.md">Report a vulnerability</a>
+    <nav aria-label="Project" data-i18n-attr="aria-label:footer.aria">
+      <a href="https://github.com/lemiorhan/brewdash" data-i18n="footer.source">Source on GitHub</a>
+      <a href="https://github.com/lemiorhan/brewdash/blob/master/SECURITY.md" data-i18n="footer.vuln">Report a vulnerability</a>
       <a href="https://github.com/lemiorhan/brewdash/blob/master/LICENSE">Apache License 2.0</a>
     </nav>
   </div>
 </footer>
 
 <script>
+window.brewdashI18n = (() => {
+  const RS = 'href="https://github.com/lemiorhan/brewdash/blob/master/install.sh"';
+  const dict = {
+    en: {
+      "doc.title": "brewdash: a dashboard for Homebrew on your Mac",
+      "doc.description": "See why every Homebrew package on your Mac is there, what is out of date or broken, and what needs your attention. Fix it from the browser, with every command shown before it runs.",
+      "home.aria": "brewdash home",
+      "nav.aria": "Page",
+      "nav.tour": "Tour",
+      "nav.safety": "Safety",
+      "nav.install": "Install",
+      "lang.label": "Language",
+      "hero.title": "<code>brew list</code>, explained.",
+      "hero.lede": "brewdash is a dashboard for Homebrew that runs on your Mac. It shows <strong>why each package is there</strong>, what is out of date or broken, and what needs your attention. Then it fixes it, with every command shown to you before it runs.",
+      "install.tabsAria": "Download with",
+      "copy.button": "Copy",
+      "copy.done": "Copied",
+      "copy.status": "The install command is on your clipboard. Paste it in Terminal.",
+      "copy.fallback": "Press ⌘C to copy the selected command.",
+      "install.note": `Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a ${RS}>Read the script first</a>.`,
+      "terminal.aria": "brew list output with what brewdash tells you about each package",
+      "terminal.caption": "Each comment is something brewdash tells you about that package. These come from its demo data.",
+      "tour.title": "Everything brew knows, on one page",
+      "tour.intro": "brewdash reads Homebrew's own output and your shell files. Pick a view to see it.",
+      "tour.viewsAria": "Views",
+      "tour.shotAria": "Screenshot",
+      "tour.overview.name": "Overview",
+      "tour.overview.desc": "Totals, disk use, records and charts, and a Needs attention list ordered worst first. Each line opens the page where you can act on it.",
+      "tour.overview.alt": "The overview: totals, disk use and a Needs attention list ordered worst first",
+      "tour.packages.name": "Packages",
+      "tour.packages.desc": "Version, size, install date and what uses each package. The detail panel draws the dependency graph and says whether removing it is safe.",
+      "tour.packages.alt": "The package list with the detail panel and dependency graph of node",
+      "tour.services.name": "Services",
+      "tour.services.desc": "Start, stop and restart brew services, and see which ports each one opens. A port other machines can reach is flagged.",
+      "tour.services.alt": "Brew services with the ports each one listens on",
+      "tour.apps.name": "Apps",
+      "tour.apps.desc": "Every app in your Applications folders, how it got there and who signed it. Hand Homebrew an app you installed by hand.",
+      "tour.apps.alt": "Apps with how each was installed and who signed it",
+      "tour.shell.name": "Shell",
+      "tour.shell.desc": "The PATH lines in your shell startup files, with missing, duplicated and risky entries flagged.",
+      "tour.shell.alt": "PATH entries from shell startup files with problems flagged",
+      "tour.security.name": "Security",
+      "tour.security.desc": "Findings from secure-it, a separate macOS security scanner, shown next to the packages, taps and shell files they concern.",
+      "tour.security.alt": "secure-it findings in the Security tab",
+      "safety.title": "Nothing changes until you confirm it",
+      "safety.intro": "Looking around is free. brewdash runs a brew command only when you press a button and agree to what it shows you.",
+      "safety.local.title": "Only your Mac can reach it",
+      "safety.local.body": "The server listens on <code>127.0.0.1</code>, and each start makes a new token that every API call has to carry.",
+      "safety.preview.title": "You see every command first",
+      "safety.preview.body": "Each action opens a dialog with the exact brew commands it will run. If a removal would break other packages, the dialog names them.",
+      "safety.undo.title": "A removal can be undone",
+      "safety.undo.body": "Before every uninstall brewdash saves a Brewfile snapshot. <code>brew bundle install --file=&lt;snapshot&gt;</code> puts it all back.",
+      "app.title": "Opens like any other Mac app",
+      "app.intro": "The install command builds brewdash.app on your Mac. The dashboard itself opens in your browser.",
+      "app.install.title": "Install",
+      "app.install.body": "Paste the command above in Terminal. To update later, run the same command again.",
+      "app.open.title": "Open",
+      "app.open.body": "Start brewdash from Launchpad, Spotlight or the Dock. Click its Dock icon to bring the dashboard back.",
+      "app.quit.title": "Quit",
+      "app.quit.body": "Press <kbd>⌘</kbd> <kbd>Q</kbd> to quit brewdash. Its server stops with it.",
+      "details.title": "The details",
+      "details.needs.title": "What you need",
+      "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> and Python 3.9 or newer. The <code>python3</code> that comes with the Xcode Command Line Tools is enough; brewdash needs no other packages.',
+      "details.remove.title": "Removing it",
+      "details.remove.body": "This deletes the app. Your settings and Brewfile snapshots stay in <code>~/.local/state/brewdash</code>.",
+      "details.demo.title": "Try it without your own setup",
+      "details.demo.body": "The demo serves made-up packages and only prints the commands it would run.",
+      "details.source.title": "Run it from the source",
+      "details.source.body": "brewdash is one Python file and a small web page, under the Apache License 2.0.",
+      "footer.aria": "Project",
+      "footer.source": "Source on GitHub",
+      "footer.vuln": "Report a vulnerability",
+    },
+    tr: {
+      "doc.title": "brewdash: Mac'indeki Homebrew için bir dashboard",
+      "doc.description": "Mac'indeki her Homebrew paketinin neden orada olduğunu, hangilerinin güncel olmadığını ya da bozuk olduğunu ve neyle ilgilenmen gerektiğini gör. Sorunları tarayıcıdan düzelt; her komut çalışmadan önce önüne gelir.",
+      "home.aria": "brewdash ana sayfa",
+      "nav.aria": "Sayfa",
+      "nav.tour": "Ekranlar",
+      "nav.safety": "Güvenlik",
+      "nav.install": "Kurulum",
+      "lang.label": "Dil",
+      "hero.title": "<code>brew list</code>, açıklamalı.",
+      "hero.lede": "brewdash, Mac'inde çalışan bir Homebrew dashboard'u. <strong>Her paketin neden orada olduğunu</strong>, hangilerinin güncel olmadığını ya da bozuk olduğunu ve neyle ilgilenmen gerektiğini gösteriyor. Sonra da düzeltiyor; her komutu çalıştırmadan önce sana gösteriyor.",
+      "install.tabsAria": "İndirme aracı",
+      "copy.button": "Kopyala",
+      "copy.done": "Kopyalandı",
+      "copy.status": "Kurulum komutu panoda. Terminal'e yapıştır.",
+      "copy.fallback": "Seçili komutu kopyalamak için ⌘C'ye bas.",
+      "install.note": `Terminal'e yapıştır. brewdash'i Uygulamalar klasörüne koyup açıyor. <a ${RS}>Önce script'i oku</a>.`,
+      "terminal.aria": "brewdash'in her paket için söyledikleriyle birlikte brew list çıktısı",
+      "terminal.caption": "Her yorum, brewdash'in o paket hakkında sana söylediği bir şey. Bunlar demo verisinden geliyor.",
+      "tour.title": "brew'un bildiği her şey, tek sayfada",
+      "tour.intro": "brewdash, Homebrew'un kendi çıktısını ve shell dosyalarını okuyor. Görmek için bir ekran seç.",
+      "tour.viewsAria": "Ekranlar",
+      "tour.shotAria": "Ekran görüntüsü",
+      "tour.overview.name": "Genel bakış",
+      "tour.overview.desc": "Toplamlar, disk kullanımı, rekorlar ve grafikler, bir de en kötüden başlayan Needs attention listesi. Her satır, o konuda bir şey yapabileceğin sayfayı açıyor.",
+      "tour.overview.alt": "Genel bakış ekranı: toplamlar, disk kullanımı ve en kötüden başlayan Needs attention listesi",
+      "tour.packages.name": "Paketler",
+      "tour.packages.desc": "Her paketin sürümü, boyutu, kurulum tarihi ve onu nelerin kullandığı. Detay paneli dependency grafiğini çiziyor, paketi kaldırmanın güvenli olup olmadığını söylüyor.",
+      "tour.packages.alt": "Paket listesi; node'un detay paneli ve dependency grafiği açık",
+      "tour.services.name": "Servisler",
+      "tour.services.desc": "brew servislerini başlat, durdur, yeniden başlat; hangisinin hangi port'ları açtığını gör. Başka makinelerin erişebildiği port'lar işaretleniyor.",
+      "tour.services.alt": "brew servisleri ve her birinin dinlediği port'lar",
+      "tour.apps.name": "Uygulamalar",
+      "tour.apps.desc": "Uygulamalar klasörlerindeki her uygulama, oraya nasıl geldiği ve kimin imzaladığı. Elle kurduğun bir uygulamayı Homebrew'a devredebilirsin.",
+      "tour.apps.alt": "Uygulamalar; her birinin nasıl kurulduğu ve kimin imzaladığı",
+      "tour.shell.name": "Shell",
+      "tour.shell.desc": "Shell başlangıç dosyalarındaki PATH satırları. Olmayan, tekrar eden ve riskli girdiler işaretli.",
+      "tour.shell.alt": "Shell başlangıç dosyalarındaki PATH girdileri, sorunlu olanlar işaretli",
+      "tour.security.name": "Güvenlik taraması",
+      "tour.security.desc": "Ayrı bir macOS güvenlik tarayıcısı olan secure-it'in bulguları, ilgili oldukları paketlerin, tap'lerin ve shell dosyalarının yanında.",
+      "tour.security.alt": "Security sekmesindeki secure-it bulguları",
+      "safety.title": "Sen onaylamadan hiçbir şey değişmez",
+      "safety.intro": "Etrafa bakmak serbest. brewdash bir brew komutunu ancak sen bir butona basıp gösterdiğini onaylarsan çalıştırıyor.",
+      "safety.local.title": "Sadece senin Mac'in erişebilir",
+      "safety.local.body": "Server <code>127.0.0.1</code> üzerinde dinliyor. Her açılışta yeni bir token üretiyor ve her API çağrısı bu token'ı taşımak zorunda.",
+      "safety.preview.title": "Her komutu önce sen görürsün",
+      "safety.preview.body": "Her işlem, çalıştıracağı brew komutlarını birebir gösteren bir dialog açıyor. Bir paketi kaldırmak başka paketleri bozacaksa dialog onları tek tek yazıyor.",
+      "safety.undo.title": "Kaldırdığını geri getirebilirsin",
+      "safety.undo.body": "brewdash her uninstall'dan önce bir Brewfile snapshot'ı alıyor. <code>brew bundle install --file=&lt;snapshot&gt;</code> hepsini geri kuruyor.",
+      "app.title": "Diğer Mac uygulamaları gibi açılır",
+      "app.intro": "Kurulum komutu brewdash.app'i senin Mac'inde build ediyor. Dashboard'un kendisi tarayıcında açılıyor.",
+      "app.install.title": "Kur",
+      "app.install.body": "Yukarıdaki komutu Terminal'e yapıştır. Sonra güncellemek için aynı komutu tekrar çalıştır.",
+      "app.open.title": "Aç",
+      "app.open.body": "brewdash'i Launchpad'den, Spotlight'tan ya da Dock'tan başlat. Dashboard'u geri getirmek için Dock'taki ikonuna tıkla.",
+      "app.quit.title": "Kapat",
+      "app.quit.body": "brewdash'ten çıkmak için <kbd>⌘</kbd> <kbd>Q</kbd>'ya bas. Server'ı da onunla birlikte duruyor.",
+      "details.title": "Detaylar",
+      "details.needs.title": "Gerekenler",
+      "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> ve Python 3.9 ya da üstü. Xcode Command Line Tools\'la gelen <code>python3</code> yeterli; brewdash başka paket istemiyor.',
+      "details.remove.title": "Kaldırmak için",
+      "details.remove.body": "Bu komut uygulamayı siliyor. Ayarların ve Brewfile snapshot'ların <code>~/.local/state/brewdash</code> içinde kalıyor.",
+      "details.demo.title": "Kendi kurulumuna dokunmadan dene",
+      "details.demo.body": "Demo uydurma paketlerle çalışıyor ve çalıştıracağı komutları sadece ekrana yazıyor.",
+      "details.source.title": "Kaynak koddan çalıştır",
+      "details.source.body": "brewdash tek bir Python dosyası ve küçük bir web sayfasından ibaret. Apache License 2.0 ile dağıtılıyor.",
+      "footer.aria": "Proje",
+      "footer.source": "GitHub'da kaynak kod",
+      "footer.vuln": "Güvenlik açığı bildir",
+    },
+    es: {
+      "doc.title": "brewdash: un panel para Homebrew en tu Mac",
+      "doc.description": "Descubre por qué está cada paquete de Homebrew en tu Mac, cuáles están desactualizados o rotos y qué requiere tu atención. Arréglalo desde el navegador, viendo cada comando antes de que se ejecute.",
+      "home.aria": "Inicio de brewdash",
+      "nav.aria": "Página",
+      "nav.tour": "Recorrido",
+      "nav.safety": "Seguridad",
+      "nav.install": "Instalación",
+      "lang.label": "Idioma",
+      "hero.title": "<code>brew list</code>, explicado.",
+      "hero.lede": "brewdash es un panel para Homebrew que se ejecuta en tu Mac. Te muestra <strong>por qué está ahí cada paquete</strong>, qué está desactualizado o roto y qué requiere tu atención. Y luego lo arregla, enseñándote cada comando antes de ejecutarlo.",
+      "install.tabsAria": "Descargar con",
+      "copy.button": "Copiar",
+      "copy.done": "Copiado",
+      "copy.status": "El comando de instalación está en tu portapapeles. Pégalo en Terminal.",
+      "copy.fallback": "Pulsa ⌘C para copiar el comando seleccionado.",
+      "install.note": `Pégalo en Terminal. Instala brewdash en tu carpeta Aplicaciones y lo abre. <a ${RS}>Lee antes el script</a>.`,
+      "terminal.aria": "Salida de brew list con lo que brewdash te dice de cada paquete",
+      "terminal.caption": "Cada comentario es algo que brewdash te dice sobre ese paquete. Salen de sus datos de demostración.",
+      "tour.title": "Todo lo que sabe brew, en una sola página",
+      "tour.intro": "brewdash lee la salida del propio Homebrew y tus archivos de shell. Elige una vista para verla.",
+      "tour.viewsAria": "Vistas",
+      "tour.shotAria": "Captura de pantalla",
+      "tour.overview.name": "Resumen",
+      "tour.overview.desc": "Totales, uso de disco, récords y gráficos, y una lista Needs attention ordenada de lo más grave a lo menos. Cada línea abre la página donde puedes resolverlo.",
+      "tour.overview.alt": "La vista Resumen: totales, uso de disco y una lista Needs attention ordenada de lo más grave a lo menos",
+      "tour.packages.name": "Paquetes",
+      "tour.packages.desc": "Versión, tamaño, fecha de instalación y qué depende de cada paquete. El panel de detalle dibuja el grafo de dependencias y te dice si es seguro desinstalarlo.",
+      "tour.packages.alt": "La lista de paquetes con el panel de detalle y el grafo de dependencias de node",
+      "tour.services.name": "Servicios",
+      "tour.services.desc": "Inicia, detén y reinicia servicios de brew, y mira qué puertos abre cada uno. Se marca cualquier puerto al que puedan llegar otras máquinas.",
+      "tour.services.alt": "Servicios de brew con los puertos en los que escucha cada uno",
+      "tour.apps.name": "Apps",
+      "tour.apps.desc": "Todas las apps de tus carpetas Aplicaciones, cómo llegaron ahí y quién las firmó. Pásale a Homebrew una app que instalaste a mano.",
+      "tour.apps.alt": "Apps con cómo se instaló cada una y quién la firmó",
+      "tour.shell.name": "Shell",
+      "tour.shell.desc": "Las líneas de PATH de tus archivos de arranque de la shell, con las entradas inexistentes, duplicadas o arriesgadas marcadas.",
+      "tour.shell.alt": "Entradas de PATH de los archivos de arranque de la shell, con los problemas marcados",
+      "tour.security.name": "Análisis de seguridad",
+      "tour.security.desc": "Los hallazgos de secure-it, un escáner de seguridad para macOS independiente, junto a los paquetes, taps y archivos de shell a los que afectan.",
+      "tour.security.alt": "Hallazgos de secure-it en la pestaña Security",
+      "safety.title": "Nada cambia hasta que tú lo confirmas",
+      "safety.intro": "Mirar no cuesta nada. brewdash solo ejecuta un comando de brew cuando pulsas un botón y aceptas lo que te muestra.",
+      "safety.local.title": "Solo tu Mac puede acceder",
+      "safety.local.body": "El servidor escucha en <code>127.0.0.1</code> y en cada arranque genera un token nuevo que toda llamada a la API tiene que llevar.",
+      "safety.preview.title": "Ves cada comando antes",
+      "safety.preview.body": "Cada acción abre un diálogo con los comandos de brew exactos que va a ejecutar. Si desinstalar algo rompería otros paquetes, el diálogo te dice cuáles.",
+      "safety.undo.title": "Una desinstalación se puede deshacer",
+      "safety.undo.body": "Antes de cada desinstalación, brewdash guarda un snapshot del Brewfile. <code>brew bundle install --file=&lt;snapshot&gt;</code> lo deja todo como estaba.",
+      "app.title": "Se abre como cualquier otra app del Mac",
+      "app.intro": "El comando de instalación crea brewdash.app en tu Mac. El panel en sí se abre en tu navegador.",
+      "app.install.title": "Instala",
+      "app.install.body": "Pega el comando de arriba en Terminal. Para actualizar más adelante, vuelve a ejecutar el mismo comando.",
+      "app.open.title": "Abre",
+      "app.open.body": "Abre brewdash desde Launchpad, Spotlight o el Dock. Haz clic en su icono del Dock para volver al panel.",
+      "app.quit.title": "Cierra",
+      "app.quit.body": "Pulsa <kbd>⌘</kbd> <kbd>Q</kbd> para salir de brewdash. Su servidor se detiene con él.",
+      "details.title": "Los detalles",
+      "details.needs.title": "Qué necesitas",
+      "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> y Python 3.9 o posterior. Basta con el <code>python3</code> que viene con las Xcode Command Line Tools; brewdash no necesita ningún otro paquete.',
+      "details.remove.title": "Desinstalarlo",
+      "details.remove.body": "Esto borra la app. Tu configuración y los snapshots del Brewfile se quedan en <code>~/.local/state/brewdash</code>.",
+      "details.demo.title": "Pruébalo sin tocar tu instalación",
+      "details.demo.body": "La demo sirve paquetes inventados y solo muestra los comandos que ejecutaría.",
+      "details.source.title": "Ejecútalo desde el código fuente",
+      "details.source.body": "brewdash es un solo archivo de Python y una pequeña página web, bajo la Apache License 2.0.",
+      "footer.aria": "Proyecto",
+      "footer.source": "Código fuente en GitHub",
+      "footer.vuln": "Reportar una vulnerabilidad",
+    },
+    "zh-CN": {
+      "doc.title": "brewdash：Mac 上的 Homebrew 仪表盘",
+      "doc.description": "看清 Mac 上每个 Homebrew 包为什么会在那里，哪些已过时或损坏，哪些需要你处理。直接在浏览器里修复，每条命令运行前都会先展示给你。",
+      "home.aria": "brewdash 首页",
+      "nav.aria": "页面",
+      "nav.tour": "功能一览",
+      "nav.safety": "安全性",
+      "nav.install": "安装",
+      "lang.label": "语言",
+      "hero.title": "<code>brew list</code>，一目了然。",
+      "hero.lede": "brewdash 是一个运行在你 Mac 上的 Homebrew 仪表盘。它会告诉你<strong>每个包为什么会在那里</strong>，哪些已过时或损坏，哪些需要你处理。然后帮你修好，每条命令运行前都会先给你看。",
+      "install.tabsAria": "下载方式",
+      "copy.button": "复制",
+      "copy.done": "已复制",
+      "copy.status": "安装命令已复制到剪贴板，粘贴到“终端”即可。",
+      "copy.fallback": "按 ⌘C 复制选中的命令。",
+      "install.note": `粘贴到“终端”中运行。它会把 brewdash 放进“应用程序”文件夹并打开。<a ${RS}>先看看脚本</a>。`,
+      "terminal.aria": "brew list 的输出，以及 brewdash 对每个包的说明",
+      "terminal.caption": "每条注释都是 brewdash 对该包给出的提示，来自它的演示数据。",
+      "tour.title": "brew 知道的一切，尽在一页",
+      "tour.intro": "brewdash 读取 Homebrew 自己的输出和你的 shell 配置文件。选一个视图看看。",
+      "tour.viewsAria": "视图",
+      "tour.shotAria": "截图",
+      "tour.overview.name": "概览",
+      "tour.overview.desc": "总数、磁盘占用、各项之最和图表，还有一份按严重程度排序的 Needs attention 列表。点开任意一行，就会跳到可以处理它的页面。",
+      "tour.overview.alt": "概览页：总数、磁盘占用，以及按严重程度排序的 Needs attention 列表",
+      "tour.packages.name": "软件包",
+      "tour.packages.desc": "每个包的版本、大小、安装日期，以及哪些包在用它。详情面板会画出依赖关系图，并告诉你能否安全移除。",
+      "tour.packages.alt": "软件包列表，以及 node 的详情面板和依赖关系图",
+      "tour.services.name": "服务",
+      "tour.services.desc": "启动、停止、重启 brew 服务，查看每个服务打开了哪些端口。其他机器能访问到的端口会被标出来。",
+      "tour.services.alt": "brew 服务及各自监听的端口",
+      "tour.apps.name": "应用",
+      "tour.apps.desc": "“应用程序”文件夹里的每个应用：怎么装上的、由谁签名。手动安装的应用也可以交给 Homebrew 管理。",
+      "tour.apps.alt": "应用列表，显示每个应用的安装方式和签名者",
+      "tour.shell.name": "Shell",
+      "tour.shell.desc": "shell 启动文件里的 PATH 配置，缺失、重复和有风险的条目都会标出来。",
+      "tour.shell.alt": "shell 启动文件中的 PATH 条目，问题已标出",
+      "tour.security.name": "安全扫描",
+      "tour.security.desc": "secure-it（一个独立的 macOS 安全扫描工具）的检查结果，直接显示在相关的包、tap 和 shell 文件旁边。",
+      "tour.security.alt": "Security 标签页中的 secure-it 检查结果",
+      "safety.title": "你不确认，什么都不会改",
+      "safety.intro": "随便看，不会动任何东西。只有你点了按钮、并同意它展示的内容后，brewdash 才会运行 brew 命令。",
+      "safety.local.title": "只有你的 Mac 能访问",
+      "safety.local.body": "服务器只监听 <code>127.0.0.1</code>，每次启动都会生成一个新 token，所有 API 调用都必须带上它。",
+      "safety.preview.title": "每条命令你都先过目",
+      "safety.preview.body": "每个操作都会弹出对话框，列出将要运行的确切 brew 命令。如果移除某个包会影响其他包，对话框会把它们列出来。",
+      "safety.undo.title": "移除可以撤销",
+      "safety.undo.body": "每次卸载前，brewdash 都会保存一份 Brewfile 快照。运行 <code>brew bundle install --file=&lt;snapshot&gt;</code> 即可全部恢复。",
+      "app.title": "和其他 Mac 应用一样打开",
+      "app.intro": "安装命令会在你的 Mac 上生成 brewdash.app，仪表盘本身在浏览器中打开。",
+      "app.install.title": "安装",
+      "app.install.body": "把上面的命令粘贴到“终端”运行。以后要更新，再运行一次同一条命令就行。",
+      "app.open.title": "打开",
+      "app.open.body": "从启动台、Spotlight 或程序坞启动 brewdash。点击程序坞中的图标即可重新调出仪表盘。",
+      "app.quit.title": "退出",
+      "app.quit.body": "按 <kbd>⌘</kbd> <kbd>Q</kbd> 退出 brewdash，它的服务器也会随之停止。",
+      "details.title": "细节",
+      "details.needs.title": "环境要求",
+      "details.needs.body": 'macOS、<a href="https://brew.sh">Homebrew</a> 和 Python 3.9 或更高版本。Xcode Command Line Tools 自带的 <code>python3</code> 就够了，brewdash 不依赖任何其他包。',
+      "details.remove.title": "卸载",
+      "details.remove.body": "这条命令会删除应用。你的设置和 Brewfile 快照会保留在 <code>~/.local/state/brewdash</code> 中。",
+      "details.demo.title": "不动自己的环境，先试试看",
+      "details.demo.body": "演示模式使用虚构的包，只打印它将要运行的命令，不会真正执行。",
+      "details.source.title": "从源码运行",
+      "details.source.body": "brewdash 只有一个 Python 文件和一个小网页，采用 Apache License 2.0 许可。",
+      "footer.aria": "项目",
+      "footer.source": "GitHub 上的源码",
+      "footer.vuln": "报告安全漏洞",
+    },
+  };
+  const KEY = "brewdash-lang";
+  let lang = "en";
+
+  function detect() {
+    for (const tag of navigator.languages || [navigator.language || ""]) {
+      const l = tag.toLowerCase();
+      if (l.startsWith("en")) return "en";
+      if (l.startsWith("tr")) return "tr";
+      if (l.startsWith("es")) return "es";
+      if (l.startsWith("zh")) return "zh-CN";
+    }
+    return "en";
+  }
+
+  function stored() {
+    try { return localStorage.getItem(KEY); } catch { return null; }
+  }
+
+  const t = (key) => dict[lang][key] ?? dict.en[key];
+
+  function apply(next, persist) {
+    lang = dict[next] ? next : "en";
+    document.documentElement.lang = lang;
+    document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+    document.querySelectorAll("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
+    document.querySelectorAll("[data-i18n-attr]").forEach((el) => {
+      for (const pair of el.dataset.i18nAttr.split(";")) {
+        const [attr, key] = pair.split(":");
+        el.setAttribute(attr, t(key));
+      }
+    });
+    select.value = lang;
+    if (persist) {
+      try { localStorage.setItem(KEY, lang); } catch {}
+    }
+    document.dispatchEvent(new CustomEvent("brewdash-lang", { detail: lang }));
+  }
+
+  const select = document.getElementById("lang");
+  select.addEventListener("change", () => apply(select.value, true));
+  apply(stored() || detect(), false);
+
+  return { dict, t, apply, get lang() { return lang; } };
+})();
+</script>
+<script>
 (() => {
+  const { t } = window.brewdashI18n;
   const status = document.getElementById("copy-status");
   const command = document.getElementById("install-command");
 
@@ -476,34 +842,42 @@ python3 brewdash.py --port 8765    <span class="c"># on a fixed port</span></pre
     const text = document.getElementById(button.dataset.copy).textContent;
     try {
       await navigator.clipboard.writeText(text);
-      button.textContent = "Copied";
-      status.textContent = "The install command is on your clipboard. Paste it in Terminal.";
+      button.textContent = t("copy.done");
+      status.textContent = t("copy.status");
     } catch {
       const range = document.createRange();
       range.selectNodeContents(command);
       getSelection().removeAllRanges();
       getSelection().addRange(range);
-      status.textContent = "Press ⌘C to copy the selected command.";
+      status.textContent = t("copy.fallback");
     }
-    setTimeout(() => { button.textContent = "Copy"; }, 2000);
+    setTimeout(() => { button.textContent = t("copy.button"); }, 2000);
   }));
 
   const tourTabs = [...document.querySelectorAll(".tour [role=tab]")];
   const shot = document.querySelector("#tour-shot picture");
   const caption = document.getElementById("tour-caption");
+  const describeShot = () => {
+    const tab = tourTabs.find((t) => t.getAttribute("aria-selected") === "true");
+    shot.querySelector("img").alt = tab.dataset.alt;
+    caption.textContent = tab.querySelector("span").textContent;
+  };
   const chooseShot = (tab) => {
     selectTab(tourTabs, tab);
     roving(tourTabs);
     const name = tab.dataset.shot;
     shot.querySelector("source").srcset = `screenshots/${name}-dark.png`;
-    const img = shot.querySelector("img");
-    img.src = `screenshots/${name}-light.png`;
-    img.alt = tab.dataset.alt;
-    caption.textContent = tab.querySelector("span").textContent;
+    shot.querySelector("img").src = `screenshots/${name}-light.png`;
+    describeShot();
   };
   tourTabs.forEach((tab) => tab.addEventListener("click", () => chooseShot(tab)));
   arrowKeys(tourTabs, chooseShot);
   roving(tourTabs);
+  describeShot();
+  document.addEventListener("brewdash-lang", () => {
+    describeShot();
+    status.textContent = "";
+  });
 })();
 </script>
 </body>

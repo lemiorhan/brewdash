@@ -153,17 +153,101 @@ def build_model(info, outdated, services, taps, autoremove):
     return {"packages": sorted(pkgs.values(), key=lambda p: p["id"]), "taps": tap_list}
 
 
-REASONS = {
-    "versioned_formula": "it is an old versioned formula",
-    "unsupported": "it is no longer supported",
-    "deprecated_upstream": "upstream has deprecated it",
-    "fails_gatekeeper_check": "it fails the macOS Gatekeeper check",
-    "unmaintained": "it is not maintained",
-    "discontinued": "upstream has discontinued it",
-    "no_license": "it has no license",
-    "repo_archived": "its upstream repository is archived",
-    "does_not_build": "it does not build",
+# Advice, PATH suggestions and job titles. The UI gets each message twice: rendered here in English, and as
+# [key, args] so web/i18n can render it in another language; a key the UI's language does not have falls
+# back to the English text. Error details (an unreadable report, a failed lsof) are not here and stay English.
+MESSAGES = {
+    "reason.versioned_formula": "it is an old versioned formula",
+    "reason.unsupported": "it is no longer supported",
+    "reason.deprecated_upstream": "upstream has deprecated it",
+    "reason.fails_gatekeeper_check": "it fails the macOS Gatekeeper check",
+    "reason.unmaintained": "it is not maintained",
+    "reason.discontinued": "upstream has discontinued it",
+    "reason.no_license": "it has no license",
+    "reason.repo_archived": "its upstream repository is archived",
+    "reason.does_not_build": "it does not build",
+    "action.install": "Install {name}",
+    "action.uninstall": "Uninstall {name}",
+    "action.upgrade": "Upgrade",
+    "action.upgrade_named": "Upgrade {name}",
+    "action.unpin": "Unpin",
+    "advice.pinned.title": "Pinned at {version}; brew upgrade skips it",
+    "advice.pinned.text": "Unpin it first to upgrade to {latest}.",
+    "advice.update.title": "Update available: {version} → {latest}",
+    "advice.update.text": "Nothing blocks the upgrade.",
+    "advice.disabled.title": "Disabled by Homebrew",
+    "advice.disabled.title_why": "Disabled by Homebrew: {why}",
+    "advice.deprecated.title": "Deprecated by Homebrew",
+    "advice.deprecated.title_why": "Deprecated by Homebrew: {why}",
+    "advice.disabled": "Homebrew disabled it: brew will not install or upgrade it any more. "
+                       "The installed copy stays until you remove it.",
+    "advice.disabled_on": "Homebrew disabled it on {date}: brew will not install or upgrade it any more. "
+                          "The installed copy stays until you remove it.",
+    "advice.disabled_newer": "Version {latest} exists, but not through brew.",
+    "advice.deprecated": "It still works, and Homebrew plans to drop it.",
+    "advice.deprecated_on": "It still works, and Homebrew plans to drop it: it will be disabled on {date}.",
+    "advice.replacement_missing": "Homebrew suggests {name} instead, and it is not installed.",
+    "advice.newer_unsupported": "The newer versions installed are deprecated or disabled too.",
+    "advice.no_supported_newer": "No supported newer version is installed; the newest versioned one is {name}.",
+    "advice.replacement_installed_only": "A newer or replacement package is already installed, "
+                                         "so nothing needs to be installed.",
+    "advice.replacement_installed": "A newer or replacement package is already installed.",
+    "advice.still_needed": "{count} installed package(s) still need it, directly or through another dependency. "
+                           "Uninstall offers to remove them with it, or to remove it anyway and break them.",
+    "advice.unused_cask": "Nothing installed depends on it; remove it if you no longer use the app.",
+    "advice.unused_requested": "Nothing installed depends on it, so it can be removed once nothing of yours "
+                               "needs this exact version.",
+    "advice.unused_dependency": "Nothing installed depends on it and it was installed only as a dependency, "
+                                "so it is safe to remove.",
+    "advice.missing.title": "Missing dependency: {dep}",
+    "advice.missing": "{name} was installed against {dep}, which is not installed now.",
+    "advice.missing_other_version": "Another version of it is installed, but this package needs exactly that one.",
+    "advice.missing_upgrade": "Upgrading brings in whatever the new version needs; otherwise install it.",
+    "advice.missing_install": "Installing it should repair {name}; if brew no longer has it, remove {name} instead.",
+    "path.duplicate": "{file} already adds this directory earlier; this line can go.",
+    "path.synced": "A cloud-synced folder comes before the system folders, so a file that arrives by sync, "
+                   "from another device or a shared folder, runs in place of the system command of the same name. "
+                   "Move it after $PATH, or copy the tools to a local folder.",
+    "path.pinned": "Points at one installed version of {name} and breaks on every upgrade. Use {fixed} instead.",
+    "path.pinned_gone": "Points at one installed version of {name} and breaks on every upgrade. "
+                        "That version is no longer installed. Use {fixed} instead.",
+    "path.old_prefix": "Homebrew lives in {prefix} on this Mac. Use {fixed} instead.",
+    "path.old_prefix_gone": "Homebrew lives in {prefix} on this Mac. "
+                            "Nothing is installed there either; this line can go.",
+    "path.missing": "The directory does not exist; this line can go.",
+    "plan.adopt": "bring {name} into brew",
+    "plan.upgrade": "upgrade {names}",
+    "plan.pin": "pin {names}",
+    "plan.unpin": "unpin {names}",
+    "plan.uninstall": "uninstall {names}",
+    "plan.uninstall_force": "uninstall {names}, ignoring dependents",
+    "plan.upgrade_all": "upgrade all outdated",
+    "plan.update": "brew update",
+    "plan.autoremove": "autoremove",
+    "plan.cleanup": "cleanup",
+    "plan.service": "service {op} {name}",
+    "service.start": "start",
+    "service.stop": "stop",
+    "service.restart": "restart",
+    "plan.install": "install {name}",
 }
+
+
+def msg(key, **args):
+    """A message for the UI as [key, args]; an arg may itself be a message."""
+    return [key, args]
+
+
+def render(m):
+    """The English text of a message."""
+    if not isinstance(m, list):
+        return str(m)
+    key, args = m
+    return MESSAGES[key].format(**{k: render(v) for k, v in args.items()})
+
+
+def render_all(ms):
+    return " ".join(render(m) for m in ms)
 
 
 def _version_key(name):
@@ -205,44 +289,49 @@ def _newer_family(rec, item, pkgs, resolve):
 def advise(rec, item, pkgs, resolve, cask_resolve):
     """What to do about an outdated, deprecated/disabled or broken package.
 
-    Each entry: {level, title, text, alternatives: [installed ids], actions: [{label, req}]}.
-    The reqs are plan_job requests, so the UI runs them through the normal confirm flow.
+    Each entry: {level, title, text, msg, alternatives: [installed ids], actions: [{label, msg, req}]}, where
+    msg holds the title and text as messages. The reqs are plan_job requests, so the UI runs them through
+    the normal confirm flow.
     """
     out = []
     pid, name = rec["id"], rec["name"]
 
-    def entry(level, title, text, alternatives=(), actions=()):
-        out.append({"level": level, "title": title, "text": text,
+    def entry(level, title, parts, alternatives=(), actions=()):
+        out.append({"level": level, "title": render(title), "text": render_all(parts),
+                    "msg": {"title": title, "text": parts},
                     "alternatives": list(alternatives), "actions": list(actions)})
 
-    def install(kind, target):
-        return {"label": f"Install {target}", "req": {"action": "install", "kind": kind, "name": target}}
+    def action(label, req):
+        return {"label": render(label), "msg": label, "req": req}
 
-    uninstall = {"label": f"Uninstall {name}", "req": {"action": "uninstall", "targets": [pid]}}
+    def install(kind, target):
+        return action(msg("action.install", name=target), {"action": "install", "kind": kind, "name": target})
+
+    uninstall = action(msg("action.uninstall", name=name), {"action": "uninstall", "targets": [pid]})
 
     if rec["outdated"] and not rec["disabled"]:
         if rec["pinned"]:
-            entry("info", f"Pinned at {rec['version']}; brew upgrade skips it",
-                  f"Unpin it first to upgrade to {rec['latest']}.",
-                  actions=[{"label": "Unpin", "req": {"action": "unpin", "targets": [pid]}}])
+            entry("info", msg("advice.pinned.title", version=rec["version"]),
+                  [msg("advice.pinned.text", latest=rec["latest"])],
+                  actions=[action(msg("action.unpin"), {"action": "unpin", "targets": [pid]})])
         else:
-            entry("info", f"Update available: {rec['version']} → {rec['latest']}",
-                  "Nothing blocks the upgrade.",
-                  actions=[{"label": "Upgrade", "req": {"action": "upgrade", "targets": [pid]}}])
+            entry("info", msg("advice.update.title", version=rec["version"], latest=rec["latest"]),
+                  [msg("advice.update.text")],
+                  actions=[action(msg("action.upgrade"), {"action": "upgrade", "targets": [pid]})])
 
     if rec["disabled"] or rec["deprecated"]:
         kind = "disable" if rec["disabled"] else "deprecation"
         reason = item.get(f"{kind}_reason")
-        why = REASONS.get(reason, reason.replace("_", " ") if reason else None)
+        why = None
+        if reason:
+            why = msg("reason." + reason) if "reason." + reason in MESSAGES else reason.replace("_", " ")
+        date = item.get("disable_date")
         if rec["disabled"]:
-            when = f" on {item['disable_date']}" if item.get("disable_date") else ""
-            parts = [f"Homebrew disabled it{when}: brew will not install or upgrade it any more. "
-                     "The installed copy stays until you remove it."]
+            parts = [msg("advice.disabled_on", date=date) if date else msg("advice.disabled")]
             if rec["outdated"]:
-                parts.append(f"Version {rec['latest']} exists, but not through brew.")
+                parts.append(msg("advice.disabled_newer", latest=rec["latest"]))
         else:
-            parts = ["It still works, and Homebrew plans to drop it"
-                     + (f": it will be disabled on {item['disable_date']}." if item.get("disable_date") else ".")]
+            parts = [msg("advice.deprecated_on", date=date) if date else msg("advice.deprecated")]
         alternatives, actions, missing_repl = [], [], False
         for rkind, field in (("formula", f"{kind}_replacement_formula"), ("cask", f"{kind}_replacement_cask")):
             repl = item.get(field)
@@ -252,38 +341,34 @@ def advise(rec, item, pkgs, resolve, cask_resolve):
                     alternatives.append(rid)
                 else:
                     missing_repl = True
-                    parts.append(f"Homebrew suggests {repl} instead, and it is not installed.")
+                    parts.append(msg("advice.replacement_missing", name=repl))
                     actions.append(install(rkind, repl))
         if rec["kind"] == "formula":
             newer, newest = _newer_family(rec, item, pkgs, resolve)
             supported = [i for i in newer if not pkgs[i]["deprecated"] and not pkgs[i]["disabled"]]
             alternatives += [i for i in supported if i not in alternatives]
             if newer and not supported:
-                parts.append("The newer versions installed are deprecated or disabled too.")
+                parts.append(msg("advice.newer_unsupported"))
             if not alternatives and newest and not missing_repl:
-                parts.append(f"No supported newer version is installed; the newest versioned one is {newest}.")
+                parts.append(msg("advice.no_supported_newer", name=newest))
                 actions.append(install("formula", newest))
         if alternatives and not actions:
-            parts.append("A newer or replacement package is already installed, so nothing needs to be installed.")
+            parts.append(msg("advice.replacement_installed_only"))
         elif alternatives:
-            parts.append("A newer or replacement package is already installed.")
+            parts.append(msg("advice.replacement_installed"))
         if rec["required_by"]:
-            parts.append(f"{len(rec['required_by'])} installed package(s) still need it, directly or through "
-                         "another dependency. Uninstall offers to remove them with it, or to remove it anyway "
-                         "and break them.")
+            parts.append(msg("advice.still_needed", count=len(rec["required_by"])))
             actions.append(uninstall)
         else:
             if rec["kind"] == "cask":
-                parts.append("Nothing installed depends on it; remove it if you no longer use the app.")
+                parts.append(msg("advice.unused_cask"))
             elif rec["requested"]:
-                parts.append("Nothing installed depends on it, so it can be removed once nothing of yours "
-                             "needs this exact version.")
+                parts.append(msg("advice.unused_requested"))
             else:
-                parts.append("Nothing installed depends on it and it was installed only as a dependency, "
-                             "so it is safe to remove.")
+                parts.append(msg("advice.unused_dependency"))
             actions.append(uninstall)
-        entry("warn", f"{'Disabled' if rec['disabled'] else 'Deprecated'} by Homebrew"
-              + (f": {why}" if why else ""), " ".join(parts), alternatives, actions)
+        title = "advice.disabled.title" if rec["disabled"] else "advice.deprecated.title"
+        entry("warn", msg(title + "_why", why=why) if why else msg(title), parts, alternatives, actions)
 
     for dep in rec["missing_deps"]:
         dep_kind = "cask" if rec["kind"] == "cask" and dep in ((item.get("depends_on") or {}).get("cask") or []) \
@@ -291,17 +376,17 @@ def advise(rec, item, pkgs, resolve, cask_resolve):
         base = dep.partition("@")[0]
         same = sorted({p["id"] for p in pkgs.values() if p["kind"] == "formula"
                        and p["name"].partition("@")[0] == base}) if dep_kind == "formula" else []
-        text = f"{name} was installed against {dep}, which is not installed now."
+        parts = [msg("advice.missing", name=name, dep=dep)]
         if same:
-            text += " Another version of it is installed, but this package needs exactly that one."
+            parts.append(msg("advice.missing_other_version"))
         actions = []
         if rec["outdated"] and not rec["disabled"] and not rec["pinned"]:
-            text += " Upgrading brings in whatever the new version needs; otherwise install it."
-            actions.append({"label": f"Upgrade {name}", "req": {"action": "upgrade", "targets": [pid]}})
+            parts.append(msg("advice.missing_upgrade"))
+            actions.append(action(msg("action.upgrade_named", name=name), {"action": "upgrade", "targets": [pid]}))
         else:
-            text += f" Installing it should repair {name}; if brew no longer has it, remove {name} instead."
+            parts.append(msg("advice.missing_install", name=name))
         actions.append(install(dep_kind, dep))
-        entry("warn", f"Missing dependency: {dep}", text, same, actions)
+        entry("warn", msg("advice.missing.title", dep=dep), parts, same, actions)
     return out
 
 
@@ -367,12 +452,18 @@ def check_targets(targets, pkgs):
 
 def plan_job(req, pkgs, apps=None):
     """Turn an API request into (title, [argv...], snapshot?). Raises ValueError on bad input."""
+    title, cmds, snap = plan_job_msg(req, pkgs, apps)
+    return render(title), cmds, snap
+
+
+def plan_job_msg(req, pkgs, apps=None):
+    """plan_job with the title as a message."""
     action = req.get("action")
     if action == "adopt":
         app = (apps or {}).get(req.get("app"))
         if not app or app["source"] != "manual" or not app["cask"]:
             raise ValueError("only an app with a verified cask, installed outside brew and the App Store, can be adopted")
-        return f"bring {app['name']} into brew", [["brew", "install", "--cask", "--adopt", app["cask"]]], False
+        return msg("plan.adopt", name=app["name"]), [["brew", "install", "--cask", "--adopt", app["cask"]]], False
     targets = check_targets(req.get("targets"), pkgs)
     formulae = [pkgs[t]["name"] for t in targets if pkgs[t]["kind"] == "formula"]
     casks = [pkgs[t]["name"] for t in targets if pkgs[t]["kind"] == "cask"]
@@ -389,34 +480,34 @@ def plan_job(req, pkgs, apps=None):
 
     names = ", ".join(formulae + casks)
     if action in ("upgrade", "pin", "unpin"):
-        return f"{action} {names}", split(action), len(targets) > 1
+        return msg("plan." + action, names=names), split(action), len(targets) > 1
     if action == "uninstall":
         force = req.get("ignore_dependencies", False)
         if not isinstance(force, bool):
             raise ValueError("ignore_dependencies must be true or false")
         if force:
-            return f"uninstall {names}, ignoring dependents", split("uninstall", "--ignore-dependencies"), True
-        return f"uninstall {names}", split("uninstall"), True
+            return msg("plan.uninstall_force", names=names), split("uninstall", "--ignore-dependencies"), True
+        return msg("plan.uninstall", names=names), split("uninstall"), True
     if action == "upgrade_all":
-        return "upgrade all outdated", [["brew", "upgrade"]], True
+        return msg("plan.upgrade_all"), [["brew", "upgrade"]], True
     if action == "update":
-        return "brew update", [["brew", "update"]], False
+        return msg("plan.update"), [["brew", "update"]], False
     if action == "autoremove":
-        return "autoremove", [["brew", "autoremove"]], True
+        return msg("plan.autoremove"), [["brew", "autoremove"]], True
     if action == "cleanup":
-        return "cleanup", [["brew", "cleanup"]], False
+        return msg("plan.cleanup"), [["brew", "cleanup"]], False
     if action == "service":
         op = req.get("op")
         if op not in SERVICE_OPS or casks or len(formulae) != 1:
             raise ValueError("service needs one formula and op start|stop|restart")
         if pkgs[targets[0]]["service"] is None:
             raise ValueError("formula has no service")
-        return f"service {op} {formulae[0]}", [["brew", "services", op, formulae[0]]], False
+        return msg("plan.service", op=msg("service." + op), name=formulae[0]), [["brew", "services", op, formulae[0]]], False
     if action == "install":
         name, kind = req.get("name") or "", req.get("kind")
         if not NAME_RE.match(name) or kind not in ("formula", "cask"):
             raise ValueError("bad install name or kind")
-        return f"install {name}", [["brew", "install", "--" + kind, name]], False
+        return msg("plan.install", name=name), [["brew", "install", "--" + kind, name]], False
     raise ValueError(f"unknown action {action!r}")
 
 
@@ -782,8 +873,8 @@ class Runner:
         self.q = queue.Queue()
         threading.Thread(target=self._work, daemon=True).start()
 
-    def submit(self, title, commands, snapshot):
-        job = {"id": None, "title": title, "commands": [shlex.join(c) for c in commands],
+    def submit(self, title, commands, snapshot, title_msg=None):
+        job = {"id": None, "title": title, "title_msg": title_msg, "commands": [shlex.join(c) for c in commands],
                "status": "queued", "log": [], "exit_code": None, "needs_terminal": False,
                "snapshot": None, "created": time.time(), "finished": None}
         with self.lock:
@@ -861,7 +952,8 @@ class Runner:
         return True
 
     def _history(self, job):
-        entry = {k: job[k] for k in ("title", "commands", "status", "exit_code", "snapshot", "created", "finished")}
+        entry = {k: job[k] for k in ("title", "title_msg", "commands", "status", "exit_code", "snapshot", "created",
+                                     "finished")}
         with open(self._state_dir() / "history.jsonl", "a") as f:
             f.write(json.dumps(entry) + "\n")
 
@@ -1028,7 +1120,7 @@ def _synced(d, home):
 
 def _path_entry(rc, n, raw, d, prefix, names, installed, seen, synced=False):
     entry = {"file": rc, "line": n, "raw": raw, "dir": d, "exists": None, "issue": None, "suggestion": None,
-             "alternative": None}
+             "suggestion_msg": None, "alternative": None}
     if "$" in d:
         return entry
     entry["exists"] = Path(d).is_dir()
@@ -1036,24 +1128,24 @@ def _path_entry(rc, n, raw, d, prefix, names, installed, seen, synced=False):
     key = (shell, d.rstrip("/"))
     pinned = re.match(re.escape(prefix) + r"/Cellar/([^/]+)/[^/]+(/.*)?$", d)
     old_prefix = re.match(r"/usr/local/(opt|Cellar)/", d) if prefix != "/usr/local" else None
+    advice = None
     if key in seen:
-        entry.update(issue="duplicate", suggestion=f"{rc} already adds this directory earlier; this line can go.")
+        advice = "duplicate", msg("path.duplicate", file=rc)
     elif synced:
-        entry.update(issue="synced", suggestion="A cloud-synced folder comes before the system folders, so a file "
-                                                "that arrives by sync, from another device or a shared folder, runs "
-                                                "in place of the system command of the same name. Move it after "
-                                                "$PATH, or copy the tools to a local folder.")
+        advice = "synced", msg("path.synced")
     elif pinned:
         fixed = f"{prefix}/opt/{pinned.group(1)}{pinned.group(2) or ''}"
-        gone = "" if entry["exists"] else " That version is no longer installed."
-        entry.update(issue="pinned", suggestion=f"Points at one installed version of {pinned.group(1)} and breaks "
-                                                f"on every upgrade.{gone} Use {fixed} instead.")
+        advice = "pinned", msg("path.pinned" if entry["exists"] else "path.pinned_gone", name=pinned.group(1),
+                               fixed=fixed)
     elif old_prefix and not entry["exists"]:
         fixed = prefix + d[len("/usr/local"):]
-        entry.update(issue="old_prefix", suggestion=f"Homebrew lives in {prefix} on this Mac. " + (
-            f"Use {fixed} instead." if Path(fixed).is_dir() else "Nothing is installed there either; this line can go."))
+        advice = "old_prefix", (msg("path.old_prefix", prefix=prefix, fixed=fixed) if Path(fixed).is_dir()
+                                else msg("path.old_prefix_gone", prefix=prefix))
     elif not entry["exists"]:
-        entry.update(issue="missing", suggestion="The directory does not exist; this line can go.")
+        advice = "missing", msg("path.missing")
+    if advice:
+        issue, m = advice
+        entry.update(issue=issue, suggestion=render(m), suggestion_msg=m)
     seen.add(key)
     for piece, kind, name in PATH_TOOLS:
         if piece in d and name in names[kind] and name not in installed[kind]:
@@ -1189,11 +1281,12 @@ def make_handler(store, runner, brew, token, port_ref, export):
                     pkgs = store.by_id()
                     return self._send(200, removal_impact(pkgs, check_targets(body.get("targets"), pkgs)))
                 if path == "/api/plan":
-                    title, cmds, snap = plan_job(body, store.by_id(), store.apps_by_id())
-                    return self._send(200, {"title": title, "commands": [shlex.join(c) for c in cmds], "snapshot": snap})
+                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id())
+                    return self._send(200, {"title": render(title), "title_msg": title,
+                                            "commands": [shlex.join(c) for c in cmds], "snapshot": snap})
                 if path == "/api/jobs":
-                    title, cmds, snap = plan_job(body, store.by_id(), store.apps_by_id())
-                    return self._send(201, runner.submit(title, cmds, snap))
+                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id())
+                    return self._send(201, runner.submit(render(title), cmds, snap, title))
                 if path == "/api/list":
                     if body.get("op") == "add":
                         ids = body.get("ids")

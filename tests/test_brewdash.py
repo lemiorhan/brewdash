@@ -273,6 +273,8 @@ class AdviceTest(unittest.TestCase):
         a = only(advice_of([formula("php@8.0", versioned_formulae=["php@8.10", "php@8.4", "php@7.4"], **DEPRECATED)]),
                  "f:php@8.0")
         self.assertEqual(a["alternatives"], [])
+        self.assertEqual(a["title"], "Deprecated by Homebrew: it is an old versioned formula")
+        self.assertEqual(a["msg"]["title"], ["advice.deprecated.title_why", {"why": ["reason.versioned_formula", {}]}])
         self.assertEqual(a["text"],
                          "It still works, and Homebrew plans to drop it. "
                          "No supported newer version is installed; the newest versioned one is php@8.10. "
@@ -387,11 +389,9 @@ class AdviceTest(unittest.TestCase):
 
     def test_every_sentence_advise_can_write_appears_in_an_advice_test(self):
         import ast
-        tree = ast.parse(Path(brewdash.__file__).read_text())
-        [fn] = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "advise"]
-        docstring = fn.body[0].value
-        fragments = {n.value.strip() for n in ast.walk(fn) if n is not docstring
-                     and isinstance(n, ast.Constant) and isinstance(n.value, str) and " " in n.value.strip()}
+        import re
+        fragments = {f.strip() for k, v in brewdash.MESSAGES.items() if k.startswith(("advice.", "action."))
+                     for f in re.split(r"\{\w+\}", v) if " " in f.strip()}
         test_tree = ast.parse(Path(__file__).read_text())
         [cls] = [n for n in test_tree.body if isinstance(n, ast.ClassDef) and n.name == "AdviceTest"]
         expected = [n.value for n in ast.walk(cls) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
@@ -409,6 +409,22 @@ class AdviceTest(unittest.TestCase):
         self.assertGreaterEqual(len({r["action"] for r in all_reqs}), 4)
         for r in all_reqs:
             brewdash.plan_job(r, p)
+
+    def test_every_advice_carries_its_text_as_messages_too(self):
+        p = advice_of([
+            formula("x", pinned=True), formula("y"), formula("tool", deps=["gone"]),
+            formula("php@8.0", versioned_formulae=["php@8.4"], **DEPRECATED),
+            formula("c", disabled=True, disable_replacement_cask="c-app"),
+        ], casks=[cask("drv", disabled=True)], outdated={**out("x", "y", "tool"), **out("drv", kind="casks")})
+        entries = [a for rec in p.values() for a in rec["advice"]]
+        actions = [x for a in entries for x in a["actions"]]
+        self.assertGreaterEqual(len(entries), 6)
+        self.assertGreaterEqual(len(actions), 6)
+        for a in entries:
+            self.assertEqual(brewdash.render(a["msg"]["title"]), a["title"])
+            self.assertEqual(brewdash.render_all(a["msg"]["text"]), a["text"])
+        for x in actions:
+            self.assertEqual(brewdash.render(x["msg"]), x["label"])
 
 
 class RemovalImpactTest(unittest.TestCase):
@@ -550,6 +566,15 @@ class PlanJobTest(unittest.TestCase):
         p = by_id()
         self.assertEqual(brewdash.plan_job({"action": "service", "op": "stop", "targets": ["f:tool"]}, p)[1],
                          [["brew", "services", "stop", "tool"]])
+        self.assertEqual(brewdash.plan_job_msg({"action": "service", "op": "stop", "targets": ["f:tool"]}, p)[0],
+                         ["plan.service", {"op": ["service.stop", {}], "name": "tool"}])
+        self.assertEqual(brewdash.plan_job({"action": "service", "op": "stop", "targets": ["f:tool"]}, p)[0],
+                         "service stop tool")
+        self.assertGreaterEqual(len(brewdash.SERVICE_OPS), 3)
+        for op in brewdash.SERVICE_OPS:
+            with self.subTest(op=op):
+                self.assertEqual(brewdash.plan_job({"action": "service", "op": op, "targets": ["f:tool"]}, p)[0],
+                                 f"service {op} tool")
         for req in ({"op": "kill", "targets": ["f:tool"]}, {"op": "start", "targets": ["f:libA"]},
                     {"op": "start", "targets": ["c:gui"]}, {"op": "start", "targets": ["f:tool", "f:libA"]}):
             with self.subTest(req=req), self.assertRaises(ValueError):
@@ -1027,7 +1052,8 @@ class ShellTest(unittest.TestCase):
 
     def entry(self, rc, line, raw, d, exists, issue=None, suggestion=None, alternative=None):
         return {"file": rc, "line": line, "raw": raw, "dir": d, "exists": exists, "issue": issue,
-                "suggestion": suggestion, "alternative": alternative}
+                "suggestion": suggestion, "suggestion_msg": mock.ANY if suggestion else None,
+                "alternative": alternative}
 
     def test_path_entries_get_an_issue_and_a_fix(self):
         h, pre = self.home, self.prefix
@@ -1054,6 +1080,10 @@ class ShellTest(unittest.TestCase):
             self.entry(".zshrc", 7, "$FOO/bin", "$FOO/bin", None),
             self.entry(".bashrc", 1, "$HOME/bin", f"{h}/bin", True),
         ])
+        flagged = [e for e in self.scan()["path"] if e["issue"]]
+        self.assertEqual(len(flagged), 5)
+        for e in flagged:
+            self.assertEqual(brewdash.render(e["suggestion_msg"]), e["suggestion"])
 
     def test_a_synced_folder_ahead_of_the_system_is_a_warning(self):
         moved = Path(self.tmp.name) / "Volumes" / "Dropbox"
@@ -1246,7 +1276,8 @@ class ServerWiringTest(unittest.TestCase):
     def test_plan_and_impact_endpoints(self):
         wait_for(self.state)
         status, data = self.request("POST", "/api/plan", {"action": "uninstall", "targets": ["f:libC"]})
-        self.assertEqual((status, json.loads(data)), (200, {"title": "uninstall libC", "commands": ["brew uninstall --formula libC"], "snapshot": True}))
+        self.assertEqual((status, json.loads(data)), (200, {"title": "uninstall libC", "title_msg": ["plan.uninstall", {"names": "libC"}],
+                                                                "commands": ["brew uninstall --formula libC"], "snapshot": True}))
         status, data = self.request("POST", "/api/impact", {"targets": ["f:libC"]})
         self.assertEqual(json.loads(data)["blockers"], ["f:app", "f:libA", "f:tool"])
         self.assertEqual(self.request("POST", "/api/plan", {"action": "install", "kind": "formula", "name": "-x"})[0], 400)
@@ -1264,8 +1295,10 @@ class ServerWiringTest(unittest.TestCase):
 
         job = wait_for(finished)
         self.assertEqual(job["log"], ["$ brew pin --formula libA"])
+        self.assertEqual((job["title"], job["title_msg"]), ("pin libA", ["plan.pin", {"names": "libA"}]))
         history = json.loads(self.request("GET", "/api/history")[1])
         self.assertEqual(history[0]["commands"], ["brew pin --formula libA"])
+        self.assertEqual((history[0]["title"], history[0]["title_msg"]), ("pin libA", ["plan.pin", {"names": "libA"}]))
 
     def apps_ready(self):
         snap = self.state()

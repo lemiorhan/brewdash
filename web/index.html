@@ -7,6 +7,11 @@
 <link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="alternate icon" href="/favicon-32.png" type="image/png" sizes="32x32">
 <link rel="stylesheet" href="/style.css">
+<script src="/i18n.js"></script>
+<script src="/i18n/en.js"></script>
+<script src="/i18n/tr.js"></script>
+<script src="/i18n/es.js"></script>
+<script src="/i18n/zh.js"></script>
 <script src="/theme.js"></script>
 </head>
 <body>
@@ -15,11 +20,12 @@
   <div id="stats" class="stats"></div>
   <div class="actions">
     <span id="last-update" class="muted"></span>
-    <button id="btn-refresh" title="Re-read installed state">Refresh</button>
-    <button id="btn-update" title="brew update, then refresh">brew update</button>
+    <button id="btn-refresh" data-i18n="header.refresh" data-i18n-title="header.refresh_title">Refresh</button>
+    <button id="btn-update" data-i18n-title="header.update_title">brew update</button>
     <button id="btn-upgrade-all" class="accent">Upgrade all</button>
     <button id="btn-autoremove" class="danger">Autoremove</button>
     <button id="btn-theme" title="Theme">◐ auto</button>
+    <select id="lang" data-i18n-title="header.language" title="Language"></select>
   </div>
 </header>
 <nav id="tabs"></nav>
@@ -29,7 +35,7 @@
   <aside id="detail" class="hidden"></aside>
 </main>
 <div id="jobs" class="jobs collapsed">
-  <div class="jobs-head" id="jobs-head"><span id="jobs-title">Jobs</span><span class="muted">click to toggle</span></div>
+  <div class="jobs-head" id="jobs-head"><span id="jobs-title">Jobs</span><span class="muted" data-i18n="jobs.toggle">click to toggle</span></div>
   <div class="jobs-body" id="jobs-body"></div>
 </div>
 <div id="modal" class="modal hidden"><div class="modal-card" id="modal-card"></div></div>

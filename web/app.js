@@ -23,20 +23,18 @@ const S = {
   list: { items: [], brewfile: "" },
 };
 
-const TABS = [
-  ["overview", "Overview"], ["requested", "Installed by you"], ["deps", "Dependencies"], ["casks", "Casks"],
-  ["services", "Services"], ["taps", "Taps"], ["health", "Health"], ["security", "Security"],
-  ["apps", "Apps"], ["shell", "Shell"], ["history", "History"], ["install", "Install"], ["export", "Export"], ["contact", "Contact"],
-];
+const TABS = ["overview", "requested", "deps", "casks", "services", "taps", "health", "security", "apps", "shell", "history",
+  "install", "export", "contact"];
+const tabLabel = (k) => t("tab." + k);
 
 // ---------- formatting ----------
 
 const fmtSize = (kb) => kb == null ? "…" : kb > 1048576 ? (kb / 1048576).toFixed(1) + " GB" : kb > 1024 ? (kb / 1024).toFixed(0) + " MB" : kb + " KB";
 const fmtDate = (ts) => ts ? new Date(ts * 1000).toISOString().slice(0, 10) : "";
 const fmtAgo = (ts) => {
-  if (!ts) return "never";
+  if (!ts) return t("ago.never");
   const m = Math.round((Date.now() / 1000 - ts) / 60);
-  return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+  return m < 60 ? t("ago.min", { n: m }) : m < 2880 ? t("ago.h", { n: Math.round(m / 60) }) : t("ago.days", { n: Math.round(m / 1440) });
 };
 const sizeOf = (id) => S.snap?.sizes?.[id];
 
@@ -46,13 +44,13 @@ const upgradable = (p) => p.outdated && !p.disabled && !p.pinned;
 
 function badges(p) {
   let out = "";
-  if (p.outdated) out += `<span class="badge b-outdated">outdated</span>`;
-  if (p.pinned) out += `<span class="badge b-pinned">pinned</span>`;
-  if (p.orphan) out += `<span class="badge b-orphan">orphan</span>`;
-  if (p.missing_deps.length) out += `<span class="badge b-missing">missing dep</span>`;
-  if (p.deprecated) out += `<span class="badge b-deprecated">deprecated</span>`;
-  if (p.disabled) out += `<span class="badge b-disabled">disabled</span>`;
-  if (p.service) out += `<span class="badge b-service">service</span>`;
+  if (p.outdated) out += `<span class="badge b-outdated">${t("badge.outdated")}</span>`;
+  if (p.pinned) out += `<span class="badge b-pinned">${t("badge.pinned")}</span>`;
+  if (p.orphan) out += `<span class="badge b-orphan">${t("badge.orphan")}</span>`;
+  if (p.missing_deps.length) out += `<span class="badge b-missing">${t("badge.missing")}</span>`;
+  if (p.deprecated) out += `<span class="badge b-deprecated">${t("badge.deprecated")}</span>`;
+  if (p.disabled) out += `<span class="badge b-disabled">${t("badge.disabled")}</span>`;
+  if (p.service) out += `<span class="badge b-service">${t("badge.service")}</span>`;
   return out;
 }
 
@@ -62,7 +60,7 @@ async function loadState() {
   try {
     const snap = await api("/api/state");
     $("#error").classList.toggle("hidden", !snap.error);
-    $("#error").textContent = snap.error ? "brew error: " + snap.error : "";
+    $("#error").textContent = snap.error ? t("error.brew", { error: snap.error }) : "";
     if (snap.version === S.version && snap.refreshing === S.snap?.refreshing && snap.security?.seq === S.snap?.security?.seq) return;
     S.snap = snap; S.version = snap.version;
     S.pkgs = new Map((snap.model?.packages || []).map((p) => [p.id, p]));
@@ -72,7 +70,7 @@ async function loadState() {
     renderAll();
   } catch (e) {
     $("#error").classList.remove("hidden");
-    $("#error").textContent = "Cannot reach brewdash server: " + e.message;
+    $("#error").textContent = t("error.server", { error: e.message });
   }
 }
 
@@ -129,25 +127,26 @@ function counts() {
 function renderHeader() {
   const c = counts();
   const total = Object.values(S.snap?.sizes || {}).reduce((a, b) => a + b, 0);
+  const stat = (key, n, style = "") => `<span class="stat"${style}>${t(key, { n, v: `<b>${n}</b>` })}</span>`;
   $("#stats").innerHTML = [
-    `<span class="stat"><b>${S.pkgs.size}</b> packages</span>`,
-    `<span class="stat"><b>${c.outdated}</b> outdated</span>`,
-    `<span class="stat"><b>${c.orphans}</b> orphans</span>`,
-    c.missing ? `<span class="stat" style="border-color:var(--red)"><b>${c.missing}</b> missing deps</span>` : "",
-    `<span class="stat"><b>${total ? fmtSize(total) : "…"}</b> on disk</span>`,
-    S.snap?.refreshing ? `<span class="stat">refreshing…</span>` : "",
+    stat("stat.packages", S.pkgs.size),
+    stat("stat.outdated", c.outdated),
+    stat("stat.orphans", c.orphans),
+    c.missing ? stat("stat.missing", c.missing, ` style="border-color:var(--red)"`) : "",
+    stat("stat.disk", total ? fmtSize(total) : "…"),
+    S.snap?.refreshing ? `<span class="stat">${t("stat.refreshing")}</span>` : "",
   ].join("");
-  $("#last-update").textContent = "last brew update: " + fmtAgo(S.snap?.last_update);
-  $("#btn-upgrade-all").textContent = `Upgrade all (${c.upgradable})`;
+  $("#last-update").textContent = t("header.last_update", { ago: fmtAgo(S.snap?.last_update) });
+  $("#btn-upgrade-all").textContent = t("header.upgrade_all", { n: c.upgradable });
   $("#btn-upgrade-all").disabled = !c.upgradable;
-  $("#btn-autoremove").textContent = `Autoremove (${c.orphans})`;
+  $("#btn-autoremove").textContent = t("header.autoremove", { n: c.orphans });
   $("#btn-autoremove").disabled = !c.orphans;
 }
 
 function renderTabs() {
   const c = counts();
-  $("#tabs").innerHTML = TABS.map(([k, label]) =>
-    `<button data-tab="${k}" class="${S.tab === k ? "active" : ""}">${label}${c[k] != null ? `<span class="count">${c[k]}</span>` : ""}</button>`
+  $("#tabs").innerHTML = TABS.map((k) =>
+    `<button data-tab="${k}" class="${S.tab === k ? "active" : ""}">${tabLabel(k)}${c[k] != null ? `<span class="count">${c[k]}</span>` : ""}</button>`
   ).join("");
 }
 
@@ -160,10 +159,10 @@ const PKG_TABS = {
 };
 const FLAGS = [["outdated", (p) => p.outdated], ["upgradable", upgradable], ["orphan", (p) => p.orphan], ["pinned", (p) => p.pinned], ["missing", (p) => p.missing_deps.length > 0], ["service", (p) => !!p.service]];
 const COLS = [
-  ["name", "Name", (p) => p.name], ["version", "Version", (p) => p.version], ["latest", "Latest", (p) => p.latest],
-  ["size", "Size", (p) => sizeOf(p.id) ?? -1, "num"], ["installed", "Installed", (p) => p.installed_time || 0, "num"],
-  ["usedby", "Used by", (p) => p.dependents.length, "num"], ["deps", "Deps", (p) => p.deps.length, "num"],
-  ["desc", "Description", (p) => p.desc || ""],
+  ["name", (p) => p.name], ["version", (p) => p.version], ["latest", (p) => p.latest],
+  ["size", (p) => sizeOf(p.id) ?? -1, "num"], ["installed", (p) => p.installed_time || 0, "num"],
+  ["usedby", (p) => p.dependents.length, "num"], ["deps", (p) => p.deps.length, "num"],
+  ["desc", (p) => p.desc || ""],
 ];
 
 function visiblePackages() {
@@ -173,7 +172,7 @@ function visiblePackages() {
   if (q) list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.desc || "").toLowerCase().includes(q) || p.display_name.toLowerCase().includes(q));
   const col = COLS.find((c) => c[0] === S.sort.key);
   list.sort((a, b) => {
-    const x = col[2](a), y = col[2](b);
+    const x = col[1](a), y = col[1](b);
     return (x < y ? -1 : x > y ? 1 : 0) * S.sort.dir;
   });
   return list;
@@ -185,13 +184,13 @@ function renderPackages() {
   const arrow = (k) => S.sort.key === k ? (S.sort.dir > 0 ? " ▲" : " ▼") : "";
   $("#content").innerHTML = `
     <div class="toolbar">
-      <input type="search" id="q" placeholder="Search name or description" value="${esc(S.q)}">
-      ${FLAGS.map(([k]) => `<label><input type="checkbox" data-flag="${k}" ${S.flags.has(k) ? "checked" : ""}> ${k}</label>`).join("")}
-      <span class="muted">${list.length} shown</span>
+      <input type="search" id="q" placeholder="${t("pkgs.search")}" value="${esc(S.q)}">
+      ${FLAGS.map(([k]) => `<label><input type="checkbox" data-flag="${k}" ${S.flags.has(k) ? "checked" : ""}> ${t("flag." + k)}</label>`).join("")}
+      <span class="muted">${t("pkgs.shown", { n: list.length })}</span>
     </div>
     <table>
       <thead><tr><th><input type="checkbox" id="sel-all" ${allSel ? "checked" : ""}></th>
-        ${COLS.map(([k, label, , cls]) => `<th data-sort="${k}" class="${cls || ""}">${label}${arrow(k)}</th>`).join("")}</tr></thead>
+        ${COLS.map(([k, , cls]) => `<th data-sort="${k}" class="${cls || ""}">${t("col." + k)}${arrow(k)}</th>`).join("")}</tr></thead>
       <tbody>${list.map((p) => `
         <tr class="row ${S.current === p.id ? "current" : ""}" data-id="${esc(p.id)}">
           <td><input type="checkbox" data-sel="${esc(p.id)}" ${S.selected.has(p.id) ? "checked" : ""}></td>
@@ -215,15 +214,21 @@ let cy = null;
 
 function chip(id) {
   const p = S.pkgs.get(id);
-  return `<span class="chip" data-goto="${esc(id)}"${descTitle(p)}>${esc(p ? p.name : id)}${p?.kind === "cask" ? " (cask)" : ""}</span>`;
+  return `<span class="chip" data-goto="${esc(id)}"${descTitle(p)}>${esc(p ? p.name : id)}${p?.kind === "cask" ? ` (${t("detail.cask")})` : ""}</span>`;
+}
+
+// All parts translated or none: a paragraph half in English reads worse than one wholly in English.
+function adviceText(a) {
+  const parts = a.msg?.text.map((m) => tm(m, null));
+  return parts && parts.every((x) => x != null) ? parts.join(" ") : a.text;
 }
 
 function renderAdvice(p) {
   if (!p.advice.length) return "";
-  return `<div class="detail-section"><h4>What to do</h4>${p.advice.map((a, i) => `
-    <div class="${a.level === "warn" ? "warn" : "info"}"><b>${esc(a.title)}</b><div style="margin-top:4px">${esc(a.text)}</div>
-      ${a.alternatives.length ? `<div class="chips" style="margin-top:6px"><span class="muted">Already installed:</span>${a.alternatives.map(chip).join("")}</div>` : ""}
-      ${a.actions.length ? `<div class="btnrow" style="margin-top:8px">${a.actions.map((x, k) => `<button class="small" data-advice="${i}:${k}">${esc(x.label)}</button>`).join("")}</div>` : ""}
+  return `<div class="detail-section"><h4>${t("detail.what_to_do")}</h4>${p.advice.map((a, i) => `
+    <div class="${a.level === "warn" ? "warn" : "info"}"><b>${esc(tm(a.msg?.title, a.title))}</b><div style="margin-top:4px">${esc(adviceText(a))}</div>
+      ${a.alternatives.length ? `<div class="chips" style="margin-top:6px"><span class="muted">${t("detail.already_installed")}</span>${a.alternatives.map(chip).join("")}</div>` : ""}
+      ${a.actions.length ? `<div class="btnrow" style="margin-top:8px">${a.actions.map((x, k) => `<button class="small" data-advice="${i}:${k}">${esc(tm(x.msg, x.label))}</button>`).join("")}</div>` : ""}
     </div>`).join("")}</div>`;
 }
 
@@ -236,41 +241,41 @@ function renderDetail() {
   const indirect = p.required_by.filter((id) => !p.dependents.includes(id));
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:start">
-      <div><h2 class="detail-title">${esc(p.name)}</h2><div>${p.kind === "cask" ? `<span class="badge b-cask">cask</span>` : ""}${badges(p)}</div></div>
+      <div><h2 class="detail-title">${esc(p.name)}</h2><div>${p.kind === "cask" ? `<span class="badge b-cask">${t("detail.cask")}</span>` : ""}${badges(p)}</div></div>
       <button class="small" data-close>✕</button>
     </div>
-    <p>${esc(p.desc || "No description.")}</p>
+    <p>${esc(p.desc || t("detail.no_desc"))}</p>
     ${renderAdvice(p)}
-    ${alertsFor("package", p.id).length ? `<div class="detail-section"><h4>secure-it findings</h4>${alertsFor("package", p.id).map(alertCard).join("")}</div>` : ""}
+    ${alertsFor("package", p.id).length ? `<div class="detail-section"><h4>${t("detail.findings")}</h4>${alertsFor("package", p.id).map(alertCard).join("")}</div>` : ""}
     <div class="kv">
-      ${p.kind === "cask" && p.display_name !== p.name ? `<div>App</div><div>${esc(p.display_name)}</div>` : ""}
-      <div>Version</div><div class="mono">${esc(p.version)}${p.outdated ? ` → <b style="color:var(--accent)">${esc(p.latest)}</b>` : ""}</div>
-      <div>Homepage</div><div>${link(p.homepage)}</div>
-      <div>Tap</div><div class="mono">${esc(p.tap || "–")}</div>
-      ${p.license ? `<div>License</div><div>${esc(p.license)}</div>` : ""}
-      <div>Installed</div><div>${fmtDate(p.installed_time)} ${p.kind === "formula" ? (p.requested ? "(by you)" : "(as dependency)") : ""}</div>
-      <div>Size</div><div>${fmtSize(sizeOf(p.id))}</div>
-      ${p.keg_only ? `<div>Keg-only</div><div>yes, not linked into the prefix</div>` : ""}
+      ${p.kind === "cask" && p.display_name !== p.name ? `<div>${t("detail.app")}</div><div>${esc(p.display_name)}</div>` : ""}
+      <div>${t("col.version")}</div><div class="mono">${esc(p.version)}${p.outdated ? ` → <b style="color:var(--accent)">${esc(p.latest)}</b>` : ""}</div>
+      <div>${t("detail.homepage")}</div><div>${link(p.homepage)}</div>
+      <div>${t("detail.tap")}</div><div class="mono">${esc(p.tap || "–")}</div>
+      ${p.license ? `<div>${t("detail.license")}</div><div>${esc(p.license)}</div>` : ""}
+      <div>${t("col.installed")}</div><div>${fmtDate(p.installed_time)} ${p.kind === "formula" ? (p.requested ? t("detail.by_you") : t("detail.as_dependency")) : ""}</div>
+      <div>${t("col.size")}</div><div>${fmtSize(sizeOf(p.id))}</div>
+      ${p.keg_only ? `<div>${t("detail.keg_only")}</div><div>${t("detail.keg_only_text")}</div>` : ""}
     </div>
     <div class="detail-section btnrow">
-      ${upgradable(p) ? `<button class="accent" data-act="upgrade">Upgrade</button>` : ""}
-      <button data-act="${p.pinned ? "unpin" : "pin"}">${p.pinned ? "Unpin" : "Pin"}</button>
-      <button class="danger" data-act="uninstall">Uninstall</button>
+      ${upgradable(p) ? `<button class="accent" data-act="upgrade">${t("btn.upgrade")}</button>` : ""}
+      <button data-act="${p.pinned ? "unpin" : "pin"}">${p.pinned ? t("btn.unpin") : t("btn.pin")}</button>
+      <button class="danger" data-act="uninstall">${t("btn.uninstall")}</button>
     </div>
-    ${svc ? `<div class="detail-section"><h4>Service</h4>
-      <div class="kv"><div>Status</div><div>${esc(svc.status)}${svc.pid ? ` (pid ${svc.pid})` : ""}</div>
-      ${svc.log_path ? `<div>Log</div><div class="mono">${esc(svc.log_path)}</div>` : ""}
-      ${portsOf(p.id).length ? `<div>Listening</div><div>${listening(p.id)}</div>` : ""}</div>
-      <div class="btnrow" style="margin-top:6px">${["start", "stop", "restart"].map((op) => `<button class="small" data-svc="${op}" data-id="${esc(p.id)}">${op}</button>`).join("")}</div></div>` : ""}
-    <div class="detail-section"><h4>Depends on (${p.deps.length})</h4><div class="chips">${p.deps.map(chip).join("") || `<span class="muted">nothing</span>`}</div></div>
-    <div class="detail-section"><h4>Used by (${p.dependents.length})</h4><div class="chips">${p.dependents.map(chip).join("") || `<span class="muted">nothing installed depends on this directly</span>`}</div>
-      ${indirect.length ? `<div class="chips" style="margin-top:6px"><span class="muted">Also needed indirectly by:</span>${indirect.map(chip).join("")}</div>` : ""}</div>
-    <div class="detail-section"><h4>Graph
-      <select id="depth" style="margin-left:8px"><option value="1" ${S.depth === 1 ? "selected" : ""}>1 hop</option><option value="2" ${S.depth === 2 ? "selected" : ""}>2 hops</option><option value="3" ${S.depth === 3 ? "selected" : ""}>3 hops</option></select></h4>
+    ${svc ? `<div class="detail-section"><h4>${t("detail.service")}</h4>
+      <div class="kv"><div>${t("detail.status")}</div><div>${esc(svc.status)}${svc.pid ? ` (pid ${svc.pid})` : ""}</div>
+      ${svc.log_path ? `<div>${t("detail.log")}</div><div class="mono">${esc(svc.log_path)}</div>` : ""}
+      ${portsOf(p.id).length ? `<div>${t("detail.listening")}</div><div>${listening(p.id)}</div>` : ""}</div>
+      <div class="btnrow" style="margin-top:6px">${svcButtons(p)}</div></div>` : ""}
+    <div class="detail-section"><h4>${t("detail.depends_on", { n: p.deps.length })}</h4><div class="chips">${p.deps.map(chip).join("") || `<span class="muted">${t("detail.nothing")}</span>`}</div></div>
+    <div class="detail-section"><h4>${t("detail.used_by", { n: p.dependents.length })}</h4><div class="chips">${p.dependents.map(chip).join("") || `<span class="muted">${t("detail.no_dependents")}</span>`}</div>
+      ${indirect.length ? `<div class="chips" style="margin-top:6px"><span class="muted">${t("detail.indirect")}</span>${indirect.map(chip).join("")}</div>` : ""}</div>
+    <div class="detail-section"><h4>${t("detail.graph")}
+      <select id="depth" style="margin-left:8px">${[1, 2, 3].map((n) => `<option value="${n}" ${S.depth === n ? "selected" : ""}>${t("detail.hops", { n })}</option>`).join("")}</select></h4>
       <div id="graph"></div>
-      <div class="legend"><span><i class="dot" style="background:var(--accent)"></i>selected</span><span><i class="dot" style="background:var(--blue)"></i>installed by you</span><span><i class="dot" style="background:var(--graph-dep)"></i>dependency</span><span><i class="dot" style="background:var(--purple)"></i>cask</span><span>arrow = depends on</span></div>
+      <div class="legend"><span><i class="dot" style="background:var(--accent)"></i>${t("legend.selected")}</span><span><i class="dot" style="background:var(--blue)"></i>${t("legend.by_you")}</span><span><i class="dot" style="background:var(--graph-dep)"></i>${t("legend.dependency")}</span><span><i class="dot" style="background:var(--purple)"></i>${t("detail.cask")}</span><span>${t("legend.arrow")}</span></div>
     </div>
-    ${p.caveats ? `<div class="detail-section"><h4>Caveats</h4><pre>${esc(p.caveats)}</pre></div>` : ""}`;
+    ${p.caveats ? `<div class="detail-section"><h4>${t("detail.caveats")}</h4><pre>${esc(p.caveats)}</pre></div>` : ""}`;
   renderGraph(p);
 }
 
@@ -352,7 +357,7 @@ function replaceUrl() {
 
 function applyUrl() {
   const p = new URLSearchParams(location.hash.slice(1));
-  S.tab = TABS.some(([k]) => k === p.get("tab")) ? p.get("tab") : "overview";
+  S.tab = TABS.includes(p.get("tab")) ? p.get("tab") : "overview";
   S.current = p.get("pkg");
   if (S.snap?.model && !S.pkgs.has(S.current)) S.current = null;
   S.flags = new Set(p.get("flags")?.split(",").filter((f) => FLAGS.some(([k]) => k === f)));
@@ -374,42 +379,45 @@ addEventListener("popstate", (e) => {
 // ---------- other tabs ----------
 
 function listening(id) {
-  return portsOf(id).map((e) => `<span class="port mono ${e.exposed ? "exposed" : ""}" title="${e.exposed ? "reachable from other machines on the network" : "this Mac only"}">${esc(e.proto)} ${esc(e.address)}:${esc(e.port)}</span>`).join(" ");
+  return portsOf(id).map((e) => `<span class="port mono ${e.exposed ? "exposed" : ""}" title="${e.exposed ? t("port.exposed") : t("port.local")}">${esc(e.proto)} ${esc(e.address)}:${esc(e.port)}</span>`).join(" ");
 }
+
+const SVC_OPS = ["start", "stop", "restart"];
+const svcButtons = (p) => SVC_OPS.map((op) => `<button class="small" data-svc="${op}" data-id="${esc(p.id)}">${t("svc." + op)}</button>`).join("");
 
 function renderServices() {
   const list = [...S.pkgs.values()].filter((p) => p.service);
   const ports = S.snap?.ports;
   $("#content").innerHTML = `${ports?.error ? `<div class="warn">${esc(ports.error)}</div>` : ""}
-    <table><thead><tr><th>Service</th><th>Status</th><th>PID</th><th>User</th><th>Listening</th><th>Plist</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>${t("detail.service")}</th><th>${t("detail.status")}</th><th>PID</th><th>${t("svc.user")}</th><th>${t("detail.listening")}</th><th>Plist</th><th></th></tr></thead><tbody>
     ${list.map((p) => `<tr><td class="name"><span class="chip" data-goto="${esc(p.id)}"${descTitle(p)}>${esc(p.name)}</span></td>
       <td class="st ${p.service.running ? "st-succeeded" : "st-queued"}">${esc(p.service.status)}</td>
       <td class="mono">${esc(p.service.pid || "")}</td><td>${esc(p.service.user || "")}</td>
-      <td>${!ports ? `<span class="muted">…</span>` : listening(p.id) || `<span class="muted">${p.service.pid ? "none" : ""}</span>`}</td>
+      <td>${!ports ? `<span class="muted">…</span>` : listening(p.id) || `<span class="muted">${p.service.pid ? t("svc.none") : ""}</span>`}</td>
       <td class="mono muted">${esc(p.service.file || "")}</td>
-      <td class="btnrow">${["start", "stop", "restart"].map((op) => `<button class="small" data-svc="${op}" data-id="${esc(p.id)}">${op}</button>`).join("")}</td></tr>`).join("")}
-  </tbody></table>${list.length ? "" : `<p class="muted">No installed formula defines a service.</p>`}`;
+      <td class="btnrow">${svcButtons(p)}</td></tr>`).join("")}
+  </tbody></table>${list.length ? "" : `<p class="muted">${t("svc.empty")}</p>`}`;
 }
 
 const REPO = "https://github.com/lemiorhan/brewdash";
 
 function renderContact() {
   $("#content").innerHTML = `<div class="card contact"><h3>brewdash</h3><table><tbody>
-    <tr><td>Author</td><td>Lemi Orhan Ergin · ${link("https://github.com/lemiorhan")}</td></tr>
-    <tr><td>Source code</td><td>${link(REPO)}</td></tr>
-    <tr><td>Bugs and ideas</td><td>${link(REPO + "/issues")}</td></tr>
-    <tr><td>Security problems</td><td>${link(REPO + "/security/advisories/new")}</td></tr>
-    <tr><td>License</td><td>Apache License 2.0</td></tr>
+    <tr><td>${t("contact.author")}</td><td>Lemi Orhan Ergin · ${link("https://github.com/lemiorhan")}</td></tr>
+    <tr><td>${t("contact.source")}</td><td>${link(REPO)}</td></tr>
+    <tr><td>${t("contact.bugs")}</td><td>${link(REPO + "/issues")}</td></tr>
+    <tr><td>${t("contact.security")}</td><td>${link(REPO + "/security/advisories/new")}</td></tr>
+    <tr><td>${t("detail.license")}</td><td>Apache License 2.0</td></tr>
   </tbody></table></div>`;
 }
 
 function renderTaps() {
   const taps = S.snap?.model?.taps || [];
-  $("#content").innerHTML = `<table><thead><tr><th></th><th>Tap</th><th>Remote</th><th class="num">Installed from it</th><th class="num">Formulae</th><th class="num">Casks</th><th>Last commit</th></tr></thead><tbody>
-    ${taps.map((t) => `<tr><td><input type="checkbox" data-sel="t:${esc(t.name)}" ${S.selected.has("t:" + t.name) ? "checked" : ""}></td><td class="name">${esc(t.name)}${t.official ? `<span class="badge b-service">official</span>` : ""}${t.private ? `<span class="badge b-pinned">private</span>` : ""}${alertsFor("tap", t.name).length ? `<span class="badge b-missing" data-tab="security" title="secure-it flags this tap">secure-it</span>` : ""}</td>
-      <td class="mono muted">${esc(t.remote || "")}</td><td class="num">${t.installed.length || `<span class="muted">0 · unused?</span>`}</td>
-      <td class="num">${t.formula_count}</td><td class="num">${t.cask_count}</td><td class="muted">${esc(t.last_commit || "")}</td></tr>
-      ${t.installed.length && !t.official ? `<tr><td></td><td></td><td colspan="5"><div class="chips">${t.installed.map(chip).join("")}</div></td></tr>` : ""}`).join("")}
+  $("#content").innerHTML = `<table><thead><tr><th></th><th>${t("detail.tap")}</th><th>${t("taps.remote")}</th><th class="num">${t("taps.installed")}</th><th class="num">${t("taps.formulae")}</th><th class="num">${t("tab.casks")}</th><th>${t("taps.last_commit")}</th></tr></thead><tbody>
+    ${taps.map((tp) => `<tr><td><input type="checkbox" data-sel="t:${esc(tp.name)}" ${S.selected.has("t:" + tp.name) ? "checked" : ""}></td><td class="name">${esc(tp.name)}${tp.official ? `<span class="badge b-service">${t("taps.official")}</span>` : ""}${tp.private ? `<span class="badge b-pinned">${t("taps.private")}</span>` : ""}${alertsFor("tap", tp.name).length ? `<span class="badge b-missing" data-tab="security" title="${t("taps.flagged")}">secure-it</span>` : ""}</td>
+      <td class="mono muted">${esc(tp.remote || "")}</td><td class="num">${tp.installed.length || `<span class="muted">${t("taps.unused")}</span>`}</td>
+      <td class="num">${tp.formula_count}</td><td class="num">${tp.cask_count}</td><td class="muted">${esc(tp.last_commit || "")}</td></tr>
+      ${tp.installed.length && !tp.official ? `<tr><td></td><td></td><td colspan="5"><div class="chips">${tp.installed.map(chip).join("")}</div></td></tr>` : ""}`).join("")}
   </tbody></table>`;
 }
 
@@ -420,78 +428,75 @@ function renderHealth() {
   const deprecated = all.filter((p) => p.deprecated || p.disabled);
   const orphans = all.filter((p) => p.orphan);
   $("#content").innerHTML = `<div class="cards">
-    <div class="card"><h3>Missing dependencies (${missing.length})</h3>
-      ${missing.map((p) => `<div style="margin-bottom:4px">${chip(p.id)} needs <span class="mono" style="color:var(--red)">${esc(p.missing_deps.join(", "))}</span></div>`).join("") || `<span class="muted">None.</span>`}</div>
-    <div class="card"><h3>Orphans: autoremove candidates (${orphans.length})</h3>
-      <p class="muted">Installed as dependencies; nothing needs them any more.</p>
-      <div class="chips">${orphans.map((p) => chip(p.id)).join("") || `<span class="muted">None.</span>`}</div>
-      ${orphans.length ? `<div style="margin-top:10px"><button class="danger" data-global="autoremove">Autoremove ${orphans.length}</button></div>` : ""}</div>
-    <div class="card"><h3>Deprecated or disabled (${deprecated.length})</h3>
-      <div class="chips">${deprecated.map((p) => chip(p.id)).join("") || `<span class="muted">None.</span>`}</div></div>
-    <div class="card"><h3>Cleanup</h3>
-      ${h ? `<p>${h.cleanup_reclaim ? `<b>${esc(h.cleanup_reclaim)}</b> can be freed.` : "Nothing to clean."}</p>
+    <div class="card"><h3>${t("health.missing", { n: missing.length })}</h3>
+      ${missing.map((p) => `<div style="margin-bottom:4px">${t("health.needs", { pkg: chip(p.id), deps: `<span class="mono" style="color:var(--red)">${esc(p.missing_deps.join(", "))}</span>` })}</div>`).join("") || `<span class="muted">${t("health.none")}</span>`}</div>
+    <div class="card"><h3>${t("health.orphans", { n: orphans.length })}</h3>
+      <p class="muted">${t("health.orphans_text")}</p>
+      <div class="chips">${orphans.map((p) => chip(p.id)).join("") || `<span class="muted">${t("health.none")}</span>`}</div>
+      ${orphans.length ? `<div style="margin-top:10px"><button class="danger" data-global="autoremove">${t("health.autoremove", { n: orphans.length })}</button></div>` : ""}</div>
+    <div class="card"><h3>${t("health.deprecated", { n: deprecated.length })}</h3>
+      <div class="chips">${deprecated.map((p) => chip(p.id)).join("") || `<span class="muted">${t("health.none")}</span>`}</div></div>
+    <div class="card"><h3>${t("health.cleanup")}</h3>
+      ${h ? `<p>${h.cleanup_reclaim ? t("health.can_free", { size: `<b>${esc(h.cleanup_reclaim)}</b>` }) : t("health.nothing_to_clean")}</p>
         ${h.cleanup_preview.length ? `<pre>${esc(h.cleanup_preview.join("\n"))}</pre>` : ""}
-        ${h.cleanup_reclaim ? `<div style="margin-top:10px"><button class="accent" data-global="cleanup">Run brew cleanup</button></div>` : ""}` : `<p class="loading">Computing…</p>`}</div>
-    <div class="card" style="grid-column:1/-1"><h3>brew doctor ${h ? (h.doctor_ok ? `<span class="st st-succeeded">ok</span>` : `<span class="st st-failed">warnings</span>`) : ""}</h3>
-      ${h ? `<pre>${esc(h.doctor || "Your system is ready to brew.")}</pre>` : `<p class="loading">Running brew doctor…</p>`}</div>
+        ${h.cleanup_reclaim ? `<div style="margin-top:10px"><button class="accent" data-global="cleanup">${t("health.run_cleanup")}</button></div>` : ""}` : `<p class="loading">${t("common.computing")}</p>`}</div>
+    <div class="card" style="grid-column:1/-1"><h3>brew doctor ${h ? (h.doctor_ok ? `<span class="st st-succeeded">${t("common.ok")}</span>` : `<span class="st st-failed">${t("health.warnings")}</span>`) : ""}</h3>
+      ${h ? `<pre>${esc(h.doctor || "Your system is ready to brew.")}</pre>` : `<p class="loading">${t("health.running_doctor")}</p>`}</div>
   </div>`;
 }
 
-const SOURCE = { brew: "brew", appstore: "App Store", manual: "installed by hand" };
 const SIGNATURE = {
-  apple: ["Apple", "ok"], appstore: ["App Store", "ok"], developer_id: ["Developer ID", "ok"], other: ["other signer", "muted"],
-  adhoc: ["ad-hoc, no signer", "bad"], unsigned: ["not signed", "bad"], unknown: ["unknown", "muted"],
+  apple: "ok", appstore: "ok", developer_id: "ok", other: "muted", adhoc: "bad", unsigned: "bad", unknown: "muted",
 };
 const weakSignature = (a) => ["adhoc", "unsigned"].includes(a.signature?.kind);
 
 function signature(sig) {
   if (!sig) return `<span class="muted">…</span>`;
-  const [label, cls] = SIGNATURE[sig.kind] || SIGNATURE.unknown;
-  return `<span class="${cls === "bad" ? "sig-bad" : cls}" title="${esc(sig.error || sig.signer || "")}">${label}</span>${sig.kind === "developer_id" || sig.kind === "other" ? ` <span class="muted">${esc(sig.signer)}</span>` : ""}`;
+  const kind = SIGNATURE[sig.kind] ? sig.kind : "unknown";
+  const cls = SIGNATURE[kind];
+  return `<span class="${cls === "bad" ? "sig-bad" : cls}" title="${esc(sig.error || sig.signer || "")}">${t("sig." + kind)}</span>${kind === "developer_id" || kind === "other" ? ` <span class="muted">${esc(sig.signer)}</span>` : ""}`;
 }
 
 function renderApps() {
   const env = S.snap?.apps;
-  if (!env) { $("#content").innerHTML = `<p class="loading">Scanning /Applications…</p>`; return; }
+  if (!env) { $("#content").innerHTML = `<p class="loading">${t("apps.scanning")}</p>`; return; }
   const apps = appsList();
   const adoptable = apps.filter((a) => a.source === "manual" && a.cask);
   const row = (a) => {
     const sel = a.source === "brew" ? a.brew_id : a.cask ? a.id : null;
-    const newer = a.cask_version && a.version && !a.cask_version.startsWith(a.version) ? ` <span class="muted">(cask has ${esc(a.cask_version.split(",")[0])})</span>` : "";
-    const action = a.source === "brew" ? `<span class="chip" data-goto="${esc(a.brew_id)}"${descTitle(S.pkgs.get(a.brew_id))}>${esc(S.pkgs.get(a.brew_id)?.name || a.brew_id)}</span> <span class="muted">upgrade and uninstall in Casks</span>`
-      : a.source === "appstore" ? `<span class="muted">updates through the App Store</span>`
-      : a.cask ? `<button class="small accent" data-adopt="${esc(a.id)}">Bring into brew</button> <span class="mono">${esc(a.cask)}</span>${newer}${a.auto_updates ? ` <span class="muted">updates itself</span>` : ""}`
-      : `<button class="small" data-findcask="${esc(a.name)}">Search cask</button>`;
+    const newer = a.cask_version && a.version && !a.cask_version.startsWith(a.version) ? ` <span class="muted">${t("apps.cask_has", { version: esc(a.cask_version.split(",")[0]) })}</span>` : "";
+    const action = a.source === "brew" ? `<span class="chip" data-goto="${esc(a.brew_id)}"${descTitle(S.pkgs.get(a.brew_id))}>${esc(S.pkgs.get(a.brew_id)?.name || a.brew_id)}</span> <span class="muted">${t("apps.in_casks")}</span>`
+      : a.source === "appstore" ? `<span class="muted">${t("apps.via_store")}</span>`
+      : a.cask ? `<button class="small accent" data-adopt="${esc(a.id)}">${t("apps.adopt")}</button> <span class="mono">${esc(a.cask)}</span>${newer}${a.auto_updates ? ` <span class="muted">${t("apps.auto_updates")}</span>` : ""}`
+      : `<button class="small" data-findcask="${esc(a.name)}">${t("apps.search_cask")}</button>`;
     return `<tr><td>${sel ? `<input type="checkbox" data-sel="${esc(sel)}" ${S.selected.has(sel) ? "checked" : ""}>` : ""}</td>
-      <td class="name">${esc(a.name)}</td><td class="mono">${esc(a.version || "")}</td><td>${SOURCE[a.source]}</td><td>${signature(a.signature)}</td><td>${action}</td></tr>`;
+      <td class="name">${esc(a.name)}</td><td class="mono">${esc(a.version || "")}</td><td>${t("source." + a.source)}</td><td>${signature(a.signature)}</td><td>${action}</td></tr>`;
   };
   $("#content").innerHTML = `
     ${env.error ? `<div class="warn">${esc(env.error)}</div>` : ""}
-    ${env.names_known ? "" : `<div class="info">Homebrew's cask list is not cached yet, so apps are not matched to casks. Run brew update, then Refresh.</div>`}
-    <p class="muted">${adoptable.length} app(s) installed by hand have a matching brew cask. <b>Bring into brew</b> runs <span class="mono">brew install --cask --adopt</span>: brew takes over the existing app, and from then on upgrades and uninstalls it like any cask. A match is shown only when the cask installs exactly that .app.</p>
-    <p class="muted">Signature shows who signed each app, as the app itself declares it. brewdash does not verify the signature and does not check notarization; <span class="mono">spctl --assess</span> does both, but takes minutes for a full Applications folder.</p>
-    <table><thead><tr><th></th><th>App</th><th>Version</th><th>Installed by</th><th>Signature</th><th>Brew</th></tr></thead>
+    ${env.names_known ? "" : `<div class="info">${t("apps.no_cask_list")}</div>`}
+    <p class="muted">${t("apps.adopt_help", { n: adoptable.length })}</p>
+    <p class="muted">${t("apps.signature_help")}</p>
+    <table><thead><tr><th></th><th>${t("detail.app")}</th><th>${t("col.version")}</th><th>${t("apps.installed_by")}</th><th>${t("apps.signature")}</th><th>Brew</th></tr></thead>
     <tbody>${apps.map(row).join("")}</tbody></table>`;
 }
 
-const ISSUE = { duplicate: "duplicate", missing: "missing", pinned: "pinned version", old_prefix: "old prefix", synced: "synced folder first" };
-
 function renderShell() {
   const sh = S.snap?.shell;
-  if (!sh) { $("#content").innerHTML = `<p class="loading">Reading shell setup…</p>`; return; }
-  const install = (alt) => alt ? `<button class="small" data-install="${esc(alt.kind)}:${esc(alt.name)}">Install ${esc(alt.name)} with brew</button>` : "";
+  if (!sh) { $("#content").innerHTML = `<p class="loading">${t("shell.reading")}</p>`; return; }
+  const install = (alt) => alt ? `<button class="small" data-install="${esc(alt.kind)}:${esc(alt.name)}">${t("shell.install", { name: esc(alt.name) })}</button>` : "";
   $("#content").innerHTML = `
     ${sh.error ? `<div class="warn">${esc(sh.error)}</div>` : ""}    <h3>PATH</h3>
-    <table><thead><tr><th>File</th><th>Entry</th><th>Status</th><th>What to do</th></tr></thead><tbody>
+    <table><thead><tr><th>${t("shell.file")}</th><th>${t("shell.entry")}</th><th>${t("detail.status")}</th><th>${t("detail.what_to_do")}</th></tr></thead><tbody>
     ${sh.path.map((e) => `<tr><td class="mono">${esc(e.file)}:${e.line}</td><td class="mono">${esc(e.raw)}</td>
-      <td>${e.issue ? `<span class="badge b-missing">${ISSUE[e.issue]}</span>` : e.exists === null ? `<span class="muted">not checked</span>` : `<span class="ok">ok</span>`}</td>
-      <td>${esc(e.suggestion || "")} ${e.alternative ? `<div style="margin-top:4px"><span class="muted">brew has this tool:</span> ${install(e.alternative)}</div>` : ""}</td></tr>`).join("")}
+      <td>${e.issue ? `<span class="badge b-missing">${t("issue." + e.issue)}</span>` : e.exists === null ? `<span class="muted">${t("shell.not_checked")}</span>` : `<span class="ok">${t("common.ok")}</span>`}</td>
+      <td>${esc(tm(e.suggestion_msg, e.suggestion || ""))} ${e.alternative ? `<div style="margin-top:4px"><span class="muted">${t("shell.brew_has")}</span> ${install(e.alternative)}</div>` : ""}</td></tr>`).join("")}
     </tbody></table>
-    <h3>Tools started by the shell</h3>
-    <table><thead><tr><th>Tool</th><th>File</th><th>From brew</th><th></th></tr></thead><tbody>
-    ${sh.tools.map((t) => `<tr><td class="name">${esc(t.name)}</td><td class="mono">${esc(t.file)}:${t.line}</td>
-      <td>${t.via_brew ? `<span class="ok">yes</span>` : "no"}</td>
-      <td>${t.alternative ? `${install({ kind: "formula", name: t.alternative })} <span class="muted">then point ${esc(t.file)}:${t.line} at brew's copy</span>` : ""}</td></tr>`).join("")}
+    <h3>${t("shell.tools")}</h3>
+    <table><thead><tr><th>${t("shell.tool")}</th><th>${t("shell.file")}</th><th>${t("shell.from_brew")}</th><th></th></tr></thead><tbody>
+    ${sh.tools.map((tool) => `<tr><td class="name">${esc(tool.name)}</td><td class="mono">${esc(tool.file)}:${tool.line}</td>
+      <td>${tool.via_brew ? `<span class="ok">${t("common.yes")}</span>` : t("common.no")}</td>
+      <td>${tool.alternative ? `${install({ kind: "formula", name: tool.alternative })} <span class="muted">${t("shell.then_point", { file: `${esc(tool.file)}:${tool.line}` })}</span>` : ""}</td></tr>`).join("")}
     </tbody></table>`;
 }
 
@@ -501,39 +506,42 @@ const SEVERITY_LEVEL = { critical: "critical", high: "critical", medium: "warnin
 
 function alertLink(l) {
   if (!l) return "";
-  if (l.type === "package") return `<div class="chips" style="margin-top:6px"><span class="muted">Package:</span>${chip(l.id)}</div>`;
-  if (l.type === "tap") return `<div style="margin-top:6px"><button class="small" data-tab="taps">Open ${esc(l.name)} in Taps</button></div>`;
-  const label = TABS.find(([k]) => k === l.tab)?.[1] || l.tab;
-  return `<div style="margin-top:6px"><button class="small" data-tab="${esc(l.tab)}">Open ${esc(label)}</button></div>`;
+  if (l.type === "package") return `<div class="chips" style="margin-top:6px"><span class="muted">${t("sec.package")}</span>${chip(l.id)}</div>`;
+  if (l.type === "tap") return `<div style="margin-top:6px"><button class="small" data-tab="taps">${t("sec.open_tap", { name: esc(l.name) })}</button></div>`;
+  const label = TABS.includes(l.tab) ? tabLabel(l.tab) : l.tab;
+  return `<div style="margin-top:6px"><button class="small" data-tab="${esc(l.tab)}">${t("sec.open", { name: esc(label) })}</button></div>`;
 }
+
+const SEVERITIES = ["critical", "high", "medium", "low"];
+const sevLabel = (s) => SEVERITIES.includes(s) ? t("sev." + s) : s;
 
 // Commands are shown to copy, never run: brewdash does not run what a file in the user's home tells it to.
 function alertCard(a) {
   const accept = a.fingerprint ? `sudo secure-it accept ${a.fingerprint.slice(0, 12)} --note "why this is fine"` : "";
   return `<div class="alert sev-${esc(a.severity)}">
-    <div><span class="sev">${esc(a.severity)}</span> <b>${esc(a.title)}</b> <span class="muted mono">${esc(a.check_id)}</span></div>
+    <div><span class="sev">${esc(sevLabel(a.severity))}</span> <b>${esc(a.title)}</b> <span class="muted mono">${esc(a.check_id)}</span></div>
     ${a.detail ? `<div class="muted" style="margin-top:4px">${esc(a.detail)}</div>` : ""}
     ${a.remediation ? `<div style="margin-top:6px">${esc(a.remediation)}</div>` : ""}
-    ${a.fix_command ? `<div class="cmd"><span class="muted">Fix:</span><pre>${esc(a.fix_command)}</pre><button class="small" data-copytext="${esc(a.fix_command)}">Copy</button></div>` : ""}
-    ${accept ? `<div class="cmd"><span class="muted">If it is expected:</span><pre>${esc(accept)}</pre><button class="small" data-copytext="${esc(accept)}">Copy</button></div>` : ""}
+    ${a.fix_command ? `<div class="cmd"><span class="muted">${t("sec.fix")}</span><pre>${esc(a.fix_command)}</pre><button class="small" data-copytext="${esc(a.fix_command)}">${t("btn.copy")}</button></div>` : ""}
+    ${accept ? `<div class="cmd"><span class="muted">${t("sec.if_expected")}</span><pre>${esc(accept)}</pre><button class="small" data-copytext="${esc(accept)}">${t("btn.copy")}</button></div>` : ""}
     ${alertLink(a.link)}</div>`;
 }
 
 function renderSecurity() {
   const sec = S.snap?.security;
   if (!sec?.found) {
-    $("#content").innerHTML = `<div class="card"><h3>secure-it is not set up</h3>
-      <p><a href="https://github.com/lemiorhan/secure-it" target="_blank" rel="noopener">secure-it</a> is a separate, root-run scanner for macOS security settings, persistence, listening ports and installed packages. After each scan it writes <span class="mono">${esc(sec?.path || "~/secure-it/report.json")}</span>, and brewdash shows those findings here, next to the packages they concern.</p>
+    $("#content").innerHTML = `<div class="card"><h3>${t("sec.not_setup")}</h3>
+      <p>${t("sec.not_setup_text", { link: `<a href="https://github.com/lemiorhan/secure-it" target="_blank" rel="noopener">secure-it</a>`, path: `<span class="mono">${esc(sec?.path || "~/secure-it/report.json")}</span>` })}</p>
       <pre>git clone https://github.com/lemiorhan/secure-it.git\ncd secure-it && sudo ./install.sh\nsudo secure-it scan</pre></div>`;
     return;
   }
   const list = alerts();
   const by = (s) => list.filter((a) => a.severity === s).length;
   $("#content").innerHTML = `
-    ${sec.error ? `<div class="warn">brewdash could not use ${esc(sec.path)}: ${esc(sec.error)}</div>` : ""}
-    <p class="muted">From <span class="mono">${esc(sec.path)}</span>, scan of ${esc(sec.generated_at || "unknown time")}. Only findings you have not accepted are listed.
-      ${["critical", "high", "medium", "low"].map((s) => by(s) ? `<span class="sev-count sev-${s}">${by(s)} ${s}</span>` : "").join(" ")}</p>
-    ${list.length ? list.map(alertCard).join("") : sec.error ? "" : `<p class="ok">✔ secure-it reports nothing open.</p>`}`;
+    ${sec.error ? `<div class="warn">${t("sec.unusable", { path: esc(sec.path), error: esc(sec.error) })}</div>` : ""}
+    <p class="muted">${t("sec.from", { path: `<span class="mono">${esc(sec.path)}</span>`, time: esc(sec.generated_at || t("sec.unknown_time")) })}
+      ${SEVERITIES.map((s) => by(s) ? `<span class="sev-count sev-${s}">${by(s)} ${sevLabel(s)}</span>` : "").join(" ")}</p>
+    ${list.length ? list.map(alertCard).join("") : sec.error ? "" : `<p class="ok">✔ ${t("sec.nothing_open")}</p>`}`;
 }
 
 // ---------- overview ----------
@@ -549,40 +557,41 @@ function attention() {
   const items = [];
   const add = (level, count, title, text, go) => { if (count) items.push({ level, count, title, text, go }); };
   // A package table filters within one tab, with its flags ANDed; one item per tab keeps the click showing exactly what the item counts.
-  const addPerTab = (level, flags, title, text) => {
-    for (const [tab, label] of TABS.filter(([t]) => PKG_TABS[t])) {
+  const addPerTab = (level, flags, key, text) => {
+    for (const tab of TABS.filter((k) => PKG_TABS[k])) {
       const hits = all.filter((p) => PKG_TABS[tab](p) && flags.every((f) => FLAGS.find(([k]) => k === f)[1](p)));
-      add(level, hits.length, `${title} in ${label}`, text(hits.map((p) => p.name).join(", ")), `${tab}:${flags.join(",")}`);
+      add(level, hits.length, t(key, { n: hits.length, tab: tabLabel(tab) }), text(hits.map((p) => p.name).join(", ")), `${tab}:${flags.join(",")}`);
     }
   };
+  const names = (xs) => xs.map((x) => x.name).join(", ");
   const missing = all.filter((p) => p.missing_deps.length);
-  add("critical", missing.length, "missing dependencies", `${missing.map((p) => p.name).join(", ")} cannot run until the missing packages are installed.`, "health");
+  add("critical", missing.length, t("att.missing", { n: missing.length }), t("att.missing_text", { names: names(missing) }), "health");
   const dead = all.filter((p) => p.deprecated || p.disabled);
-  add("critical", dead.length, "deprecated or disabled", `${dead.map((p) => p.name).join(", ")}: Homebrew stopped or will stop maintaining these. Each detail panel says what to do.`, "health");
-  if (h) add("warning", !h.doctor_ok, "brew doctor has warnings", "Read them in Health.", "health");
-  addPerTab("warning", ["upgradable"], "can be upgraded", (names) => `${names}.`);
-  addPerTab("warning", ["outdated", "pinned"], "outdated but pinned", (names) => `${names}: brew upgrade skips these until they are unpinned.`);
-  add("warning", daysSinceUpdate() > STALE_UPDATE_DAYS, "brew update is stale", `Last run ${fmtAgo(S.snap?.last_update)}; the outdated list is only as fresh as that.`, "update");
+  add("critical", dead.length, t("att.dead", { n: dead.length }), t("att.dead_text", { names: names(dead) }), "health");
+  if (h) add("warning", !h.doctor_ok, t("att.doctor"), t("att.doctor_text"), "health");
+  addPerTab("warning", ["upgradable"], "att.upgradable", (list) => t("att.upgradable_text", { names: list }));
+  addPerTab("warning", ["outdated", "pinned"], "att.pinned", (list) => t("att.pinned_text", { names: list }));
+  add("warning", daysSinceUpdate() > STALE_UPDATE_DAYS, t("att.stale"), t("att.stale_text", { ago: fmtAgo(S.snap?.last_update) }), "update");
   const pathIssues = (S.snap?.shell?.path || []).filter((e) => e.issue);
   const synced = pathIssues.filter((e) => e.issue === "synced");
-  add("warning", synced.length, "synced folders ahead in PATH", `${synced.map((e) => e.raw).join(", ")}: a file that arrives by sync runs in place of the system command of the same name.`, "shell");
-  add("warning", pathIssues.length - synced.length, "PATH problems", "Duplicate, missing or outdated entries in your shell startup files.", "shell");
+  add("warning", synced.length, t("att.synced", { n: synced.length }), t("att.synced_text", { names: synced.map((e) => e.raw).join(", ") }), "shell");
+  add("warning", pathIssues.length - synced.length, t("att.path", { n: pathIssues.length - synced.length }), t("att.path_text"), "shell");
   for (const level of ["critical", "warning", "info"]) {
     const hits = alerts().filter((a) => SEVERITY_LEVEL[a.severity] === level);
-    add(level, hits.length, "secure-it findings", hits.slice(0, 3).map((a) => a.title).join("; ") + (hits.length > 3 ? "; …" : ""), "security");
+    add(level, hits.length, t("att.findings", { n: hits.length }), hits.slice(0, 3).map((a) => a.title).join("; ") + (hits.length > 3 ? "; …" : ""), "security");
   }
-  if (S.snap?.security?.error) add("warning", true, "secure-it report unreadable", S.snap.security.error, "security");
+  if (S.snap?.security?.error) add("warning", true, t("att.report_unreadable"), S.snap.security.error, "security");
   const exposed = all.filter((p) => portsOf(p.id).some((e) => e.exposed));
-  add("warning", exposed.length, "services reachable from the network", `${exposed.map((p) => p.name).join(", ")}: listening on all interfaces, not only this Mac.`, "services");
+  add("warning", exposed.length, t("att.exposed", { n: exposed.length }), t("att.exposed_text", { names: names(exposed) }), "services");
   const weak = appsList().filter(weakSignature);
-  add("warning", weak.length, "apps without a real signature", `${weak.map((a) => a.name).join(", ")}: not signed, or signed ad-hoc with no identity behind it.`, "apps");
+  add("warning", weak.length, t("att.weak", { n: weak.length }), t("att.weak_text", { names: names(weak) }), "apps");
   const orphans = all.filter((p) => p.orphan);
-  add("info", orphans.length, "orphans", "Installed as dependencies; nothing needs them any more. Autoremove takes them out.", "health");
-  add("info", !!h?.cleanup_reclaim, "cleanup", `${h?.cleanup_reclaim} can be freed with brew cleanup.`, "health");
+  add("info", orphans.length, t("att.orphans", { n: orphans.length }), t("att.orphans_text"), "health");
+  add("info", !!h?.cleanup_reclaim, t("att.cleanup"), t("att.cleanup_text", { size: h?.cleanup_reclaim }), "health");
   const adoptable = appsList().filter((a) => a.source === "manual" && a.cask);
-  add("info", adoptable.length, "apps brew could manage", `${adoptable.map((a) => a.name).join(", ")}: installed by hand, and a cask installs exactly that app.`, "apps");
-  const unusedTaps = (S.snap?.model?.taps || []).filter((t) => !t.official && !t.installed.length);
-  add("info", unusedTaps.length, "unused taps", `${unusedTaps.map((t) => t.name).join(", ")}: nothing installed comes from them.`, "taps");
+  add("info", adoptable.length, t("att.adoptable", { n: adoptable.length }), t("att.adoptable_text", { names: names(adoptable) }), "apps");
+  const unusedTaps = (S.snap?.model?.taps || []).filter((tp) => !tp.official && !tp.installed.length);
+  add("info", unusedTaps.length, t("att.unused_taps", { n: unusedTaps.length }), t("att.unused_taps_text", { names: names(unusedTaps) }), "taps");
   const rank = ["critical", "warning", "info"];
   return items.sort((a, b) => rank.indexOf(a.level) - rank.indexOf(b.level));
 }
@@ -596,7 +605,7 @@ function tile(value, label, sub = "", tone = "") {
 // One horizontal bar split into segments, with a legend that carries the numbers.
 function stackChart(title, parts) {
   const total = parts.reduce((a, p) => a + p.value, 0);
-  if (!total) return `<div class="card"><h3>${title}</h3><p class="muted">Nothing yet.</p></div>`;
+  if (!total) return `<div class="card"><h3>${title}</h3><p class="muted">${t("ov.nothing_yet")}</p></div>`;
   const shown = parts.filter((p) => p.value);
   return `<div class="card"><h3>${title}</h3>
     <div class="stack">${shown.map((p) => `<div class="seg" style="flex:${p.value};background:${p.color}" title="${esc(p.label)}: ${p.value} (${Math.round(100 * p.value / total)}%)"${p.go ? ` data-overview="${p.go}"` : ""}></div>`).join("")}</div>
@@ -629,17 +638,16 @@ function installsChart() {
     if (byMonth[m]) byMonth[m].push(p.name); else if (m < months[0]) earlier++;
   }
   const max = Math.max(...months.map((m) => byMonth[m].length), 0);
-  return `<div class="card"><h3>Installed per month, last ${MONTHS_SHOWN} months</h3>
+  return `<div class="card"><h3>${t("ov.per_month", { n: MONTHS_SHOWN })}</h3>
     ${max ? `<div class="months">${months.map((m) => {
       const n = byMonth[m].length;
       const names = byMonth[m].slice(0, 12).join(", ") + (n > 12 ? ", …" : "");
       return `<div class="month" title="${m}: ${n}${n ? " (" + esc(names) + ")" : ""}"><span class="month-bar" style="height:${(100 * n / max).toFixed(1)}%"></span></div>`;
     }).join("")}</div>
-    <div class="months-axis muted"><span>${months[0]}</span><span>${months[months.length - 1]}</span></div>` : `<p class="muted">Nothing installed in this period.</p>`}
-    ${earlier ? `<p class="muted">${earlier} package(s) were installed before ${months[0]}.</p>` : ""}</div>`;
+    <div class="months-axis muted"><span>${months[0]}</span><span>${months[months.length - 1]}</span></div>` : `<p class="muted">${t("ov.none_in_period")}</p>`}
+    ${earlier ? `<p class="muted">${t("ov.earlier", { n: earlier, month: months[0] })}</p>` : ""}</div>`;
 }
 
-const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 const nameList = (ps) => ps.map((p) => p.name).sort((a, b) => a.localeCompare(b)).slice(0, 20).join(", ") + (ps.length > 20 ? ", …" : "");
 
@@ -690,9 +698,9 @@ function best(pkgs, score, lowest = false) {
 function recordTile(title, { top, value }, fmt, note) {
   if (!top.length) return "";
   const [p, ...ties] = top;
-  const goto = (t) => `<span class="rec-also" data-goto="${esc(t.id)}"${descTitle(t)}>${esc(t.name)}</span>`;
+  const goto = (x) => `<span class="rec-also" data-goto="${esc(x.id)}"${descTitle(x)}>${esc(x.name)}</span>`;
   const more = ties.slice(3);
-  const also = ties.length ? `also ${ties.slice(0, 3).map(goto).join(", ")}${more.length ? ` <span title="${esc(nameList(more))}">and ${more.length} more</span>` : ""}` : "";
+  const also = ties.length ? t("rec.also", { names: ties.slice(0, 3).map(goto).join(", ") + (more.length ? ` <span title="${esc(nameList(more))}">${t("rec.more", { n: more.length })}</span>` : "") }) : "";
   const sub = [note ? esc(note(p)) : "", also].filter(Boolean).join(" · ");
   return `<div class="rec" data-goto="${esc(p.id)}"${descTitle(p)}>
     <div class="rec-title">${title}</div>
@@ -709,23 +717,23 @@ function recordsCard(all, sizes, reach) {
   const sized = all.filter((p) => sizes[p.id] != null);
   const pulled = (p) => reach.get(p.id).all;
   const withDeps = (p) => sizes[p.id] + sum([...pulled(p)].map((id) => sizes[id] || 0));
-  const pkgs = (n) => plural(n, "package");
+  const count = (key) => (n) => t(key, { n });
   const tiles = [
-    recordTile("Largest", best(sized, (p) => sizes[p.id]), fmtSize),
-    recordTile("Smallest", best(sized, (p) => sizes[p.id], true), fmtSize),
-    recordTile("Heaviest with its dependencies", best(sized, (p) => pulled(p).size ? withDeps(p) : null), fmtSize,
-      (p) => `${fmtSize(sizes[p.id])} itself and ${plural(pulled(p).size, "dependency", "dependencies")}`),
-    recordTile("Most dependencies", best(all, (p) => pulled(p).size || null), pkgs, (p) => `${p.deps.length} direct`),
-    recordTile("Longest dependency chain", best(all, (p) => reach.get(p.id).chain.length - 1 || null), (n) => plural(n, "level"),
+    recordTile(t("rec.largest"), best(sized, (p) => sizes[p.id]), fmtSize),
+    recordTile(t("rec.smallest"), best(sized, (p) => sizes[p.id], true), fmtSize),
+    recordTile(t("rec.heaviest"), best(sized, (p) => pulled(p).size ? withDeps(p) : null), fmtSize,
+      (p) => t("rec.heaviest_note", { size: fmtSize(sizes[p.id]), n: pulled(p).size })),
+    recordTile(t("rec.most_deps"), best(all, (p) => pulled(p).size || null), count("unit.packages"), (p) => t("rec.direct", { n: p.deps.length })),
+    recordTile(t("rec.longest_chain"), best(all, (p) => reach.get(p.id).chain.length - 1 || null), count("unit.levels"),
       (p) => reach.get(p.id).chain.map((id) => S.pkgs.get(id).name).join(" → ")),
-    recordTile("Longest without an upgrade", best(all, (p) => p.installed_time || null, true), fmtDate, (p) => fmtAgo(p.installed_time)),
-    recordTile("Latest install or upgrade", best(all, (p) => p.installed_time || null), fmtDate, (p) => fmtAgo(p.installed_time)),
-    recordTile("Shortest name", best(all, (p) => p.name.length, true), (n) => plural(n, "character")),
-    recordTile("Longest name", best(all, (p) => p.name.length), (n) => plural(n, "character")),
-    recordTile("Highest version", best(all, majorVersion), (_, p) => p.version),
-    recordTile("Longest caveats", best(all, (p) => p.caveats ? p.caveats.split("\n").length : null), (n) => plural(n, "line")),
+    recordTile(t("rec.oldest"), best(all, (p) => p.installed_time || null, true), fmtDate, (p) => fmtAgo(p.installed_time)),
+    recordTile(t("rec.latest"), best(all, (p) => p.installed_time || null), fmtDate, (p) => fmtAgo(p.installed_time)),
+    recordTile(t("rec.shortest_name"), best(all, (p) => p.name.length, true), count("unit.characters")),
+    recordTile(t("rec.longest_name"), best(all, (p) => p.name.length), count("unit.characters")),
+    recordTile(t("rec.highest_version"), best(all, majorVersion), (_, p) => p.version),
+    recordTile(t("rec.longest_caveats"), best(all, (p) => p.caveats ? p.caveats.split("\n").length : null), count("unit.lines")),
   ].join("");
-  return `<div class="card records"><h3>Records</h3>${tiles ? `<div class="recs">${tiles}</div>` : `<p class="muted">Nothing installed.</p>`}</div>`;
+  return `<div class="card records"><h3>${t("rec.title")}</h3>${tiles ? `<div class="recs">${tiles}</div>` : `<p class="muted">${t("ov.nothing_installed")}</p>`}</div>`;
 }
 
 function numbersCard(all, sizes, reach) {
@@ -738,55 +746,43 @@ function numbersCard(all, sizes, reach) {
   const median = kb.length % 2 ? kb[mid] : Math.round((kb[mid - 1] + kb[mid]) / 2);
   const depKb = sum(formulae.filter((p) => !p.requested).map((p) => sizes[p.id] || 0));
   const licenses = groupsBy(formulae.filter((p) => p.license), (p) => p.license);
-  const thirdParty = (S.snap?.model?.taps || []).filter((t) => !t.official && t.installed.length);
-  const fromThirdParty = thirdParty.flatMap((t) => t.installed).map((id) => S.pkgs.get(id));
+  const thirdParty = (S.snap?.model?.taps || []).filter((tp) => !tp.official && tp.installed.length);
+  const fromThirdParty = thirdParty.flatMap((tp) => tp.installed).map((id) => S.pkgs.get(id));
   const letters = groupsBy(all, (p) => p.name[0]);
   const recent = all.filter((p) => p.installed_time && Date.now() / 1000 - p.installed_time < 30 * 86400);
-  const counted = (label, ps, help) => [label, String(ps.length), help, ps];
+  const counted = (key, ps) => [key, String(ps.length), ps];
   const rows = [
-    ["Dependencies per formula you installed", mine.length ? `${(sum(mine.map((p) => reach.get(p.id).all.size)) / mine.length).toFixed(1)} on average` : "–",
-      "How many packages a formula you installed brings along on average, dependencies of its dependencies included."],
-    ["Direct dependency links", String(sum(all.map((p) => p.deps.length))),
-      "How many times an installed package names another one as its own dependency. Each arrow in a dependency graph is one link."],
-    ["Median package size", total ? fmtSize(median) : "…",
-      "Half of the packages are smaller than this, half are larger. A few huge packages do not move it, unlike the average."],
-    ["Average package size", total ? fmtSize(Math.round(total / kb.length)) : "…",
-      "The disk all packages use, divided by the number of packages."],
-    ["Share of disk in the ten largest", total ? share(sum(kb.slice(0, 10))) : "…",
-      "How much of the disk Homebrew uses goes to its ten largest packages."],
-    ["Disk taken by dependencies", total ? `${fmtSize(depKb)} (${share(depKb)})` : "…",
-      "The disk used by formulae installed only because another package needs them, and their share of the total."],
-    counted("Need nothing, needed by nothing", all.filter((p) => !p.deps.length && !p.required_by.length),
-      "Packages with no dependencies that no other package needs. Removing one of them breaks nothing else."),
-    counted("Keg-only formulae", formulae.filter((p) => p.keg_only),
-      "Formulae Homebrew installs but does not link into its prefix, for example because macOS ships its own copy or because they are an older version line. Their commands are not on PATH unless you add them."),
-    counted("Versioned (name@version)", all.filter((p) => p.name.includes("@")),
-      "Packages with @ in their name, like python@3.12 or firefox@beta: one version line or variant of a package. Upgrades stay within it; the next line is a separate package."),
-    counted("With caveats", all.filter((p) => p.caveats),
-      "Packages that come with setup notes. Each detail panel shows its notes under Caveats."),
-    ["Different licenses", String(licenses.length),
-      "How many different license texts the formulae carry; \"MIT\" and \"Apache-2.0 OR MIT\" count as two. Casks have no license field."],
-    counted("Formulae without a license", formulae.filter((p) => !p.license),
-      "Formulae whose license field is empty."),
-    counted("Packages from third-party taps", fromThirdParty,
-      "Packages from taps Homebrew does not maintain. Their owners, not Homebrew, decide what goes into them."),
-    counted("Installed in the last 30 days", recent,
-      "Packages whose installed version arrived in the last 30 days: a new install, an upgrade or a reinstall."),
-    ["Most common first letter", letters.length ? `${letters[0][0]} (${letters[0][1].length})` : "–",
-      "The letter most package names start with, and how many start with it.", letters[0]?.[1]],
+    ["deps_per_formula", mine.length ? t("num.on_average", { n: (sum(mine.map((p) => reach.get(p.id).all.size)) / mine.length).toFixed(1) }) : "–"],
+    ["direct_links", String(sum(all.map((p) => p.deps.length)))],
+    ["median_size", total ? fmtSize(median) : "…"],
+    ["average_size", total ? fmtSize(Math.round(total / kb.length)) : "…"],
+    ["top_ten_share", total ? share(sum(kb.slice(0, 10))) : "…"],
+    ["dependency_disk", total ? `${fmtSize(depKb)} (${share(depKb)})` : "…"],
+    counted("standalone", all.filter((p) => !p.deps.length && !p.required_by.length)),
+    counted("keg_only", formulae.filter((p) => p.keg_only)),
+    counted("versioned", all.filter((p) => p.name.includes("@"))),
+    counted("with_caveats", all.filter((p) => p.caveats)),
+    ["licenses", String(licenses.length)],
+    counted("no_license", formulae.filter((p) => !p.license)),
+    counted("third_party", fromThirdParty),
+    counted("recent", recent),
+    ["first_letter", letters.length ? `${letters[0][0]} (${letters[0][1].length})` : "–", letters[0]?.[1]],
   ];
-  return `<div class="card"><h3>By the numbers</h3><div class="numbers">${rows.map(([label, value, help, ps]) => `
-    <div class="num-row" title="${esc(help + (ps?.length ? "\n\n" + nameList(ps) : ""))}"><span class="muted">${label}</span><span class="num-value">${esc(value)}</span></div>`).join("")}</div></div>`;
+  return `<div class="card"><h3>${t("num.title")}</h3><div class="numbers">${rows.map(([key, value, ps]) => `
+    <div class="num-row" title="${esc(t(`num.${key}_help`) + (ps?.length ? "\n\n" + nameList(ps) : ""))}"><span class="muted">${t("num." + key)}</span><span class="num-value">${esc(value)}</span></div>`).join("")}</div></div>`;
 }
 
-const SIZE_RANGES = [["under 1 MB", 1024], ["1–10 MB", 10240], ["10–100 MB", 102400], ["100 MB–1 GB", 1048576], ["1 GB or more", Infinity]];
-const PULLED_RANGES = [["none", 1], ["1", 2], ["2–5", 6], ["6–10", 11], ["11–20", 21], ["21–50", 51], ["more than 50", Infinity]];
-const VERSION_STYLES = [["date", DATE_VERSION], ["0.x", /^0\./], ["x.y.z", /^\d+\.\d+\.\d+/], ["x.y", /^\d+\.\d+(?![.\d])/], ["one number", /^\d+(?![.\d])/]];
-const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+// A label is a literal shown as is, or a function, so it is translated in the language chosen at render time.
+const rangeLabel = (l) => (typeof l === "function" ? l() : l);
+const SIZE_RANGES = [[() => t("range.under_1mb"), 1024], ["1–10 MB", 10240], ["10–100 MB", 102400], ["100 MB–1 GB", 1048576], [() => t("range.over_1gb"), Infinity]];
+const PULLED_RANGES = [[() => t("range.none"), 1], ["1", 2], ["2–5", 6], ["6–10", 11], ["11–20", 21], ["21–50", 51], [() => t("range.over_50"), Infinity]];
+const VERSION_STYLES = [[() => t("vstyle.date"), DATE_VERSION], ["0.x", /^0\./], ["x.y.z", /^\d+\.\d+\.\d+/], ["x.y", /^\d+\.\d+(?![.\d])/], [() => t("vstyle.one_number"), /^\d+(?![.\d])/]];
+// 2024-01-01 was a Monday.
+const weekdayName = (i) => new Intl.DateTimeFormat(LANG, { weekday: "long" }).format(new Date(2024, 0, 1 + i));
 
 // One bar per range, in the order given; a package goes to the first range its value is under.
 function ranges(ps, value, limits) {
-  const rows = limits.map(([label]) => ({ label, pkgs: [] }));
+  const rows = limits.map(([l]) => ({ label: rangeLabel(l), pkgs: [] }));
   for (const p of ps) rows[limits.findIndex(([, under]) => value(p) < under)].pkgs.push(p);
   return rows.map((r) => ({ ...r, value: r.pkgs.length }));
 }
@@ -795,29 +791,26 @@ function ranges(ps, value, limits) {
 function topGroups(groups, n = 8) {
   const rows = groups.slice(0, n).map(([label, pkgs]) => ({ label, value: pkgs.length, pkgs }));
   const rest = groups.slice(n);
-  if (rest.length) rows.push({ label: plural(rest.length, "other"), value: sum(rest.map(([, ps]) => ps.length)), pkgs: rest.flatMap(([, ps]) => ps) });
+  if (rest.length) rows.push({ label: t("unit.others", { n: rest.length }), value: sum(rest.map(([, ps]) => ps.length)), pkgs: rest.flatMap(([, ps]) => ps) });
   return rows;
 }
 
 function distributionCharts(all, sizes, reach) {
   const sized = all.filter((p) => sizes[p.id] != null);
   const dated = all.filter((p) => p.installed_time);
-  const style = (p) => VERSION_STYLES.find(([, re]) => re.test(p.version))?.[0] || "other";
+  const style = (p) => rangeLabel(VERSION_STYLES.find(([, re]) => re.test(p.version))?.[0] || (() => t("vstyle.other")));
   const weekday = (p) => (new Date(p.installed_time * 1000).getDay() + 6) % 7;
-  const pkg = (n) => `${n} pkg`;
+  const pkg = (n) => t("unit.pkg", { n });
+  const none = t("range.none");
   return [
-    barChart("Size on disk", sized.length ? ranges(sized, (p) => sizes[p.id], SIZE_RANGES) : [], pkg, "Computing sizes…",
-      "How many packages fall into each size range."),
-    barChart("Dependencies each package brings", ranges(all, (p) => reach.get(p.id).all.size, PULLED_RANGES), pkg, "Nothing installed.",
-      "Dependencies of dependencies included; \"none\" stands alone."),
-    barChart("Licenses of formulae", topGroups(groupsBy(all.filter((p) => p.kind === "formula"), (p) => p.license || "none")), pkg, "No formulae installed.",
-      "The license text each formula declares. Casks have no license field."),
-    barChart("Packages per tap", topGroups(groupsBy(all, (p) => p.tap || "none")), pkg, "Nothing installed.",
-      "The tap each package was installed from."),
-    barChart("How versions are numbered", topGroups(groupsBy(all, style)), pkg, "Nothing installed.",
-      "\"date\" starts with a year, like 2024.10.01; \"0.x\" has not reached 1.0 yet."),
-    barChart("Installs by weekday", WEEKDAYS.map((label, i) => { const pkgs = dated.filter((p) => weekday(p) === i); return { label, value: pkgs.length, pkgs }; }),
-      pkg, "No install dates.", "The day each installed version arrived, in this Mac's time zone."),
+    barChart(t("dist.size"), sized.length ? ranges(sized, (p) => sizes[p.id], SIZE_RANGES) : [], pkg, t("ov.computing_sizes"), t("dist.size_help")),
+    barChart(t("dist.pulled"), ranges(all, (p) => reach.get(p.id).all.size, PULLED_RANGES), pkg, t("ov.nothing_installed"), t("dist.pulled_help")),
+    barChart(t("dist.licenses"), topGroups(groupsBy(all.filter((p) => p.kind === "formula"), (p) => p.license || none)), pkg, t("dist.no_formulae"),
+      t("dist.licenses_help")),
+    barChart(t("dist.taps"), topGroups(groupsBy(all, (p) => p.tap || none)), pkg, t("ov.nothing_installed"), t("dist.taps_help")),
+    barChart(t("dist.versions"), topGroups(groupsBy(all, style)), pkg, t("ov.nothing_installed"), t("dist.versions_help")),
+    barChart(t("dist.weekday"), [0, 1, 2, 3, 4, 5, 6].map((i) => { const pkgs = dated.filter((p) => weekday(p) === i); return { label: weekdayName(i), value: pkgs.length, pkgs }; }),
+      pkg, t("dist.no_dates"), t("dist.weekday_help")),
   ].join("");
 }
 
@@ -835,64 +828,64 @@ function renderOverview() {
   const reach = dependencyReach();
   $("#content").innerHTML = `<div class="ov">
     <div class="tiles">
-      ${tile(S.pkgs.size, "packages", `${c.requested} by you · ${c.deps} dependencies · ${c.casks} casks`)}
-      ${tile(total ? fmtSize(total) : "…", "on disk", total ? `formulae ${fmtSize(kindSize((p) => p.kind === "formula"))} · casks ${fmtSize(kindSize((p) => p.kind === "cask"))}` : "computing")}
-      ${tile(c.outdated, "outdated", `${c.upgradable} can be upgraded now`, c.outdated ? "var(--accent)" : "")}
-      ${tile(issues.length, "things to look at", worst ? `worst: ${worst}` : "all clear", worst ? LEVEL[worst][1] : "var(--green)")}
-      ${tile(`${running}/${services.length}`, "services running")}
-      ${tile(S.snap?.apps ? apps.length : "…", "apps", S.snap?.apps ? `${apps.filter((a) => a.source === "brew").length} managed by brew` : "scanning")}
-      ${tile(fmtAgo(S.snap?.last_update), "last brew update", "", daysSinceUpdate() > STALE_UPDATE_DAYS ? "var(--accent)" : "")}
+      ${tile(S.pkgs.size, t("tile.packages"), t("tile.packages_sub", { requested: c.requested, deps: c.deps, casks: c.casks }))}
+      ${tile(total ? fmtSize(total) : "…", t("tile.disk"), total ? t("tile.disk_sub", { formulae: fmtSize(kindSize((p) => p.kind === "formula")), casks: fmtSize(kindSize((p) => p.kind === "cask")) }) : t("tile.computing"))}
+      ${tile(c.outdated, t("tile.outdated"), t("tile.outdated_sub", { n: c.upgradable }), c.outdated ? "var(--accent)" : "")}
+      ${tile(issues.length, t("tile.issues"), worst ? t("tile.worst", { level: t("level." + worst) }) : t("tile.all_clear"), worst ? LEVEL[worst][1] : "var(--green)")}
+      ${tile(`${running}/${services.length}`, t("tile.services"))}
+      ${tile(S.snap?.apps ? apps.length : "…", t("tile.apps"), S.snap?.apps ? t("tile.apps_sub", { n: apps.filter((a) => a.source === "brew").length }) : t("tile.scanning"))}
+      ${tile(fmtAgo(S.snap?.last_update), t("tile.last_update"), "", daysSinceUpdate() > STALE_UPDATE_DAYS ? "var(--accent)" : "")}
     </div>
-    <div class="card attention"><h3>Needs attention</h3>
+    <div class="card attention"><h3>${t("att.title")}</h3>
       ${issues.length ? issues.map((i) => `
         <div class="att att-${i.level}" data-overview="${esc(i.go)}">
           <span class="att-icon" style="color:${LEVEL[i.level][1]}">${LEVEL[i.level][0]}</span>
-          <span class="att-level" style="color:${LEVEL[i.level][1]}">${i.level}</span>
+          <span class="att-level" style="color:${LEVEL[i.level][1]}">${t("level." + i.level)}</span>
           <span><b>${typeof i.count === "number" ? i.count + " " : ""}${esc(i.title)}</b> <span class="muted">${esc(i.text)}</span></span>
-          <span class="att-go muted">${i.go === "update" ? "run brew update →" : "open →"}</span>
-        </div>`).join("") : `<p class="ok">✔ Nothing needs attention.</p>`}
+          <span class="att-go muted">${i.go === "update" ? t("att.run_update") : t("att.open")}</span>
+        </div>`).join("") : `<p class="ok">✔ ${t("att.none")}</p>`}
     </div>
     ${recordsCard(all, sizes, reach)}
     <div class="cards">
-      ${stackChart("What is installed", [
-        { label: "installed by you", value: c.requested, color: SERIES[0], go: "requested" },
-        { label: "dependencies", value: c.deps, color: SERIES[1], go: "deps" },
-        { label: "casks", value: c.casks, color: SERIES[2], go: "casks" }])}
-      ${S.snap?.apps ? stackChart("How apps got here", [
+      ${stackChart(t("ov.what_installed"), [
+        { label: t("legend.by_you"), value: c.requested, color: SERIES[0], go: "requested" },
+        { label: t("ov.dependencies"), value: c.deps, color: SERIES[1], go: "deps" },
+        { label: t("ov.casks"), value: c.casks, color: SERIES[2], go: "casks" }])}
+      ${S.snap?.apps ? stackChart(t("ov.how_apps"), [
         { label: "brew", value: apps.filter((a) => a.source === "brew").length, color: SERIES[0], go: "apps" },
         { label: "App Store", value: apps.filter((a) => a.source === "appstore").length, color: SERIES[1], go: "apps" },
-        { label: "by hand", value: apps.filter((a) => a.source === "manual").length, color: SERIES[2], go: "apps" }]) : ""}
-      ${barChart("Largest on disk", all.filter((p) => sizes[p.id]).sort((a, b) => sizes[b.id] - sizes[a.id]).slice(0, 10)
-        .map((p) => ({ id: p.id, label: p.name, value: sizes[p.id] })), fmtSize, total ? "No sizes." : "Computing sizes…")}
-      ${barChart("Most depended on", all.filter((p) => p.required_by.length).sort((a, b) => b.required_by.length - a.required_by.length).slice(0, 10)
-        .map((p) => ({ id: p.id, label: p.name, value: p.required_by.length })), (n) => `${n} pkg`, "No package depends on another.")}
+        { label: t("ov.by_hand"), value: apps.filter((a) => a.source === "manual").length, color: SERIES[2], go: "apps" }]) : ""}
+      ${barChart(t("ov.largest"), all.filter((p) => sizes[p.id]).sort((a, b) => sizes[b.id] - sizes[a.id]).slice(0, 10)
+        .map((p) => ({ id: p.id, label: p.name, value: sizes[p.id] })), fmtSize, total ? t("ov.no_sizes") : t("ov.computing_sizes"))}
+      ${barChart(t("ov.most_depended"), all.filter((p) => p.required_by.length).sort((a, b) => b.required_by.length - a.required_by.length).slice(0, 10)
+        .map((p) => ({ id: p.id, label: p.name, value: p.required_by.length })), (n) => t("unit.pkg", { n }), t("ov.no_dependents"))}
       ${installsChart()}
       ${numbersCard(all, sizes, reach)}
     </div>
-    <h3 class="ov-section">Distributions</h3>
+    <h3 class="ov-section">${t("ov.distributions")}</h3>
     <div class="cards">${distributionCharts(all, sizes, reach)}</div></div>`;
 }
 
-const LIST_GROUPS = [["tap", "Taps"], ["brew", "Formulae"], ["cask", "Casks and apps"]];
+const LIST_GROUPS = ["tap", "brew", "cask"];
 
 function renderExport() {
   const items = S.list.items;
   const deps = items.filter((i) => i.type === "brew" && [...S.pkgs.values()].some((p) => p.full_name === i.name && p.kind === "formula" && !p.requested));
-  $("#content").innerHTML = `    ${items.length ? "" : `<p class="muted">The list is empty.</p>`}
-    <div class="cards">${LIST_GROUPS.map(([type, label]) => {
+  $("#content").innerHTML = `    ${items.length ? "" : `<p class="muted">${t("export.empty")}</p>`}
+    <div class="cards">${LIST_GROUPS.map((type) => {
       const group = items.filter((i) => i.type === type);
-      return group.length ? `<div class="card"><h3>${label} (${group.length})</h3>${group.map((i) =>
-        `<div class="listitem"><span class="mono">${esc(i.name)}</span> <button class="small" data-unlist="${esc(i.type)}:${esc(i.name)}">Remove</button></div>`).join("")}</div>` : "";
+      return group.length ? `<div class="card"><h3>${t("export.group." + type, { n: group.length })}</h3>${group.map((i) =>
+        `<div class="listitem"><span class="mono">${esc(i.name)}</span> <button class="small" data-unlist="${esc(i.type)}:${esc(i.name)}">${t("btn.remove")}</button></div>`).join("")}</div>` : "";
     }).join("")}</div>
-    ${deps.length ? `<div class="info">${deps.map((i) => `<span class="mono">${esc(i.name)}</span>`).join(", ")}: installed here only as a dependency. brew installs dependencies anyway, so the list does not need them.</div>` : ""}
+    ${deps.length ? `<div class="info">${t("export.deps", { names: deps.map((i) => `<span class="mono">${esc(i.name)}</span>`).join(", ") })}</div>` : ""}
     ${items.length ? `<h3>Brewfile</h3><pre id="brewfile">${esc(S.list.brewfile)}</pre>
-      <div class="btnrow" style="margin-top:8px"><button class="accent" id="dl-brewfile">Download Brewfile</button><button id="copy-brewfile">Copy</button></div>
-      <h3>On the new Mac</h3>
+      <div class="btnrow" style="margin-top:8px"><button class="accent" id="dl-brewfile">${t("export.download")}</button><button id="copy-brewfile">${t("btn.copy")}</button></div>
+      <h3>${t("export.new_mac")}</h3>
       <ol>
-        <li>Install Homebrew: <pre>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</pre></li>
-        <li>Put the Brewfile in a folder and run there: <pre>brew bundle --file=Brewfile</pre></li>
+        <li>${t("export.step1")} <pre>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</pre></li>
+        <li>${t("export.step2")} <pre>brew bundle --file=Brewfile</pre></li>
       </ol>
-      <p class="muted">Lines with <span class="mono">trusted: true</span> come from third-party taps; that option lets brew load them without asking. App Store apps are not in the list.</p>` : ""}`;
+      <p class="muted">${t("export.trusted")}</p>` : ""}`;
 }
 
 async function downloadBrewfile() {
@@ -908,11 +901,11 @@ async function downloadBrewfile() {
 async function renderHistory() {
   try { S.history = await api("/api/history"); } catch (e) { S.history = []; }
   if (S.tab !== "history") return;
-  $("#content").innerHTML = `<table><thead><tr><th>When</th><th>Action</th><th>Status</th><th>Commands</th><th>Snapshot</th></tr></thead><tbody>
-    ${S.history.map((h) => `<tr><td class="mono">${new Date(h.created * 1000).toLocaleString()}</td><td>${esc(h.title)}</td>
-      <td class="st st-${esc(h.status)}">${esc(h.status)}${h.exit_code ? ` (${h.exit_code})` : ""}</td>
+  $("#content").innerHTML = `<table><thead><tr><th>${t("history.when")}</th><th>${t("history.action")}</th><th>${t("detail.status")}</th><th>${t("history.commands")}</th><th>${t("history.snapshot")}</th></tr></thead><tbody>
+    ${S.history.map((h) => `<tr><td class="mono">${new Date(h.created * 1000).toLocaleString(LANG)}</td><td>${esc(tm(h.title_msg, h.title))}</td>
+      <td class="st st-${esc(h.status)}">${esc(jobStatus(h.status))}${h.exit_code ? ` (${h.exit_code})` : ""}</td>
       <td class="mono">${h.commands.map(esc).join("<br>")}</td><td class="mono muted">${esc(h.snapshot || "")}</td></tr>`).join("")}
-    </tbody></table>${S.history.length ? "" : `<p class="muted">No actions yet.</p>`}`;
+    </tbody></table>${S.history.length ? "" : `<p class="muted">${t("history.empty")}</p>`}`;
 }
 
 function renderInstall() {
@@ -922,20 +915,20 @@ function renderInstall() {
   const draft = box ? box.value : s.q;
   const focus = box && document.activeElement === box ? [box.selectionStart, box.selectionEnd] : null;
   $("#content").innerHTML = `
-    <div class="toolbar"><input type="search" id="search-q" placeholder="Search Homebrew (formulae and casks), press Enter" value="${esc(draft)}" style="width:420px">
-      <button id="search-go">Search</button>${s.busy ? `<span class="muted">searching…</span>` : ""}</div>
+    <div class="toolbar"><input type="search" id="search-q" placeholder="${t("install.placeholder")}" value="${esc(draft)}" style="width:420px">
+      <button id="search-go">${t("install.search")}</button>${s.busy ? `<span class="muted">${t("install.searching")}</span>` : ""}</div>
     <div style="display:flex;gap:16px;align-items:start">
-      <div style="flex:1">${s.results == null ? `<p class="muted">Search runs <span class="mono">brew search --formula</span> and <span class="mono">--cask</span>.</p>` :
-        s.results.length ? `<table><thead><tr><th>Name</th><th>Kind</th><th></th></tr></thead><tbody>${s.results.map((r) =>
-          `<tr class="row" data-preview="${esc(r.kind)}:${esc(r.name)}"><td class="name">${esc(r.name)}</td><td>${r.kind}</td><td>${r.installed ? `<span class="badge b-service">installed</span>` : ""}</td></tr>`).join("")}</tbody></table>` :
-        `<p class="muted">No results.</p>`}</div>
-      <div style="width:460px">${pv ? (pv.loading ? `<div class="card loading">Loading ${esc(pv.name)}…</div>` : pv.error ? `<div class="card warn">${esc(pv.error)}</div>` : `
-        <div class="card"><h3 class="mono">${esc(pv.name)} <span class="muted">${esc(pv.version)}</span> <span class="badge b-cask">${pv.kind}</span></h3>
+      <div style="flex:1">${s.results == null ? `<p class="muted">${t("install.help")}</p>` :
+        s.results.length ? `<table><thead><tr><th>${t("col.name")}</th><th>${t("install.kind")}</th><th></th></tr></thead><tbody>${s.results.map((r) =>
+          `<tr class="row" data-preview="${esc(r.kind)}:${esc(r.name)}"><td class="name">${esc(r.name)}</td><td>${esc(r.kind)}</td><td>${r.installed ? `<span class="badge b-service">${t("install.installed")}</span>` : ""}</td></tr>`).join("")}</tbody></table>` :
+        `<p class="muted">${t("install.no_results")}</p>`}</div>
+      <div style="width:460px">${pv ? (pv.loading ? `<div class="card loading">${t("install.loading", { name: esc(pv.name) })}</div>` : pv.error ? `<div class="card warn">${esc(pv.error)}</div>` : `
+        <div class="card"><h3 class="mono">${esc(pv.name)} <span class="muted">${esc(pv.version)}</span> <span class="badge b-cask">${esc(pv.kind)}</span></h3>
           <p>${esc(pv.desc || "")}</p>${pv.homepage ? `<p>${link(pv.homepage)}</p>` : ""}
-          ${pv.kind === "formula" ? `<p>${pv.new_deps.length ? `Will also install <b>${pv.new_deps.length}</b> new dependencies:` : "No new dependencies."}</p>
+          ${pv.kind === "formula" ? `<p>${pv.new_deps.length ? t("install.new_deps", { n: pv.new_deps.length, v: `<b>${pv.new_deps.length}</b>` }) : t("install.no_new_deps")}</p>
             <div class="chips">${pv.new_deps.map((d) => `<span class="chip">${esc(d)}</span>`).join("")}</div>` : ""}
-          ${pv.caveats ? `<h4 class="muted">Caveats</h4><pre>${esc(pv.caveats)}</pre>` : ""}
-          <div style="margin-top:12px">${S.pkgs.has(pv.id) ? `<span class="muted">Already installed.</span>` : `<button class="accent" data-install="${esc(pv.kind)}:${esc(pv.name)}">Install ${esc(pv.name)}</button>`}</div></div>`) : ""}</div>
+          ${pv.caveats ? `<h4 class="muted">${t("detail.caveats")}</h4><pre>${esc(pv.caveats)}</pre>` : ""}
+          <div style="margin-top:12px">${S.pkgs.has(pv.id) ? `<span class="muted">${t("install.already")}</span>` : `<button class="accent" data-install="${esc(pv.kind)}:${esc(pv.name)}">${t("install.install", { name: esc(pv.name) })}</button>`}</div></div>`) : ""}</div>
     </div>`;
   if (focus) { const b = $("#search-q"); b.focus(); b.setSelectionRange(...focus); }
 }
@@ -972,15 +965,15 @@ async function confirmAction(req, { impact = false, breaks = [] } = {}) {
   const names = (req.targets || []).map((id) => S.pkgs.get(id)?.name || id);
   const blocked = req.action === "uninstall" && imp?.blockers.length > 0;
   $("#modal-card").innerHTML = `
-    <h2>${esc(plan.title)}</h2>
+    <h2>${esc(tm(plan.title_msg, plan.title))}</h2>
     ${names.length > 1 ? `<div class="chips">${names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div>` : ""}
-    <p class="muted">Will run:</p><pre>${plan.commands.map(esc).join("\n")}</pre>
-    ${blocked ? `<div class="warn"><b>${imp.blockers.length} installed package(s) need this</b>, directly or through another dependency, so brew refuses the plain uninstall:<div class="chips" style="margin-top:6px">${imp.blockers.map(chip).join("")}</div>
-      <div class="btnrow" style="margin-top:8px"><button class="small" id="add-blockers">Uninstall them too</button><button class="small danger" id="force-uninstall">Uninstall anyway and break them</button></div></div>` : ""}
-    ${breaks.length ? `<div class="warn"><b>These stay installed but may stop working:</b><div class="chips" style="margin-top:6px">${breaks.map(chip).join("")}</div></div>` : ""}
-    ${imp?.new_orphans.length ? `<div class="info">Afterwards <b>${imp.new_orphans.length}</b> dependencies will no longer be needed (autoremove can clean them):<div class="chips" style="margin-top:6px">${imp.new_orphans.map(chip).join("")}</div></div>` : ""}
-    ${plan.snapshot ? `<div class="info">A Brewfile snapshot of the current install is written first.</div>` : ""}
-    <div class="modal-actions"><button id="m-cancel">Cancel</button>${blocked ? "" : `<button id="m-ok" class="${req.action === "uninstall" || req.action === "autoremove" ? "danger" : "accent"}">Run</button>`}</div>`;
+    <p class="muted">${t("modal.will_run")}</p><pre>${plan.commands.map(esc).join("\n")}</pre>
+    ${blocked ? `<div class="warn">${t("modal.blocked", { n: imp.blockers.length })}<div class="chips" style="margin-top:6px">${imp.blockers.map(chip).join("")}</div>
+      <div class="btnrow" style="margin-top:8px"><button class="small" id="add-blockers">${t("modal.uninstall_too")}</button><button class="small danger" id="force-uninstall">${t("modal.force")}</button></div></div>` : ""}
+    ${breaks.length ? `<div class="warn"><b>${t("modal.breaks")}</b><div class="chips" style="margin-top:6px">${breaks.map(chip).join("")}</div></div>` : ""}
+    ${imp?.new_orphans.length ? `<div class="info">${t("modal.new_orphans", { n: imp.new_orphans.length })}<div class="chips" style="margin-top:6px">${imp.new_orphans.map(chip).join("")}</div></div>` : ""}
+    ${plan.snapshot ? `<div class="info">${t("modal.snapshot")}</div>` : ""}
+    <div class="modal-actions"><button id="m-cancel">${t("btn.cancel")}</button>${blocked ? "" : `<button id="m-ok" class="${req.action === "uninstall" || req.action === "autoremove" ? "danger" : "accent"}">${t("btn.run")}</button>`}</div>`;
   $("#modal").classList.remove("hidden");
   $("#m-cancel").onclick = closeModal;
   const ok = $("#m-ok");
@@ -1001,7 +994,7 @@ async function confirmAction(req, { impact = false, breaks = [] } = {}) {
 }
 
 function alertBox(msg) {
-  $("#modal-card").innerHTML = `<h2>Error</h2><div class="warn">${esc(msg)}</div><div class="modal-actions"><button id="m-cancel">Close</button></div>`;
+  $("#modal-card").innerHTML = `<h2>${t("modal.error")}</h2><div class="warn">${esc(msg)}</div><div class="modal-actions"><button id="m-cancel">${t("btn.close")}</button></div>`;
   $("#modal").classList.remove("hidden");
   $("#m-cancel").onclick = closeModal;
 }
@@ -1015,14 +1008,14 @@ function bulkActions(ids) {
   const pk = ids.filter((id) => S.pkgs.has(id)).map((id) => S.pkgs.get(id));
   const items = ids.map(itemFor).filter(Boolean);
   const fresh = items.filter((i) => !inList(i));
-  const none = pk.length ? null : "Only installed formulae and casks; the selection has none.";
+  const none = pk.length ? null : t("bulk.why.none");
   return [
-    ["upgrade", "Upgrade", "accent", pk.filter(upgradable).map((p) => p.id), none || "Nothing selected is outdated, or it is pinned or disabled."],
-    ["pin", "Pin", "", pk.filter((p) => !p.pinned).map((p) => p.id), none || "Everything selected is already pinned."],
-    ["unpin", "Unpin", "", pk.filter((p) => p.pinned).map((p) => p.id), none || "Nothing selected is pinned."],
-    ["uninstall", "Uninstall", "danger", pk.map((p) => p.id), none],
-    ["list", "Add to list", "", ids.filter((id) => itemFor(id) && fresh.some((i) => i.type === itemFor(id).type && i.name === itemFor(id).name)),
-      items.length ? "Everything selected is already on the export list." : "Only packages, taps and apps with a brew cask can go on the list."],
+    ["upgrade", t("btn.upgrade"), "accent", pk.filter(upgradable).map((p) => p.id), none || t("bulk.why.upgrade")],
+    ["pin", t("btn.pin"), "", pk.filter((p) => !p.pinned).map((p) => p.id), none || t("bulk.why.pin")],
+    ["unpin", t("btn.unpin"), "", pk.filter((p) => p.pinned).map((p) => p.id), none || t("bulk.why.unpin")],
+    ["uninstall", t("btn.uninstall"), "danger", pk.map((p) => p.id), none],
+    ["list", t("bulk.add_to_list"), "", ids.filter((id) => itemFor(id) && fresh.some((i) => i.type === itemFor(id).type && i.name === itemFor(id).name)),
+      items.length ? t("bulk.why.listed") : t("bulk.why.unlistable")],
   ];
 }
 
@@ -1031,85 +1024,57 @@ function renderBulk() {
   const ids = [...S.selected];
   el.classList.toggle("hidden", !ids.length);
   if (!ids.length) return;
-  el.innerHTML = `<b>${ids.length} selected</b>
+  el.innerHTML = `<b>${t("bulk.selected", { n: ids.length })}</b>
     ${bulkActions(ids).map(([k, label, cls, applies, why]) => `<button class="${cls}" data-bulk="${k}" ${applies.length ? "" : `disabled title="${esc(why)}"`}>${label} (${applies.length})</button>`).join("")}
-    <button data-bulk="clear">Clear</button>
-    <span class="muted hint">Each button acts only on the selected items it applies to.</span>`;
+    <button data-bulk="clear">${t("bulk.clear")}</button>
+    <span class="muted hint">${t("bulk.hint")}</span>`;
 }
 
 // ---------- jobs ----------
 
+const JOB_STATUSES = ["queued", "running", "succeeded", "failed"];
+const jobStatus = (s) => JOB_STATUSES.includes(s) ? t("job.status." + s) : s;
+
 function renderJobs() {
   const active = S.jobs.filter((j) => j.status === "queued" || j.status === "running").length;
-  $("#jobs-title").innerHTML = `Jobs ${active ? `<span class="st st-running">${active} active</span>` : `<span class="muted">${S.jobs.length}</span>`}`;
+  $("#jobs-title").innerHTML = `${t("jobs.title")} ${active ? `<span class="st st-running">${t("jobs.active", { n: active })}</span>` : `<span class="muted">${S.jobs.length}</span>`}`;
   const body = $("#jobs-body");
   const scroll = {};
   body.querySelectorAll("pre[data-log]").forEach((pre) => { scroll[pre.dataset.log] = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4; });
   body.innerHTML = [...S.jobs].reverse().map((j) => `
-    <div class="job"><div class="job-head" data-job="${j.id}"><span class="st st-${j.status}">${j.status}</span><b>${esc(j.title)}</b>
-      <span class="muted">${new Date(j.created * 1000).toLocaleTimeString()}</span>${j.snapshot ? `<span class="muted mono">snapshot: ${esc(j.snapshot)}</span>` : ""}</div>
-      ${j.status === "failed" ? `<div class="terminal-hint">${j.needs_terminal ? "This needs your sudo password. Run it in Terminal:" : "Failed. To retry or debug, run it in Terminal:"}
-        <pre style="margin-top:6px">${j.commands.map(esc).join("\n")}</pre><button class="small" style="margin-top:6px" data-copy="${j.id}">Copy command</button></div>` : ""}
-      ${S.openJobs.has(j.id) ? `<pre data-log="${j.id}">${esc(j.log.join("\n")) || "waiting…"}</pre>` : ""}</div>`).join("") || `<p class="muted">No jobs yet.</p>`;
+    <div class="job"><div class="job-head" data-job="${j.id}"><span class="st st-${j.status}">${esc(jobStatus(j.status))}</span><b>${esc(tm(j.title_msg, j.title))}</b>
+      <span class="muted">${new Date(j.created * 1000).toLocaleTimeString(LANG)}</span>${j.snapshot ? `<span class="muted mono">${t("jobs.snapshot", { path: esc(j.snapshot) })}</span>` : ""}</div>
+      ${j.status === "failed" ? `<div class="terminal-hint">${j.needs_terminal ? t("jobs.needs_sudo") : t("jobs.failed")}
+        <pre style="margin-top:6px">${j.commands.map(esc).join("\n")}</pre><button class="small" style="margin-top:6px" data-copy="${j.id}">${t("jobs.copy")}</button></div>` : ""}
+      ${S.openJobs.has(j.id) ? `<pre data-log="${j.id}">${esc(j.log.join("\n")) || t("jobs.waiting")}</pre>` : ""}</div>`).join("") || `<p class="muted">${t("jobs.empty")}</p>`;
   body.querySelectorAll("pre[data-log]").forEach((pre) => { if (scroll[pre.dataset.log] !== false) pre.scrollTop = pre.scrollHeight; });
 }
 
 // ---------- render root ----------
 
-// What each page shows, and what you can do there. [title, what it is, what to do]
-const INTRO = {
-  requested: ["Installed by you", "Formulae you asked for with <b>brew install</b>. These are the roots: everything in Dependencies is here because one of them needs it.",
-    "Click a row for its details, dependency graph and advice. Tick rows to upgrade, pin, uninstall or add them to the export list in one go. Uninstall first shows what would break."],
-  deps: ["Dependencies", "Formulae that brew installed because another package needs them. An <b>orphan</b> is one that nothing needs any more.",
-    "You rarely act here directly. Use the <b>orphan</b> filter and <b>Autoremove</b> to clear leftovers; if you use one of these tools yourself, keep it installed by you instead."],
-  casks: ["Casks", "Apps and other binaries installed with <b>brew install --cask</b>.",
-    "Upgrade, pin or uninstall them like formulae. Casks that update themselves may look outdated here while the app is current; their detail panel says so."],
-  services: ["Services", "Formulae that can run in the background through <b>brew services</b> (databases, queues, web servers), with their state and the ports they listen on.",
-    "Start, stop or restart a service. A port marked in amber listens on every network interface, so other machines on your network can reach it; stop the service or bind it to 127.0.0.1 if that is not what you want."],
-  taps: ["Taps", "The repositories brew reads formulae and casks from. <b>homebrew/core</b> and <b>homebrew/cask</b> are Homebrew's own; every other tap is code from a third party that brew runs as you.",
-    "Untap a tap nothing is installed from. Keep a third-party tap only if you trust its owner; a <b>secure-it</b> badge means the scanner flagged it."],
-  health: ["Health", "What brew itself reports: missing dependencies, deprecated or disabled packages, orphans, cache that cleanup can free, and the full <b>brew doctor</b> output.",
-    "Work from the top: missing dependencies break packages now, deprecated ones will. Then autoremove and clean up to win back disk space."],
-  security: ["Security", "Findings from <b>secure-it</b>, a separate scanner that runs as root and checks macOS settings, startup items, open ports, shell files and packages. brewdash only reads the report it leaves in your home folder.",
-    "Read each finding and fix it with the command shown, or accept it in secure-it if it is expected. brewdash copies commands for you to run in Terminal; it never runs them itself."],
-  apps: ["Apps", "Every app in /Applications and ~/Applications: how it got there (brew, App Store or by hand) and who signed it.",
-    "<b>Bring into brew</b> lets Homebrew take over an app you installed by hand, so it upgrades with everything else. Check apps marked <b>not signed</b> or <b>ad-hoc</b>: nothing vouches for who built them."],
-  shell: ["Shell", "The PATH lines and tools your shell startup files (.zshrc, .zprofile, .bashrc and friends) set up.",
-    "Fix what is flagged by editing the file yourself; brewdash never edits these files. A <b>synced folder first</b> entry puts a Dropbox or iCloud folder before the system folders, so a file that arrives by sync runs in place of a system command."],
-  history: ["History", "Every action brewdash ran, with its commands and exit status. Before each uninstall, autoremove or multi-package action, brewdash writes a Brewfile snapshot of what was installed.",
-    "To undo, restore a snapshot with <span class=\"mono\">brew bundle install --file=&lt;snapshot&gt;</span>."],
-  install: ["Install", "Search Homebrew's formulae and casks, and see what an install would bring with it before you run it.",
-    "Search, click a result to preview its new dependencies and caveats, then install."],
-  export: ["Export", "A list of taps, formulae and casks to set up another Mac with, written as a Brewfile.",
-    "Select packages, taps or apps in any tab and press <b>Add to list</b>; the list is kept between runs. Then download the Brewfile and run <span class=\"mono\">brew bundle</span> on the new Mac."],
-  contact: ["Contact", "Who wrote brewdash and where its code lives.",
-    "Report a bug or ask for a feature in the GitHub issues. Report a security problem privately, through a GitHub security advisory."],
-};
-
 function renderIntro() {
   if (S.tab === "overview") { $("#intro").innerHTML = hero(); return; }
-  const [title, what, todo] = INTRO[S.tab];
-  $("#intro").innerHTML = `<div class="intro"><h2>${title}</h2><p>${what}</p><p><b>What to do:</b> ${todo}</p></div>`;
+  $("#intro").innerHTML = `<div class="intro"><h2>${tabLabel(S.tab)}</h2><p>${t(`intro.${S.tab}.what`)}</p><p><b>${t("intro.what_to_do")}</b> ${t(`intro.${S.tab}.todo`)}</p></div>`;
 }
 
 function hero() {
   return `<div class="hero"><div>
       <h1>brew<span>dash</span></h1>
-      <p class="lead">A local dashboard for Homebrew: see what is installed on this Mac, why it is there, and what needs your attention.</p>
+      <p class="lead">${t("hero.lead")}</p>
       <ul>
-        <li><b>Understand</b> every formula, cask, service and tap, with dependency graphs that show who needs what.</li>
-        <li><b>Clean up</b> orphans, stale caches, pinned and deprecated packages, with a Brewfile snapshot before anything is removed.</li>
-        <li><b>Stay safe</b>: ports your services open to the network, unsigned apps, risky PATH entries and, with <a href="https://github.com/lemiorhan/secure-it" target="_blank" rel="noopener">secure-it</a>, a full security scan.</li>
-        <li><b>Move</b> to a new Mac with an exported Brewfile.</li>
+        <li>${t("hero.understand")}</li>
+        <li>${t("hero.clean")}</li>
+        <li>${t("hero.safe", { link: `<a href="https://github.com/lemiorhan/secure-it" target="_blank" rel="noopener">secure-it</a>` })}</li>
+        <li>${t("hero.move")}</li>
       </ul></div>
-    <div class="hero-side"><h4>How it works</h4>
-      <p>brewdash runs on 127.0.0.1 only and every request carries a one-time token. It reads brew's own JSON output and your files, and changes nothing until you press a button and confirm the exact commands it will run.</p>
-      <p>Start below with <b>Needs attention</b>; each line opens the page where you can act on it.</p></div></div>`;
+    <div class="hero-side"><h4>${t("hero.how")}</h4>
+      <p>${t("hero.how_text")}</p>
+      <p>${t("hero.start")}</p></div></div>`;
 }
 
 function renderView() {
   renderIntro();
-  if (S.tab !== "contact" && !S.snap?.model) { $("#content").innerHTML = `<p class="loading">${S.snap?.error ? "Failed to read brew state." : "Reading Homebrew state…"}</p>`; return; }
+  if (S.tab !== "contact" && !S.snap?.model) { $("#content").innerHTML = `<p class="loading">${S.snap?.error ? t("view.failed") : t("view.reading")}</p>`; return; }
   if (PKG_TABS[S.tab]) renderPackages();
   else ({ overview: renderOverview, services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall,
     apps: renderApps, shell: renderShell, export: renderExport, security: renderSecurity, contact: renderContact })[S.tab]();
@@ -1120,6 +1085,9 @@ function renderAll() {
 }
 
 // ---------- events ----------
+
+// The click handler below names its target `t`, which hides t().
+const copiedLabel = () => t("btn.copied");
 
 document.addEventListener("click", (e) => {
   const t = e.target;
@@ -1155,13 +1123,13 @@ document.addEventListener("click", (e) => {
   if (d("adopt")) { confirmAction({ action: "adopt", app: d("adopt") }); return; }
   if (d("findcask")) { S.tab = "install"; renderTabs(); renderView(); $("#search-q").value = d("findcask"); doSearch(); return; }
   if (t.id === "dl-brewfile") { downloadBrewfile(); return; }
-  if (t.id === "copy-brewfile") { navigator.clipboard.writeText(S.list.brewfile); t.textContent = "Copied"; return; }
+  if (t.id === "copy-brewfile") { navigator.clipboard.writeText(S.list.brewfile); t.textContent = copiedLabel(); return; }
   if (d("global")) { confirmAction({ action: d("global") }); return; }
   if (d("preview")) { const [k, ...n] = d("preview").split(":"); doPreview(k, n.join(":")); return; }
   if (d("install")) { const [k, ...n] = d("install").split(":"); confirmAction({ action: "install", kind: k, name: n.join(":") }); return; }
   if (t.id === "search-go") { doSearch(); return; }
-  if (d("copy")) { const j = S.jobs.find((x) => x.id === +d("copy")); navigator.clipboard.writeText(j.commands.join(" && ")); t.textContent = "Copied"; return; }
-  if (t.matches("[data-copytext]")) { navigator.clipboard.writeText(t.dataset.copytext); t.textContent = "Copied"; return; }
+  if (d("copy")) { const j = S.jobs.find((x) => x.id === +d("copy")); navigator.clipboard.writeText(j.commands.join(" && ")); t.textContent = copiedLabel(); return; }
+  if (t.matches("[data-copytext]")) { navigator.clipboard.writeText(t.dataset.copytext); t.textContent = copiedLabel(); return; }
   if (d("job")) { const id = +d("job"); S.openJobs.has(id) ? S.openJobs.delete(id) : S.openJobs.add(id); loadJobs(); return; }
   if (t.closest("#jobs-head")) { $("#jobs").classList.toggle("collapsed"); return; }
   const row = t.closest("tr.row[data-id]");
@@ -1183,6 +1151,9 @@ $("#btn-upgrade-all").onclick = () => confirmAction({ action: "upgrade_all" });
 $("#btn-autoremove").onclick = () => confirmAction({ action: "autoremove" });
 $("#btn-theme").onclick = () => { applyTheme(THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length]); renderDetail(); };
 applyTheme(currentTheme());
+$("#lang").innerHTML = Object.entries(LANGS).map(([k, name]) => `<option value="${k}" ${k === LANG ? "selected" : ""}>${name}</option>`).join("");
+$("#lang").onchange = (e) => { setLang(e.target.value); applyTheme(currentTheme()); renderAll(); renderJobs(); };
+translateStatic();
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => renderDetail());
 
 // ---------- polling ----------

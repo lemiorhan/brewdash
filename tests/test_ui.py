@@ -4,6 +4,7 @@ Needs Playwright for Python: `python3 -m venv .venv && .venv/bin/pip install pla
 then run the suite with `.venv/bin/python -m unittest discover -s tests`. Skipped without it.
 """
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -72,8 +73,7 @@ REPORT = {"schema": 1, "generated_at": "2026-11-01T09:00:00", "alerts": [
 ]}
 
 
-@unittest.skipUnless(sync_playwright, "Playwright for Python is not installed")
-class UiSmokeTest(unittest.TestCase):
+class UiFixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -126,6 +126,10 @@ class UiSmokeTest(unittest.TestCase):
     def attention(self):
         return [(a.locator(".att-level").inner_text().lower(), a.get_attribute("data-overview"),
                  a.locator("b").inner_text()) for a in self.page.locator(".att").all()]
+
+
+@unittest.skipUnless(sync_playwright, "Playwright for Python is not installed")
+class UiSmokeTest(UiFixture):
 
     def test_overview_is_the_start_page_and_lists_what_needs_attention_worst_first(self):
         self.page.wait_for_selector('.att:has-text("cleanup")')
@@ -823,6 +827,202 @@ class UiSmokeTest(unittest.TestCase):
         self.assertEqual(bg(), "rgb(15, 17, 21)")
         self.page.click("#btn-theme")
         self.assertEqual((theme(), bg()), ("auto", "rgb(245, 246, 248)"))
+
+
+LANGS = ["en", "tr", "es", "zh"]
+WEB = Path(brewdash.__file__).resolve().parent / "web"
+
+
+@unittest.skipUnless(sync_playwright, "Playwright for Python is not installed")
+class I18nTest(UiFixture):
+    def keys(self, lang):
+        return set(self.page.evaluate(f"Object.keys(I18N.{lang})"))
+
+    def choose(self, lang):
+        self.page.select_option("#lang", lang)
+
+    def test_every_language_has_the_english_keys_and_every_server_message(self):
+        en = self.keys("en")
+        self.assertGreater(len(en), 300)
+        self.assertEqual({k for k in en if k.startswith("srv.")}, set())
+        srv = {"srv." + k for k in brewdash.MESSAGES}
+        for lang in LANGS[1:]:
+            with self.subTest(lang=lang):
+                self.assertEqual(self.keys(lang), en | srv)
+                empty = self.page.evaluate(f"""Object.entries(I18N.{lang}).filter(([, v]) =>
+                    typeof v === "string" ? !v.trim() : !v.other?.trim()).map(([k]) => k)""")
+                self.assertEqual(empty, [])
+
+    def test_every_placeholder_survives_translation(self):
+        bad = self.page.evaluate("""() => {
+            const vars = (v) => new Set(((typeof v === "string" ? v : v.other).match(/\\{\\w+\\}/g)) || []);
+            const out = [];
+            for (const lang of ["tr", "es", "zh"]) for (const [k, v] of Object.entries(I18N[lang])) {
+                if (k.startsWith("srv.")) continue;
+                const want = vars(I18N.en[k]);
+                for (const form of typeof v === "string" ? [v] : Object.values(v)) {
+                    const got = vars(form);
+                    if ([...want].some((x) => !got.has(x)) || [...got].some((x) => !want.has(x))) out.push(`${lang} ${k}`);
+                }
+            }
+            return out;
+        }""")
+        self.assertEqual(bad, [])
+        for lang in LANGS[1:]:
+            for key, english in brewdash.MESSAGES.items():
+                value = self.page.evaluate(f"I18N.{lang}[{json.dumps('srv.' + key)}]")
+                forms = [value] if isinstance(value, str) else list(value.values())
+                want = set(re.findall(r"\{\w+\}", english))
+                for form in forms:
+                    self.assertEqual(set(re.findall(r"\{\w+\}", form)), want, f"{lang} srv.{key}")
+
+    def test_every_key_the_code_names_is_in_the_english_catalog(self):
+        source = "".join((WEB / f).read_text() for f in ("app.js", "theme.js", "index.html"))
+        named = set(re.findall(r'\bt\("([\w.]+)"[,)]', source)) | set(re.findall(r'data-i18n(?:-title)?="([\w.]+)"', source))
+        self.assertGreater(len(named), 200)
+        self.assertEqual(named - self.keys("en"), set())
+
+    def test_every_key_built_at_runtime_is_in_the_english_catalog(self):
+        source = "".join((WEB / f).read_text() for f in ("app.js", "theme.js"))
+        prefixes = set(re.findall(r'\bt\("([\w.]+\.)" \+', source)) | set(re.findall(r'\bt\(`([\w.]+\.)\$\{', source))
+        server = (WEB.parent / "brewdash.py").read_text()
+        numbers = source[source.index("const counted"):source.index('t("num.title")')]
+        source_kinds = re.search(r'source = "(\w+)" if .*?else \\\s*"(\w+)" if .*? else "(\w+)"', server, re.S)
+        js = lambda expr: self.page.evaluate(expr)
+        domains = {
+            "theme.": js("Object.keys(THEME_ICON)"),
+            "tab.": js("TABS"),
+            "intro.": [f"{tab}.{part}" for tab in js("TABS") if tab != "overview" for part in ("what", "todo")],
+            "flag.": js("FLAGS.map((f) => f[0])"),
+            "col.": js("COLS.map((c) => c[0])"),
+            "level.": js("Object.keys(LEVEL)"),
+            "export.group.": js("LIST_GROUPS"),
+            "svc.": js("SVC_OPS"),
+            "sev.": js("SEVERITIES"),
+            "job.status.": js("JOB_STATUSES"),
+            "num.": [k + s for k in re.findall(r'(?:\[|counted\()"(\w+)", ', numbers) for s in ("", "_help")],
+            "sig.": re.findall(r'\{"kind": "(\w+)", "signer"', server),
+            "source.": list(source_kinds.groups()) if source_kinds else [],
+            "issue.": re.findall(r'advice = "(\w+)", ', server),
+        }
+        self.assertEqual(prefixes, set(domains))
+        en = self.keys("en")
+        for prefix, values in domains.items():
+            with self.subTest(prefix=prefix):
+                self.assertGreaterEqual(len(values), 2)
+                self.assertEqual({prefix + v for v in values} - en, set())
+
+    def test_no_key_is_missing_while_every_tab_renders_in_every_language(self):
+        self.page.evaluate("""() => {
+            window.missing = new Set();
+            window.looked = 0;
+            for (const lang of Object.keys(LANGS)) {
+                const cat = I18N[lang];
+                I18N[lang] = new Proxy(cat, { get: (o, k) => {
+                    looked++;
+                    if (!(k in o) && (lang !== "en" || !String(k).startsWith("srv."))) missing.add(`${lang} ${String(k)}`);
+                    return o[k];
+                } });
+            }
+        }""")
+        tabs = self.page.evaluate("TABS")
+        self.assertIn("security", tabs)
+        for lang in LANGS:
+            self.choose(lang)
+            for tab in tabs:
+                self.page.click(f'nav button[data-tab="{tab}"]')
+                self.page.wait_for_function("!document.querySelector('#content .loading')")
+            self.open("requested", "f:php@8.0")
+            self.page.click("[data-advice]")
+            self.page.wait_for_selector("#m-cancel")
+            self.page.click("#m-cancel")
+            self.page.click('nav button[data-tab="overview"]')
+        self.assertGreater(self.page.evaluate("looked"), 1000)
+        self.assertEqual(self.page.evaluate("[...missing].sort()"), [])
+
+    def test_choosing_a_language_translates_the_page_and_the_server_messages_and_is_remembered(self):
+        self.choose("tr")
+        tr = lambda k: self.page.evaluate(f"I18N.tr[{json.dumps(k)}]")
+        self.assertEqual(self.page.evaluate("document.documentElement.lang"), "tr")
+        self.assertEqual(self.page.inner_text('nav button[data-tab="overview"]'), tr("tab.overview"))
+        self.assertEqual(self.page.inner_text("#btn-refresh"), tr("header.refresh"))
+        self.page.click('nav button[data-tab="requested"]')
+        self.page.click('tr.row[data-id="f:php@8.0"] td:nth-child(2)')
+        title = self.page.inner_text("#detail .detail-section .warn b")
+        want = tr("srv.advice.deprecated.title_why").replace("{why}", tr("srv.reason.versioned_formula"))
+        self.assertEqual(title, want)
+        self.page.reload()
+        self.page.wait_for_selector('tr.row[data-id="f:php@8.0"]')
+        self.assertEqual(self.page.inner_text('nav button[data-tab="overview"]'), tr("tab.overview"))
+        self.choose("en")
+        self.assertEqual(self.page.inner_text('nav button[data-tab="overview"]'), "Overview")
+
+    def tr_render(self, m):
+        """The Turkish text of a server message, filled in here rather than by the page's own tm()."""
+        if not isinstance(m, list):
+            return m
+        key, args = m
+        value = self.page.evaluate(f"I18N.tr[{json.dumps('srv.' + key)}]")
+        self.assertIsInstance(value, str, key)
+        filled = {k: self.tr_render(v) for k, v in (args or {}).items()}
+        return re.sub(r"\{(\w+)\}", lambda g: filled[g.group(1)], value)
+
+    def test_every_server_message_on_screen_is_in_the_chosen_language(self):
+        self.choose("tr")
+        self.open("requested", "f:php@8.0")
+        advice = self.page.evaluate("S.pkgs.get('f:php@8.0').advice.find((a) => a.level === 'warn')")
+        warn = self.page.locator("#detail .detail-section .warn").first
+        self.assertEqual(warn.locator("> div").first.inner_text(), " ".join(self.tr_render(p) for p in advice["msg"]["text"]))
+        buttons = warn.locator("[data-advice]")
+        self.assertEqual(buttons.all_inner_texts(), [self.tr_render(a["msg"]) for a in advice["actions"]])
+
+        with self.page.expect_response(lambda r: "/api/plan" in r.url) as plan:
+            buttons.first.click()
+        title_msg = plan.value.json()["title_msg"]
+        self.assertEqual(self.page.inner_text("#modal-card h2"), self.tr_render(title_msg))
+        self.page.click("#m-ok")
+        self.page.wait_for_function("document.querySelector('.job-head b')?.textContent")
+        self.assertEqual(self.page.inner_text(".job-head b"), self.tr_render(title_msg))
+        job_time = self.page.evaluate("new Date(S.jobs.at(-1).created * 1000).toLocaleTimeString('tr')")
+        self.assertEqual(self.page.locator(".job-head .muted").first.inner_text(), job_time)
+
+        self.page.click('nav button[data-tab="history"]')
+        self.page.wait_for_function("S.history?.length")
+        created = self.page.evaluate("S.history[0].created")
+        cells = self.page.locator("#view tbody tr").first.locator("td").all_inner_texts()
+        self.assertEqual(cells[:2], [self.page.evaluate(f"new Date({created} * 1000).toLocaleString('tr')"), self.tr_render(title_msg)])
+
+        self.page.click('nav button[data-tab="shell"]')
+        row = self.page.locator('#view tbody tr:has-text("/nope/bin")')
+        self.assertEqual(row.locator("td").nth(3).inner_text(), self.tr_render(["path.missing", {}]))
+
+        self.page.click('nav button[data-tab="overview"]')
+        self.assertIn("Pazartesi", self.page.inner_text("#content"))
+
+    def test_advice_text_falls_back_to_english_whole_when_one_part_lacks_a_translation(self):
+        self.choose("tr")
+        self.page.evaluate("delete I18N.tr['srv.advice.unused_requested']")
+        self.open("requested", "f:php@8.0")
+        advice = self.page.evaluate("S.pkgs.get('f:php@8.0').advice.find((a) => a.level === 'warn')")
+        warn = self.page.locator("#detail .detail-section .warn").first
+        self.assertEqual(warn.locator("> div").first.inner_text(), advice["text"])
+
+    def test_a_server_message_the_language_lacks_stays_in_english(self):
+        self.choose("tr")
+        self.page.evaluate("delete I18N.tr['srv.reason.versioned_formula']")
+        self.open("requested", "f:php@8.0")
+        self.assertEqual(self.page.inner_text("#detail .detail-section .warn b"),
+                         "Deprecated by Homebrew: it is an old versioned formula")
+
+    def test_the_browser_language_picks_the_first_supported_language(self):
+        for locale, want in (("tr-TR", "tr"), ("es-MX", "es"), ("zh-TW", "zh"), ("de-DE", "en")):
+            ctx = self.browser.new_context(locale=locale)
+            page = ctx.new_page()
+            page.goto(self.url)
+            with self.subTest(locale=locale):
+                self.assertEqual(page.evaluate("LANG"), want)
+                self.assertEqual(page.input_value("#lang"), want)
+            ctx.close()
 
 
 if __name__ == "__main__":
