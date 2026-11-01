@@ -15,6 +15,11 @@ Python 3 standard library only. Cytoscape.js is vendored in `web/vendor/`.
 
 ## What it shows
 
+- **Overview** (the start page): counts, disk use, outdated, services and
+  apps at a glance; a **Needs attention** list, worst first, where each line
+  opens the tab that fixes it; and charts for what is installed, how apps got
+  there, the largest packages, the most depended-on packages and installs per
+  month.
 - **Installed by you / Dependencies / Casks**: version, latest version, disk
   size, install date, how many packages use it, description. Filters for
   outdated, orphan, pinned, missing dependency and service.

@@ -20,6 +20,7 @@ except ImportError:
     sync_playwright = None
 
 XSS = '<img src=x onerror="window.pwned=1">'
+ATTR_XSS = '" onmouseover="window.pwned=1'
 INFO = {
     "formulae": [
         formula("php@8.0", requested=True, versioned_formulae=["php@8.4"], deprecated=True,
@@ -57,7 +58,9 @@ class UiSmokeTest(unittest.TestCase):
         (root / "home").mkdir()
         (root / "home" / ".zshrc").write_text("export PATH=/nope/bin:$PATH\n")
         cls.list_file = root / "state" / "list.json"
-        cls.brew = UiBrew(info=INFO, cache=str(root / "cache"), casks=APP_CASKS)
+        (root / "prefix" / "Cellar" / "jq").mkdir(parents=True)
+        (root / "prefix" / "Cellar" / "jq" / "bin").write_bytes(b"x" * 65536)
+        cls.brew = UiBrew(info=INFO, cache=str(root / "cache"), casks=APP_CASKS, prefix=str(root / "prefix"))
         cls.server, cls.url, _ = brewdash.serve(port=0, open_browser=False, brew=cls.brew, state_dir=str(root / "state"),
                                                 home=str(root / "home"), app_dirs=[str(root / "Applications")])
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
@@ -76,7 +79,7 @@ class UiSmokeTest(unittest.TestCase):
         self.list_file.unlink(missing_ok=True)
         self.page = self.browser.new_page()
         self.page.goto(self.url)
-        self.page.wait_for_selector('tr.row[data-id="f:jq"]')
+        self.page.wait_for_selector(".ov .att")
 
     def tearDown(self):
         self.page.close()
@@ -88,6 +91,130 @@ class UiSmokeTest(unittest.TestCase):
 
     def advice(self):
         return self.page.inner_text("#detail .detail-section:has(h4:text-is('What to do'))")
+
+    def attention(self):
+        return [(a.locator(".att-level").inner_text().lower(), a.get_attribute("data-overview"),
+                 a.locator("b").inner_text()) for a in self.page.locator(".att").all()]
+
+    def test_overview_is_the_start_page_and_lists_what_needs_attention_worst_first(self):
+        self.page.wait_for_selector('.att:has-text("cleanup")')
+        self.assertEqual(self.attention(), [
+            ("critical", "health", "3 deprecated or disabled"),
+            ("warning", "health", "brew doctor has warnings"),
+            ("warning", "requested:upgradable", "1 can be upgraded in Installed by you"),
+            ("warning", "requested:outdated,pinned", "1 outdated but pinned in Installed by you"),
+            ("warning", "update", "brew update is stale"),
+            ("warning", "shell", "1 PATH problems"),
+            ("info", "health", "cleanup"),
+            ("info", "apps", "1 apps brew could manage"),
+            ("info", "taps", "1 unused taps"),
+        ])
+
+    def rows(self):
+        return [r.get_attribute("data-id") for r in self.page.locator("tr.row").all()]
+
+    def test_each_package_item_opens_exactly_the_packages_it_counts(self):
+        self.page.evaluate("S.pkgs.get('f:ssl@1').outdated = true; S.pkgs.get('f:py').outdated = true; S.pkgs.get('f:py').pinned = true; renderView()")
+        items = {go: title for _, go, title in self.attention()}
+        for go, title, rows in [("requested:upgradable", "1 can be upgraded in Installed by you", ["f:jq"]),
+                                ("deps:upgradable", "1 can be upgraded in Dependencies", ["f:ssl@1"]),
+                                ("requested:outdated,pinned", "1 outdated but pinned in Installed by you", ["f:held"]),
+                                ("deps:outdated,pinned", "1 outdated but pinned in Dependencies", ["f:py"])]:
+            self.assertEqual(items[go], title)
+            self.page.click('nav button[data-tab="overview"]')
+            self.page.click(f'.att[data-overview="{go}"]')
+            self.page.wait_for_selector(f'nav button.active[data-tab="{go.split(":")[0]}"]')
+            self.assertEqual(self.rows(), rows, go)
+
+    def test_missing_dependencies_and_orphans_are_listed_and_names_are_escaped(self):
+        self.page.evaluate("""xss => {
+            const base = S.pkgs.get('f:py');
+            S.pkgs.set('f:x', { ...base, id: 'f:x', name: xss, missing_deps: ['gone'], orphan: true, required_by: ['f:ytdl'] });
+            S.snap.sizes['f:x'] = 999999;
+            S.snap.apps.apps.push({ ...S.snap.apps.apps.find((a) => a.cask === 'zed'), id: 'a:x', name: xss });
+            renderView();
+        }""", XSS)
+        att = self.attention()
+        self.assertEqual(att[0], ("critical", "health", "1 missing dependencies"))
+        self.assertIn(("info", "health", "1 orphans"), att)
+        self.assertIn(XSS, self.page.inner_text(".att:has-text('missing dependencies')"))
+        self.assertIn(XSS, self.page.inner_text(".att:has-text('apps brew could manage')"))
+        self.assertIn(XSS, self.page.inner_text(".card:has(h3:text-is('Largest on disk'))"))
+        self.assertIn(XSS, self.page.inner_text(".card:has(h3:text-is('Most depended on'))"))
+        self.assertEqual(self.page.locator("#view img").count(), 0)
+        self.assertIsNone(self.page.evaluate("window.pwned"))
+
+    def test_an_overview_click_drops_a_leftover_search(self):
+        self.page.click('nav button[data-tab="requested"]')
+        self.page.fill("#q", "zzz")
+        self.page.click('nav button[data-tab="overview"]')
+        self.page.click('.att[data-overview="requested:upgradable"]')
+        self.page.wait_for_selector('nav button.active[data-tab="requested"]')
+        self.assertEqual(self.rows(), ["f:jq"])
+        self.assertEqual(self.page.input_value("#q"), "")
+
+    def test_names_cannot_break_out_of_a_title_attribute(self):
+        self.page.evaluate("""attr => {
+            S.pkgs.set('f:a', { ...S.pkgs.get('f:py'), id: 'f:a', name: attr, installed_time: Date.now() / 1000 });
+            S.snap.sizes['f:a'] = 999999;
+            renderView();
+        }""", ATTR_XSS)
+        self.assertIn(ATTR_XSS, self.page.get_attribute('.card:has(h3:text-is("Largest on disk")) .bar-row[data-goto="f:a"]', "title"))
+        self.assertIn(ATTR_XSS, self.page.locator(".month").last.get_attribute("title"))
+        self.assertEqual(self.page.locator("#view [onmouseover]").count(), 0)
+
+    def test_a_recent_brew_update_is_not_flagged(self):
+        self.page.evaluate("S.snap.last_update = Date.now() / 1000 - 6 * 86400; renderView()")
+        self.assertNotIn("update", [go for _, go, _ in self.attention()])
+        self.page.evaluate("S.snap.last_update = Date.now() / 1000 - 8 * 86400; renderView()")
+        self.assertIn("update", [go for _, go, _ in self.attention()])
+
+    def test_tiles_show_the_totals(self):
+        self.page.wait_for_selector('.tile:has-text("64 KB")')
+        tiles = [t.inner_text().split("\n") for t in self.page.locator(".tile").all()]
+        self.assertEqual(tiles, [
+            ["8", "packages", "5 by you · 2 dependencies · 1 casks"],
+            ["64 KB", "on disk", "formulae 64 KB · casks 0 KB"],
+            ["3", "outdated", "1 can be upgraded now"],
+            ["9", "things to look at", "worst: critical"],
+            ["0/0", "services running"],
+            ["3", "apps", "0 managed by brew"],
+            ["never", "last brew update"],
+        ])
+
+    def test_stale_update_item_runs_brew_update_through_the_confirm_dialog(self):
+        self.page.click('.att[data-overview="update"]')
+        self.page.wait_for_selector("#modal-card pre")
+        self.assertEqual(self.page.inner_text("#modal-card pre"), "brew update")
+
+    def test_composition_chart_names_each_part_with_its_count(self):
+        self.assertEqual(self.page.locator(".card:has(h3:text-is('What is installed')) .legend").inner_text().split("\n"),
+                         ["5 installed by you", "2 dependencies", "1 casks"])
+        self.assertEqual(self.page.locator(".card:has(h3:text-is('How apps got here')) .legend").inner_text().split("\n"),
+                         ["1 App Store", "2 by hand"])
+        self.page.click(".card:has(h3:text-is('What is installed')) .seg[data-overview='deps']")
+        self.page.wait_for_selector('nav button.active[data-tab="deps"]')
+        self.assertEqual(self.rows(), ["f:py", "f:ssl@1"])
+
+    def test_most_depended_on_counts_direct_and_indirect_dependents(self):
+        rows = self.page.locator(".card:has(h3:text-is('Most depended on')) .bar-row").all()
+        self.assertEqual([r.inner_text().split("\n") for r in rows], [["ssl@1", "2 pkg"], ["py", "1 pkg"]])
+
+    def test_disk_bar_opens_its_package(self):
+        self.page.click('.card:has(h3:text-is("Largest on disk")) .bar-row[data-goto="f:jq"]')
+        self.page.wait_for_selector('#detail h2.detail-title:text-is("jq")')
+
+    def test_installs_chart_puts_each_package_in_its_month(self):
+        self.page.evaluate("""() => {
+            const now = Date.now() / 1000;
+            S.pkgs.get('f:jq').installed_time = now; S.pkgs.get('f:ytdl').installed_time = now;
+            renderView();
+        }""")
+        bars = self.page.locator(".month").all()
+        self.assertEqual(len(bars), 24)
+        self.assertRegex(bars[-1].get_attribute("title"), r"^\d{4}-\d{2}: 2 \((jq, ytdl|ytdl, jq)\)$")
+        self.assertEqual(self.page.locator(".months-axis + p").inner_text(), "6 package(s) were installed before " +
+                         bars[0].get_attribute("title").split(":")[0] + ".")
 
     def test_header_counts_outdated_but_upgrades_only_what_brew_can(self):
         self.assertEqual(self.page.inner_text("#btn-upgrade-all"), "Upgrade all (1)")

@@ -16,7 +16,7 @@ async function api(path, body) {
 
 const S = {
   snap: null, version: -1, pkgs: new Map(),
-  tab: "requested", q: "", flags: new Set(), sort: { key: "name", dir: 1 },
+  tab: "overview", q: "", flags: new Set(), sort: { key: "name", dir: 1 },
   selected: new Set(), current: null, depth: 1,
   jobs: [], openJobs: new Set(), history: [],
   search: { q: "", results: null, preview: null, busy: false },
@@ -24,7 +24,7 @@ const S = {
 };
 
 const TABS = [
-  ["requested", "Installed by you"], ["deps", "Dependencies"], ["casks", "Casks"],
+  ["overview", "Overview"], ["requested", "Installed by you"], ["deps", "Dependencies"], ["casks", "Casks"],
   ["services", "Services"], ["taps", "Taps"], ["health", "Health"],
   ["apps", "Apps"], ["shell", "Shell"], ["history", "History"], ["install", "Install"], ["export", "Export"],
 ];
@@ -151,7 +151,7 @@ const PKG_TABS = {
   deps: (p) => p.kind === "formula" && !p.requested,
   casks: (p) => p.kind === "cask",
 };
-const FLAGS = [["outdated", (p) => p.outdated], ["orphan", (p) => p.orphan], ["pinned", (p) => p.pinned], ["missing", (p) => p.missing_deps.length > 0], ["service", (p) => !!p.service]];
+const FLAGS = [["outdated", (p) => p.outdated], ["upgradable", upgradable], ["orphan", (p) => p.orphan], ["pinned", (p) => p.pinned], ["missing", (p) => p.missing_deps.length > 0], ["service", (p) => !!p.service]];
 const COLS = [
   ["name", "Name", (p) => p.name], ["version", "Version", (p) => p.version], ["latest", "Latest", (p) => p.latest],
   ["size", "Size", (p) => sizeOf(p.id) ?? -1, "num"], ["installed", "Installed", (p) => p.installed_time || 0, "num"],
@@ -409,6 +409,143 @@ function renderShell() {
     </tbody></table>`;
 }
 
+// ---------- overview ----------
+
+const STALE_UPDATE_DAYS = 7;
+const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)"];
+
+const daysSinceUpdate = () => S.snap?.last_update ? (Date.now() / 1000 - S.snap.last_update) / 86400 : Infinity;
+
+function attention() {
+  const all = [...S.pkgs.values()];
+  const h = S.snap?.health;
+  const items = [];
+  const add = (level, count, title, text, go) => { if (count) items.push({ level, count, title, text, go }); };
+  // A package table filters within one tab, with its flags ANDed; one item per tab keeps the click showing exactly what the item counts.
+  const addPerTab = (level, flags, title, text) => {
+    for (const [tab, label] of TABS.filter(([t]) => PKG_TABS[t])) {
+      const hits = all.filter((p) => PKG_TABS[tab](p) && flags.every((f) => FLAGS.find(([k]) => k === f)[1](p)));
+      add(level, hits.length, `${title} in ${label}`, text(hits.map((p) => p.name).join(", ")), `${tab}:${flags.join(",")}`);
+    }
+  };
+  const missing = all.filter((p) => p.missing_deps.length);
+  add("critical", missing.length, "missing dependencies", `${missing.map((p) => p.name).join(", ")} cannot run until the missing packages are installed.`, "health");
+  const dead = all.filter((p) => p.deprecated || p.disabled);
+  add("critical", dead.length, "deprecated or disabled", `${dead.map((p) => p.name).join(", ")}: Homebrew stopped or will stop maintaining these. Each detail panel says what to do.`, "health");
+  if (h) add("warning", !h.doctor_ok, "brew doctor has warnings", "Read them in Health.", "health");
+  addPerTab("warning", ["upgradable"], "can be upgraded", (names) => `${names}.`);
+  addPerTab("warning", ["outdated", "pinned"], "outdated but pinned", (names) => `${names}: brew upgrade skips these until they are unpinned.`);
+  add("warning", daysSinceUpdate() > STALE_UPDATE_DAYS, "brew update is stale", `Last run ${fmtAgo(S.snap?.last_update)}; the outdated list is only as fresh as that.`, "update");
+  const pathIssues = (S.snap?.shell?.path || []).filter((e) => e.issue);
+  add("warning", pathIssues.length, "PATH problems", "Duplicate, missing or outdated entries in your shell startup files.", "shell");
+  const orphans = all.filter((p) => p.orphan);
+  add("info", orphans.length, "orphans", "Installed as dependencies; nothing needs them any more. Autoremove takes them out.", "health");
+  add("info", !!h?.cleanup_reclaim, "cleanup", `${h?.cleanup_reclaim} can be freed with brew cleanup.`, "health");
+  const adoptable = appsList().filter((a) => a.source === "manual" && a.cask);
+  add("info", adoptable.length, "apps brew could manage", `${adoptable.map((a) => a.name).join(", ")}: installed by hand, and a cask installs exactly that app.`, "apps");
+  const unusedTaps = (S.snap?.model?.taps || []).filter((t) => !t.official && !t.installed.length);
+  add("info", unusedTaps.length, "unused taps", `${unusedTaps.map((t) => t.name).join(", ")}: nothing installed comes from them.`, "taps");
+  return items;
+}
+
+const LEVEL = { critical: ["✖", "var(--red)"], warning: ["▲", "var(--accent)"], info: ["●", "var(--blue)"] };
+
+function tile(value, label, sub = "", tone = "") {
+  return `<div class="tile"${tone ? ` style="border-color:${tone}"` : ""}><div class="tile-value">${value}</div><div class="tile-label">${label}</div>${sub ? `<div class="tile-sub muted">${sub}</div>` : ""}</div>`;
+}
+
+// One horizontal bar split into segments, with a legend that carries the numbers.
+function stackChart(title, parts) {
+  const total = parts.reduce((a, p) => a + p.value, 0);
+  if (!total) return `<div class="card"><h3>${title}</h3><p class="muted">Nothing yet.</p></div>`;
+  const shown = parts.filter((p) => p.value);
+  return `<div class="card"><h3>${title}</h3>
+    <div class="stack">${shown.map((p) => `<div class="seg" style="flex:${p.value};background:${p.color}" title="${esc(p.label)}: ${p.value} (${Math.round(100 * p.value / total)}%)"${p.go ? ` data-overview="${p.go}"` : ""}></div>`).join("")}</div>
+    <div class="legend">${shown.map((p) => `<span><span class="dot" style="background:${p.color}"></span>${p.value} ${esc(p.label)}</span>`).join("")}</div></div>`;
+}
+
+// Top-N horizontal bars for one measure; each bar opens its package.
+function barChart(title, rows, fmt, empty) {
+  const max = Math.max(...rows.map((r) => r.value), 0);
+  return `<div class="card"><h3>${title}</h3>${rows.length && max ? `<div class="bars">${rows.map((r) => `
+    <div class="bar-row" data-goto="${esc(r.id)}" title="${esc(r.label)}: ${esc(fmt(r.value))}">
+      <span class="bar-label mono">${esc(r.label)}</span>
+      <span class="bar-track"><span class="bar" style="width:${(100 * r.value / max).toFixed(1)}%"></span></span>
+      <span class="bar-value mono">${esc(fmt(r.value))}</span></div>`).join("")}</div>` : `<p class="muted">${empty}</p>`}</div>`;
+}
+
+const MONTHS_SHOWN = 24;
+
+const monthOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+
+function installsChart() {
+  const now = new Date();
+  const months = [...Array(MONTHS_SHOWN)].map((_, i) => monthOf(new Date(now.getFullYear(), now.getMonth() - (MONTHS_SHOWN - 1 - i), 1)));
+  const byMonth = Object.fromEntries(months.map((m) => [m, []]));
+  let earlier = 0;
+  for (const p of S.pkgs.values()) {
+    if (!p.installed_time) continue;
+    const m = monthOf(new Date(p.installed_time * 1000));
+    if (byMonth[m]) byMonth[m].push(p.name); else if (m < months[0]) earlier++;
+  }
+  const max = Math.max(...months.map((m) => byMonth[m].length), 0);
+  return `<div class="card"><h3>Installed per month, last ${MONTHS_SHOWN} months</h3>
+    ${max ? `<div class="months">${months.map((m) => {
+      const n = byMonth[m].length;
+      const names = byMonth[m].slice(0, 12).join(", ") + (n > 12 ? ", …" : "");
+      return `<div class="month" title="${m}: ${n}${n ? " (" + esc(names) + ")" : ""}"><span class="month-bar" style="height:${(100 * n / max).toFixed(1)}%"></span></div>`;
+    }).join("")}</div>
+    <div class="months-axis muted"><span>${months[0]}</span><span>${months[months.length - 1]}</span></div>` : `<p class="muted">Nothing installed in this period.</p>`}
+    ${earlier ? `<p class="muted">${earlier} package(s) were installed before ${months[0]}.</p>` : ""}</div>`;
+}
+
+function renderOverview() {
+  const all = [...S.pkgs.values()];
+  const c = counts();
+  const sizes = S.snap?.sizes || {};
+  const total = Object.values(sizes).reduce((a, b) => a + b, 0);
+  const services = all.filter((p) => p.service);
+  const running = services.filter((p) => p.service.running).length;
+  const apps = appsList();
+  const issues = attention();
+  const worst = issues[0]?.level;
+  const kindSize = (fn) => all.filter(fn).reduce((a, p) => a + (sizes[p.id] || 0), 0);
+  $("#view").innerHTML = `<div class="ov">
+    <div class="tiles">
+      ${tile(S.pkgs.size, "packages", `${c.requested} by you · ${c.deps} dependencies · ${c.casks} casks`)}
+      ${tile(total ? fmtSize(total) : "…", "on disk", total ? `formulae ${fmtSize(kindSize((p) => p.kind === "formula"))} · casks ${fmtSize(kindSize((p) => p.kind === "cask"))}` : "computing")}
+      ${tile(c.outdated, "outdated", `${c.upgradable} can be upgraded now`, c.outdated ? "var(--accent)" : "")}
+      ${tile(issues.length, "things to look at", worst ? `worst: ${worst}` : "all clear", worst ? LEVEL[worst][1] : "var(--green)")}
+      ${tile(`${running}/${services.length}`, "services running")}
+      ${tile(S.snap?.apps ? apps.length : "…", "apps", S.snap?.apps ? `${apps.filter((a) => a.source === "brew").length} managed by brew` : "scanning")}
+      ${tile(fmtAgo(S.snap?.last_update), "last brew update", "", daysSinceUpdate() > STALE_UPDATE_DAYS ? "var(--accent)" : "")}
+    </div>
+    <div class="card attention"><h3>Needs attention</h3>
+      ${issues.length ? issues.map((i) => `
+        <div class="att att-${i.level}" data-overview="${esc(i.go)}">
+          <span class="att-icon" style="color:${LEVEL[i.level][1]}">${LEVEL[i.level][0]}</span>
+          <span class="att-level" style="color:${LEVEL[i.level][1]}">${i.level}</span>
+          <span><b>${typeof i.count === "number" ? i.count + " " : ""}${esc(i.title)}</b> <span class="muted">${esc(i.text)}</span></span>
+          <span class="att-go muted">${i.go === "update" ? "run brew update →" : "open →"}</span>
+        </div>`).join("") : `<p class="ok">✔ Nothing needs attention.</p>`}
+    </div>
+    <div class="cards">
+      ${stackChart("What is installed", [
+        { label: "installed by you", value: c.requested, color: SERIES[0], go: "requested" },
+        { label: "dependencies", value: c.deps, color: SERIES[1], go: "deps" },
+        { label: "casks", value: c.casks, color: SERIES[2], go: "casks" }])}
+      ${S.snap?.apps ? stackChart("How apps got here", [
+        { label: "brew", value: apps.filter((a) => a.source === "brew").length, color: SERIES[0], go: "apps" },
+        { label: "App Store", value: apps.filter((a) => a.source === "appstore").length, color: SERIES[1], go: "apps" },
+        { label: "by hand", value: apps.filter((a) => a.source === "manual").length, color: SERIES[2], go: "apps" }]) : ""}
+      ${barChart("Largest on disk", all.filter((p) => sizes[p.id]).sort((a, b) => sizes[b.id] - sizes[a.id]).slice(0, 10)
+        .map((p) => ({ id: p.id, label: p.name, value: sizes[p.id] })), fmtSize, total ? "No sizes." : "Computing sizes…")}
+      ${barChart("Most depended on", all.filter((p) => p.required_by.length).sort((a, b) => b.required_by.length - a.required_by.length).slice(0, 10)
+        .map((p) => ({ id: p.id, label: p.name, value: p.required_by.length })), (n) => `${n} pkg`, "No package depends on another.")}
+      ${installsChart()}
+    </div></div>`;
+}
+
 const LIST_GROUPS = [["tap", "Taps"], ["brew", "Formulae"], ["cask", "Casks and apps"]];
 
 function renderExport() {
@@ -598,7 +735,7 @@ function renderJobs() {
 function renderView() {
   if (!S.snap?.model) { $("#view").innerHTML = `<p class="loading">${S.snap?.error ? "Failed to read brew state." : "Reading Homebrew state…"}</p>`; return; }
   if (PKG_TABS[S.tab]) renderPackages();
-  else ({ services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall,
+  else ({ overview: renderOverview, services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall,
     apps: renderApps, shell: renderShell, export: renderExport })[S.tab]();
 }
 
@@ -617,6 +754,11 @@ document.addEventListener("click", (e) => {
   if (t.id === "sel-all") { visiblePackages().forEach((p) => t.checked ? S.selected.add(p.id) : S.selected.delete(p.id)); renderPackages(); renderBulk(); return; }
   if (d("flag")) { const k = d("flag"); S.flags.has(k) ? S.flags.delete(k) : S.flags.add(k); renderPackages(); return; }
   if (d("sort")) { const k = d("sort"); S.sort = { key: k, dir: S.sort.key === k ? -S.sort.dir : 1 }; renderPackages(); return; }
+  if (d("overview")) {
+    const [tab, flags] = d("overview").split(":");
+    if (tab === "update") { confirmAction({ action: "update" }); return; }
+    S.tab = tab; S.flags = new Set(flags ? flags.split(",") : []); S.q = ""; $("#view").scrollTop = 0; renderTabs(); renderView(); renderDetail(); return;
+  }
   if (d("goto")) { select(d("goto")); return; }
   if (t.closest("[data-close]")) { S.current = null; renderDetail(); renderView(); return; }
   if (d("act")) { act(d("act"), [S.current]); return; }
