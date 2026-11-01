@@ -26,7 +26,7 @@ const S = {
 const TABS = [
   ["overview", "Overview"], ["requested", "Installed by you"], ["deps", "Dependencies"], ["casks", "Casks"],
   ["services", "Services"], ["taps", "Taps"], ["health", "Health"], ["security", "Security"],
-  ["apps", "Apps"], ["shell", "Shell"], ["history", "History"], ["install", "Install"], ["export", "Export"],
+  ["apps", "Apps"], ["shell", "Shell"], ["history", "History"], ["install", "Install"], ["export", "Export"], ["contact", "Contact"],
 ];
 
 // ---------- formatting ----------
@@ -39,6 +39,8 @@ const fmtAgo = (ts) => {
   return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
 };
 const sizeOf = (id) => S.snap?.sizes?.[id];
+
+const descTitle = (p) => p?.desc ? ` title="${esc(p.desc)}"` : "";
 
 const upgradable = (p) => p.outdated && !p.disabled && !p.pinned;
 
@@ -66,6 +68,7 @@ async function loadState() {
     S.pkgs = new Map((snap.model?.packages || []).map((p) => [p.id, p]));
     for (const id of [...S.selected]) if (!itemFor(id)) S.selected.delete(id);
     if (S.current && !S.pkgs.has(S.current)) S.current = null;
+    replaceUrl();
     renderAll();
   } catch (e) {
     $("#error").classList.remove("hidden");
@@ -192,7 +195,7 @@ function renderPackages() {
       <tbody>${list.map((p) => `
         <tr class="row ${S.current === p.id ? "current" : ""}" data-id="${esc(p.id)}">
           <td><input type="checkbox" data-sel="${esc(p.id)}" ${S.selected.has(p.id) ? "checked" : ""}></td>
-          <td class="name">${esc(p.name)}${badges(p)}</td>
+          <td class="name"${descTitle(p)}>${esc(p.name)}${badges(p)}</td>
           <td class="mono">${esc(p.version)}</td>
           <td class="mono">${p.outdated ? esc(p.latest) : ""}</td>
           <td class="num">${fmtSize(sizeOf(p.id))}</td>
@@ -212,7 +215,7 @@ let cy = null;
 
 function chip(id) {
   const p = S.pkgs.get(id);
-  return `<span class="chip" data-goto="${esc(id)}">${esc(p ? p.name : id)}${p?.kind === "cask" ? " (cask)" : ""}</span>`;
+  return `<span class="chip" data-goto="${esc(id)}"${descTitle(p)}>${esc(p ? p.name : id)}${p?.kind === "cask" ? " (cask)" : ""}</span>`;
 }
 
 function renderAdvice(p) {
@@ -319,7 +322,54 @@ function select(id) {
   if (S.tab !== tab) { S.tab = tab; $("#view").scrollTop = 0; renderTabs(); renderView(); }
   else document.querySelectorAll("tr.row").forEach((tr) => tr.classList.toggle("current", tr.dataset.id === id));
   renderDetail();
+  syncUrl();
 }
+
+// ---------- navigation ----------
+
+const navHash = () => {
+  const p = new URLSearchParams({ tab: S.tab });
+  if (S.current) p.set("pkg", S.current);
+  if (S.flags.size) p.set("flags", [...S.flags].join(","));
+  return "#" + p;
+};
+const page = (hash) => { const p = new URLSearchParams(hash.slice(1)); return `${p.get("tab")}|${p.get("pkg")}`; };
+
+// Each entry carries its position, so popstate can tell Back from Forward.
+let navIndex = history.state?.i ?? 0;
+
+// A filter toggle replaces the history entry; only a new tab or package adds one.
+function syncUrl() {
+  const h = navHash();
+  if (h === location.hash) return;
+  if (page(h) === page(location.hash)) history.replaceState({ i: navIndex }, "", h);
+  else history.pushState({ i: ++navIndex }, "", h);
+}
+
+function replaceUrl() {
+  if (location.hash !== navHash()) history.replaceState({ i: navIndex }, "", navHash());
+}
+
+function applyUrl() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  S.tab = TABS.some(([k]) => k === p.get("tab")) ? p.get("tab") : "overview";
+  S.current = p.get("pkg");
+  if (S.snap?.model && !S.pkgs.has(S.current)) S.current = null;
+  S.flags = new Set(p.get("flags")?.split(",").filter((f) => FLAGS.some(([k]) => k === f)));
+  replaceUrl();
+}
+
+// History cannot drop an entry, so the one of a package brew no longer has turns into a copy of
+// its neighbour; stepping onto it would change nothing on screen, so it is stepped over.
+addEventListener("popstate", (e) => {
+  const shown = navHash();
+  const i = e.state?.i ?? 0;
+  const dir = i < navIndex ? -1 : 1;
+  navIndex = i;
+  applyUrl();
+  if (navHash() === shown && i > 0) { history.go(dir); return; }
+  $("#view").scrollTop = 0; renderTabs(); renderView(); renderDetail();
+});
 
 // ---------- other tabs ----------
 
@@ -332,13 +382,25 @@ function renderServices() {
   const ports = S.snap?.ports;
   $("#content").innerHTML = `${ports?.error ? `<div class="warn">${esc(ports.error)}</div>` : ""}
     <table><thead><tr><th>Service</th><th>Status</th><th>PID</th><th>User</th><th>Listening</th><th>Plist</th><th></th></tr></thead><tbody>
-    ${list.map((p) => `<tr><td class="name"><span class="chip" data-goto="${esc(p.id)}">${esc(p.name)}</span></td>
+    ${list.map((p) => `<tr><td class="name"><span class="chip" data-goto="${esc(p.id)}"${descTitle(p)}>${esc(p.name)}</span></td>
       <td class="st ${p.service.running ? "st-succeeded" : "st-queued"}">${esc(p.service.status)}</td>
       <td class="mono">${esc(p.service.pid || "")}</td><td>${esc(p.service.user || "")}</td>
       <td>${!ports ? `<span class="muted">…</span>` : listening(p.id) || `<span class="muted">${p.service.pid ? "none" : ""}</span>`}</td>
       <td class="mono muted">${esc(p.service.file || "")}</td>
       <td class="btnrow">${["start", "stop", "restart"].map((op) => `<button class="small" data-svc="${op}" data-id="${esc(p.id)}">${op}</button>`).join("")}</td></tr>`).join("")}
   </tbody></table>${list.length ? "" : `<p class="muted">No installed formula defines a service.</p>`}`;
+}
+
+const REPO = "https://github.com/lemiorhan/brewdash";
+
+function renderContact() {
+  $("#content").innerHTML = `<div class="card contact"><h3>brewdash</h3><table><tbody>
+    <tr><td>Author</td><td>Lemi Orhan Ergin · ${link("https://github.com/lemiorhan")}</td></tr>
+    <tr><td>Source code</td><td>${link(REPO)}</td></tr>
+    <tr><td>Bugs and ideas</td><td>${link(REPO + "/issues")}</td></tr>
+    <tr><td>Security problems</td><td>${link(REPO + "/security/advisories/new")}</td></tr>
+    <tr><td>License</td><td>Apache License 2.0</td></tr>
+  </tbody></table></div>`;
 }
 
 function renderTaps() {
@@ -396,7 +458,7 @@ function renderApps() {
   const row = (a) => {
     const sel = a.source === "brew" ? a.brew_id : a.cask ? a.id : null;
     const newer = a.cask_version && a.version && !a.cask_version.startsWith(a.version) ? ` <span class="muted">(cask has ${esc(a.cask_version.split(",")[0])})</span>` : "";
-    const action = a.source === "brew" ? `<span class="chip" data-goto="${esc(a.brew_id)}">${esc(S.pkgs.get(a.brew_id)?.name || a.brew_id)}</span> <span class="muted">upgrade and uninstall in Casks</span>`
+    const action = a.source === "brew" ? `<span class="chip" data-goto="${esc(a.brew_id)}"${descTitle(S.pkgs.get(a.brew_id))}>${esc(S.pkgs.get(a.brew_id)?.name || a.brew_id)}</span> <span class="muted">upgrade and uninstall in Casks</span>`
       : a.source === "appstore" ? `<span class="muted">updates through the App Store</span>`
       : a.cask ? `<button class="small accent" data-adopt="${esc(a.id)}">Bring into brew</button> <span class="mono">${esc(a.cask)}</span>${newer}${a.auto_updates ? ` <span class="muted">updates itself</span>` : ""}`
       : `<button class="small" data-findcask="${esc(a.name)}">Search cask</button>`;
@@ -545,7 +607,7 @@ function stackChart(title, parts) {
 function barChart(title, rows, fmt, empty) {
   const max = Math.max(...rows.map((r) => r.value), 0);
   return `<div class="card"><h3>${title}</h3>${rows.length && max ? `<div class="bars">${rows.map((r) => `
-    <div class="bar-row" data-goto="${esc(r.id)}" title="${esc(r.label)}: ${esc(fmt(r.value))}">
+    <div class="bar-row" data-goto="${esc(r.id)}" title="${esc(r.label)}: ${esc(fmt(r.value))}${S.pkgs.get(r.id)?.desc ? " — " + esc(S.pkgs.get(r.id).desc) : ""}">
       <span class="bar-label mono">${esc(r.label)}</span>
       <span class="bar-track"><span class="bar" style="width:${(100 * r.value / max).toFixed(1)}%"></span></span>
       <span class="bar-value mono">${esc(fmt(r.value))}</span></div>`).join("")}</div>` : `<p class="muted">${empty}</p>`}</div>`;
@@ -832,6 +894,8 @@ const INTRO = {
     "Search, click a result to preview its new dependencies and caveats, then install."],
   export: ["Export", "A list of taps, formulae and casks to set up another Mac with, written as a Brewfile.",
     "Select packages, taps or apps in any tab and press <b>Add to list</b>; the list is kept between runs. Then download the Brewfile and run <span class=\"mono\">brew bundle</span> on the new Mac."],
+  contact: ["Contact", "Who wrote brewdash and where its code lives.",
+    "Report a bug or ask for a feature in the GitHub issues. Report a security problem privately, through a GitHub security advisory."],
 };
 
 function renderIntro() {
@@ -857,10 +921,10 @@ function hero() {
 
 function renderView() {
   renderIntro();
-  if (!S.snap?.model) { $("#content").innerHTML = `<p class="loading">${S.snap?.error ? "Failed to read brew state." : "Reading Homebrew state…"}</p>`; return; }
+  if (S.tab !== "contact" && !S.snap?.model) { $("#content").innerHTML = `<p class="loading">${S.snap?.error ? "Failed to read brew state." : "Reading Homebrew state…"}</p>`; return; }
   if (PKG_TABS[S.tab]) renderPackages();
   else ({ overview: renderOverview, services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall,
-    apps: renderApps, shell: renderShell, export: renderExport, security: renderSecurity })[S.tab]();
+    apps: renderApps, shell: renderShell, export: renderExport, security: renderSecurity, contact: renderContact })[S.tab]();
 }
 
 function renderAll() {
@@ -915,6 +979,7 @@ document.addEventListener("click", (e) => {
   const row = t.closest("tr.row[data-id]");
   if (row && !t.matches("input")) select(row.dataset.id);
 });
+document.addEventListener("click", syncUrl);
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.id === "search-q") doSearch();
@@ -943,6 +1008,7 @@ async function tick() {
   await loadState();
   setTimeout(tick, active ? 800 : 3000);
 }
+applyUrl();
 renderAll();
 loadList();
 tick();

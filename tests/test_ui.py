@@ -389,6 +389,137 @@ class UiSmokeTest(unittest.TestCase):
         self.page.click('#detail [data-act="uninstall"]')
         self.page.wait_for_selector("#add-blockers")
 
+    def where(self):
+        return (self.page.get_attribute("nav button.active", "data-tab"),
+                self.page.locator("#detail:not(.hidden) h2.detail-title").all_inner_texts())
+
+    def test_back_and_forward_walk_the_tabs_and_packages_opened(self):
+        self.open("requested", "f:ytdl")
+        self.page.click('#detail .chip[data-goto="f:py"]')
+        self.page.click('nav button[data-tab="services"]')
+        steps = [("services", []), ("deps", ["py"]), ("requested", ["ytdl"]), ("requested", []), ("overview", [])]
+        for want in steps[1:]:
+            self.page.go_back()
+            self.assertEqual(self.where(), want)
+        for want in reversed(steps[:-1]):
+            self.page.go_forward()
+            self.assertEqual(self.where(), want)
+
+    def test_a_package_opened_from_the_graph_is_a_history_step(self):
+        self.open("requested", "f:ytdl")
+        self.page.wait_for_function("cy && cy.$id('f:py').length")
+        self.page.evaluate("cy.$id('f:py').emit('tap')")
+        self.assertEqual(self.where(), ("deps", ["py"]))
+        self.page.go_back()
+        self.assertEqual(self.where(), ("requested", ["ytdl"]))
+
+    def test_a_filter_toggle_does_not_add_a_history_step(self):
+        self.page.click('nav button[data-tab="requested"]')
+        self.page.click('[data-flag="outdated"]')
+        self.page.click('[data-flag="pinned"]')
+        self.assertEqual(self.rows(), ["f:held"])
+        self.page.go_back()
+        self.assertEqual(self.where(), ("overview", []))
+
+    def test_a_reload_keeps_the_tab_package_and_filters(self):
+        self.open("requested", "f:jq")
+        self.page.click('[data-flag="outdated"]')
+        self.page.reload()
+        self.page.wait_for_selector("#detail h2.detail-title")
+        self.assertEqual(self.where(), ("requested", ["jq"]))
+        self.assertEqual(self.rows(), ["f:held", "f:jq"])
+
+    def hist(self):
+        return self.page.evaluate("[history.length, location.hash]")
+
+    def test_a_click_that_changes_nothing_adds_no_history_step(self):
+        before = self.hist()
+        self.page.click("#intro")
+        self.assertEqual(self.hist(), before)
+        self.assertEqual(before[1], "#tab=overview")
+
+    def test_a_package_brew_no_longer_has_leaves_no_dead_history_step(self):
+        self.open("requested", "f:jq")
+        self.page.evaluate("""async () => {
+            const snap = { ...S.snap, version: S.snap.version + 1,
+                           model: { ...S.snap.model, packages: S.snap.model.packages.filter((p) => p.id !== 'f:jq') } };
+            api = async () => snap;
+            await loadState();
+        }""")
+        before = self.hist()
+        self.assertEqual(before[1], "#tab=requested")
+        self.page.click("#intro")
+        self.assertEqual(self.hist(), before)
+        self.page.go_back()
+        self.page.wait_for_function("location.hash === '#tab=overview'")
+        self.assertEqual(self.where(), ("overview", []))
+        self.page.go_forward()
+        self.assertEqual(self.where(), ("requested", []))
+
+    def test_forward_steps_over_a_copied_entry_too(self):
+        self.open("requested", "f:jq")
+        self.page.click('nav button[data-tab="services"]')
+        self.page.evaluate("""async () => {
+            const snap = { ...S.snap, version: S.snap.version + 1,
+                           model: { ...S.snap.model, packages: S.snap.model.packages.filter((p) => p.id !== 'f:jq') } };
+            api = async () => snap;
+            await loadState();
+        }""")
+        self.page.go_back()
+        self.page.wait_for_function("location.hash === '#tab=requested'")
+        self.page.go_back()
+        self.page.wait_for_function("location.hash === '#tab=overview'")
+        self.page.go_forward()
+        self.page.wait_for_function("location.hash === '#tab=requested'")
+        self.page.go_forward()
+        self.page.wait_for_function("location.hash === '#tab=services'", timeout=3000)
+        self.assertEqual(self.where(), ("services", []))
+
+    def test_stepping_over_a_copied_entry_never_leaves_the_app(self):
+        self.page.evaluate("history.pushState({ i: 1 }, '', '#tab=overview&pkg=f%3Agone'); navIndex = 1")
+        self.page.go_back()
+        self.page.wait_for_timeout(300)
+        self.assertTrue(self.page.url.startswith(self.url.split("#")[0]), self.page.url)
+        self.assertEqual(self.where(), ("overview", []))
+
+    def test_a_hash_naming_what_does_not_exist_falls_back(self):
+        errors = []
+        self.page.on("pageerror", lambda e: errors.append(e))
+        for h, want in [("#tab=bogus", "#tab=overview"), ("#tab=requested&pkg=f%3Anope&flags=bogus,outdated", "#tab=requested&flags=outdated")]:
+            self.page.goto(self.url + h)
+            self.page.wait_for_selector(".intro, .ov .att")
+            self.page.wait_for_function("S.snap?.model")
+            self.assertEqual(self.page.evaluate("location.hash"), want)
+            before = self.hist()
+            self.page.click("#intro")
+            self.assertEqual(self.hist(), before)
+        self.assertEqual(errors, [])
+
+    def test_a_description_cannot_break_out_of_a_title_attribute(self):
+        self.page.evaluate("attr => { S.pkgs.get('f:jq').desc = attr; S.snap.sizes['f:jq'] = 999999; renderView() }", ATTR_XSS)
+        self.assertTrue(self.page.get_attribute('.bar-row[data-goto="f:jq"]', "title").endswith(" — " + ATTR_XSS))
+        self.page.click('nav button[data-tab="requested"]')
+        self.assertEqual(self.page.get_attribute('tr.row[data-id="f:jq"] td.name', "title"), ATTR_XSS)
+        self.page.click('tr.row[data-id="f:ytdl"] td:nth-child(2)')
+        self.page.click('nav button[data-tab="services"]')
+        self.assertEqual(self.page.get_attribute('#content .chip[data-goto="f:jq"]', "title"), ATTR_XSS)
+        self.assertEqual(self.page.locator("[onmouseover]").count(), 0)
+
+    def test_an_app_brew_manages_shows_its_cask_description_on_hover(self):
+        self.tab("apps")
+        self.page.evaluate("""() => { S.snap.apps.apps.push({ ...S.snap.apps.apps[0], id: 'a:drv', name: 'Drv', source: 'brew', brew_id: 'c:drv' });
+                                      renderView() }""")
+        self.assertEqual(self.page.get_attribute('#content .chip[data-goto="c:drv"]', "title"), "drv app")
+
+    def test_package_names_show_their_description_on_hover(self):
+        self.open("requested", "f:ytdl")
+        self.assertEqual(self.page.get_attribute('tr.row[data-id="f:jq"] td.name', "title"), "jq desc")
+        self.assertEqual(self.page.get_attribute('#detail .chip[data-goto="f:py"]', "title"), "py desc")
+        self.page.click('nav button[data-tab="services"]')
+        self.assertEqual(self.page.get_attribute('#content .chip[data-goto="f:jq"]', "title"), "jq desc")
+        self.page.click('nav button[data-tab="overview"]')
+        self.assertTrue(self.page.get_attribute('.bar-row[data-goto="f:jq"]', "title").endswith(" — jq desc"))
+
     def test_detail_lists_indirect_dependents(self):
         self.open("deps", "f:ssl@1")
         self.assertIn("Also needed indirectly by:\nytdl", self.page.inner_text("#detail"))
@@ -505,6 +636,18 @@ class UiSmokeTest(unittest.TestCase):
             intro = self.page.inner_text("#intro .intro")
             self.assertEqual(self.page.inner_text("#intro h2"), self.page.inner_text(f'nav button[data-tab="{tab}"]').split("\n")[0].rstrip("0123456789"))
             self.assertIn("What to do:", intro, tab)
+
+    def test_contact_page_names_the_author_and_links_the_repo(self):
+        self.tab("contact")
+        self.assertIn("Lemi Orhan Ergin", self.page.inner_text("#content"))
+        hrefs = self.page.eval_on_selector_all("#content a", "as => as.map(a => a.href)")
+        self.assertEqual(hrefs, ["https://github.com/lemiorhan", "https://github.com/lemiorhan/brewdash",
+                                 "https://github.com/lemiorhan/brewdash/issues",
+                                 "https://github.com/lemiorhan/brewdash/security/advisories/new"])
+
+    def test_contact_page_shows_while_brew_cannot_be_read(self):
+        self.page.evaluate("S.snap = { error: 'boom' }; S.tab = 'contact'; renderView()")
+        self.assertIn("github.com/lemiorhan/brewdash", self.page.inner_text("#content"))
 
     def test_theme_button_cycles_and_is_remembered(self):
         theme = lambda: self.page.evaluate("document.documentElement.dataset.theme || 'auto'")
