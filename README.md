@@ -1,3 +1,5 @@
+<img src="docs/assets/logo.svg" width="72" alt="">
+
 # brewdash
 
 **A local web dashboard for Homebrew.** See what is installed on your Mac, why
@@ -64,17 +66,47 @@ line of its **Needs attention** list opens the page where you can act on it.
 | ![Package list with the detail panel of node](docs/screenshots/packages-light.png) | ![secure-it findings in the Security tab](docs/screenshots/security-light.png) |
 | ![Services with their listening ports](docs/screenshots/services-dark.png) | ![Apps with how they were installed and who signed them](docs/screenshots/apps-dark.png) |
 
-## Quick start
+## Install
 
 brewdash needs macOS, [Homebrew](https://brew.sh) and Python 3.9 or newer. The
 `python3` that ships with the Xcode Command Line Tools is enough. It uses the
 standard library only; Cytoscape.js is vendored in `web/vendor/`.
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash
+# or
+wget -qO- https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash
+```
+
+The script builds `brewdash.app` on your Mac with tools macOS already has,
+puts it in `/Applications` (or `~/Applications` when you cannot write to
+`/Applications`), and opens it. From then on:
+
+- **Open** brewdash from Launchpad, Spotlight or the Dock. It starts the
+  server and opens the dashboard in your browser.
+- **Click its Dock icon** to open the dashboard again.
+- **Quit** it (⌘Q) to stop the server. If the app stops without quitting, the
+  server notices and stops as well.
+
+To update, run the install command again. To remove the app, run it with
+`--uninstall`; your settings and Brewfile snapshots stay in
+`~/.local/state/brewdash`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall
+```
+
+The top of [`install.sh`](install.sh) lists the settings it reads, such as
+`BREWDASH_APP_DIR` for another folder.
+
+### From the source
+
+```sh
 git clone https://github.com/lemiorhan/brewdash.git
 cd brewdash
 python3 brewdash.py                            # opens your browser
 python3 brewdash.py --port 8765 --no-browser   # fixed port, no browser
+bash macos/build-app.sh                        # build brewdash.app into build/
 ```
 
 To look around without touching your own setup, run the demo. It serves
@@ -201,7 +233,10 @@ python3 -m venv .venv && .venv/bin/pip install playwright
 .venv/bin/playwright install chromium          # only if no matching Chromium is cached
 .venv/bin/python -m unittest discover -s tests # unit and browser tests
 .venv/bin/python scripts/screenshots.py        # regenerate docs/screenshots from the demo
+.venv/bin/python scripts/icons.py              # regenerate the favicons and app icon from web/logo.svg
 ```
+
+The project page is `docs/index.html`, served by GitHub Pages from `docs/`.
 
 `tests/test_ui.py` drives `web/app.js` in headless Chromium against a fake
 brew. No test calls the real `brew`, `lsof` or `codesign`. See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.

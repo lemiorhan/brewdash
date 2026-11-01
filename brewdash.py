@@ -26,7 +26,8 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@+._/-]*$")
 SUDO_RE = re.compile(r"sudo: .*(terminal is required|password is required)")
 BREW_ENV = {"HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_ENV_HINTS": "1", "HOMEBREW_NO_COLOR": "1"}
 SERVICE_OPS = {"start", "stop", "restart"}
-STATIC_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
+STATIC_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
+                ".png": "image/png"}
 
 
 # ---------- pure analysis ----------
@@ -1241,12 +1242,31 @@ def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=Tru
     return server, url, token
 
 
+PARENT_POLL_SECONDS = 2
+
+
+def stop_with(pid, server, interval=PARENT_POLL_SECONDS):
+    """Shuts `server` down once process `pid` is gone, so a crashed or force-quit brewdash.app leaves no server behind."""
+    def watch():
+        while True:
+            try:
+                os.kill(pid, 0)
+            except (ProcessLookupError, PermissionError):  # PermissionError: the pid went to another user's process
+                server.shutdown()
+                return
+            time.sleep(interval)
+    threading.Thread(target=watch, daemon=True).start()
+
+
 def main():
     ap = argparse.ArgumentParser(description="Local web dashboard for Homebrew")
     ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--parent", type=int, metavar="PID", help="stop when the process with this PID exits")
     args = ap.parse_args()
     server, url, _ = serve(args.port)
+    if args.parent:
+        stop_with(args.parent, server)
     print(f"brewdash running at {url}\nCtrl+C to stop.", flush=True)
     if not args.no_browser:
         webbrowser.open(url)

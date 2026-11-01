@@ -603,13 +603,14 @@ function stackChart(title, parts) {
     <div class="legend">${shown.map((p) => `<span><span class="dot" style="background:${p.color}"></span>${p.value} ${esc(p.label)}</span>`).join("")}</div></div>`;
 }
 
-// Top-N horizontal bars for one measure; each bar opens its package.
-function barChart(title, rows, fmt, empty) {
+// Horizontal bars for one measure. A bar with an `id` opens that package; a bar with `pkgs` is a group and names them.
+function barChart(title, rows, fmt, empty, caption = "") {
   const max = Math.max(...rows.map((r) => r.value), 0);
-  return `<div class="card"><h3>${title}</h3>${rows.length && max ? `<div class="bars">${rows.map((r) => `
-    <div class="bar-row" data-goto="${esc(r.id)}" title="${esc(r.label)}: ${esc(fmt(r.value))}${S.pkgs.get(r.id)?.desc ? " — " + esc(S.pkgs.get(r.id).desc) : ""}">
+  const more = (r) => r.id ? (S.pkgs.get(r.id)?.desc ? " — " + esc(S.pkgs.get(r.id).desc) : "") : r.pkgs?.length ? "\n" + esc(nameList(r.pkgs)) : "";
+  return `<div class="card"><h3>${title}</h3>${caption ? `<p class="caption muted">${caption}</p>` : ""}${rows.length && max ? `<div class="bars">${rows.map((r) => `
+    <div class="bar-row"${r.id ? ` data-goto="${esc(r.id)}"` : ""} title="${esc(r.label)}: ${esc(fmt(r.value))}${more(r)}">
       <span class="bar-label mono">${esc(r.label)}</span>
-      <span class="bar-track"><span class="bar" style="width:${(100 * r.value / max).toFixed(1)}%"></span></span>
+      <span class="bar-track">${r.value ? `<span class="bar" style="width:${(100 * r.value / max).toFixed(1)}%"></span>` : ""}</span>
       <span class="bar-value mono">${esc(fmt(r.value))}</span></div>`).join("")}</div>` : `<p class="muted">${empty}</p>`}</div>`;
 }
 
@@ -638,6 +639,189 @@ function installsChart() {
     ${earlier ? `<p class="muted">${earlier} package(s) were installed before ${months[0]}.</p>` : ""}</div>`;
 }
 
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+const sum = (xs) => xs.reduce((a, b) => a + b, 0);
+const nameList = (ps) => ps.map((p) => p.name).sort((a, b) => a.localeCompare(b)).slice(0, 20).join(", ") + (ps.length > 20 ? ", …" : "");
+
+// [key, packages] pairs, the largest group first.
+function groupsBy(ps, key) {
+  const m = new Map();
+  for (const p of ps) {
+    const k = key(p);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(p);
+  }
+  return [...m].sort(([a, x], [b, y]) => y.length - x.length || a.localeCompare(b));
+}
+
+// For each package: everything it pulls in, directly or through others, and its longest chain of depends-on links.
+function dependencyReach() {
+  const memo = new Map();
+  const walk = (id) => {
+    if (!memo.has(id)) {
+      const r = { all: new Set(), chain: [id] };
+      memo.set(id, r);
+      let longest = [];
+      for (const d of S.pkgs.get(id).deps) {
+        const sub = walk(d);
+        r.all.add(d); sub.all.forEach((x) => r.all.add(x));
+        if (sub.chain.length > longest.length) longest = sub.chain;
+      }
+      r.chain.push(...longest);
+    }
+    return memo.get(id);
+  };
+  for (const id of S.pkgs.keys()) walk(id);
+  return memo;
+}
+
+// The packages sharing the highest score, or the lowest; a null score leaves a package out.
+function best(pkgs, score, lowest = false) {
+  let top = [], value = null;
+  for (const p of pkgs) {
+    const v = score(p);
+    if (v == null) continue;
+    if (value === null || (lowest ? v < value : v > value)) { top = [p]; value = v; }
+    else if (v === value) top.push(p);
+  }
+  return { top: top.sort((a, b) => a.name.localeCompare(b.name)), value };
+}
+
+function recordTile(title, { top, value }, fmt, note) {
+  if (!top.length) return "";
+  const [p, ...ties] = top;
+  const goto = (t) => `<span class="rec-also" data-goto="${esc(t.id)}"${descTitle(t)}>${esc(t.name)}</span>`;
+  const more = ties.slice(3);
+  const also = ties.length ? `also ${ties.slice(0, 3).map(goto).join(", ")}${more.length ? ` <span title="${esc(nameList(more))}">and ${more.length} more</span>` : ""}` : "";
+  const sub = [note ? esc(note(p)) : "", also].filter(Boolean).join(" · ");
+  return `<div class="rec" data-goto="${esc(p.id)}"${descTitle(p)}>
+    <div class="rec-title">${title}</div>
+    <div class="rec-name mono">${esc(p.name)}</div>
+    <div class="rec-value">${esc(fmt(value, p))}</div>
+    ${sub ? `<div class="rec-sub muted">${sub}</div>` : ""}</div>`;
+}
+
+const DATE_VERSION = /^(19|20)\d\d([.-]|\d\d|$)/;
+// A version that starts with a year, such as 2026-10-20 or 2026.4.1, would outrank every other one.
+const majorVersion = (p) => { const m = /^\d+/.exec(p.version); return m && !DATE_VERSION.test(p.version) ? +m[0] : null; };
+
+function recordsCard(all, sizes, reach) {
+  const sized = all.filter((p) => sizes[p.id] != null);
+  const pulled = (p) => reach.get(p.id).all;
+  const withDeps = (p) => sizes[p.id] + sum([...pulled(p)].map((id) => sizes[id] || 0));
+  const pkgs = (n) => plural(n, "package");
+  const tiles = [
+    recordTile("Largest", best(sized, (p) => sizes[p.id]), fmtSize),
+    recordTile("Smallest", best(sized, (p) => sizes[p.id], true), fmtSize),
+    recordTile("Heaviest with its dependencies", best(sized, (p) => pulled(p).size ? withDeps(p) : null), fmtSize,
+      (p) => `${fmtSize(sizes[p.id])} itself and ${plural(pulled(p).size, "dependency", "dependencies")}`),
+    recordTile("Most dependencies", best(all, (p) => pulled(p).size || null), pkgs, (p) => `${p.deps.length} direct`),
+    recordTile("Most depended on", best(all, (p) => p.required_by.length || null), pkgs, (p) => `${p.dependents.length} direct`),
+    recordTile("Longest dependency chain", best(all, (p) => reach.get(p.id).chain.length - 1 || null), (n) => plural(n, "level"),
+      (p) => reach.get(p.id).chain.map((id) => S.pkgs.get(id).name).join(" → ")),
+    recordTile("Oldest install", best(all, (p) => p.installed_time || null, true), fmtDate, (p) => fmtAgo(p.installed_time)),
+    recordTile("Newest install", best(all, (p) => p.installed_time || null), fmtDate, (p) => fmtAgo(p.installed_time)),
+    recordTile("Shortest name", best(all, (p) => p.name.length, true), (n) => plural(n, "character")),
+    recordTile("Longest name", best(all, (p) => p.name.length), (n) => plural(n, "character")),
+    recordTile("Highest version", best(all, majorVersion), (_, p) => p.version),
+    recordTile("Longest caveats", best(all, (p) => p.caveats ? p.caveats.split("\n").length : null), (n) => plural(n, "line")),
+  ].join("");
+  return `<div class="card records"><h3>Records</h3>${tiles ? `<div class="recs">${tiles}</div>` : `<p class="muted">Nothing installed.</p>`}</div>`;
+}
+
+function numbersCard(all, sizes, reach) {
+  const formulae = all.filter((p) => p.kind === "formula");
+  const mine = formulae.filter((p) => p.requested);
+  const kb = all.map((p) => sizes[p.id]).filter((v) => v != null).sort((a, b) => b - a);
+  const total = sum(kb);
+  const share = (n) => `${Math.round(100 * n / total)}%`;
+  const mid = kb.length >> 1;
+  const median = kb.length % 2 ? kb[mid] : Math.round((kb[mid - 1] + kb[mid]) / 2);
+  const depKb = sum(formulae.filter((p) => !p.requested).map((p) => sizes[p.id] || 0));
+  const licenses = groupsBy(formulae.filter((p) => p.license), (p) => p.license);
+  const thirdParty = (S.snap?.model?.taps || []).filter((t) => !t.official && t.installed.length);
+  const fromThirdParty = thirdParty.flatMap((t) => t.installed).map((id) => S.pkgs.get(id));
+  const letters = groupsBy(all, (p) => p.name[0]);
+  const recent = all.filter((p) => p.installed_time && Date.now() / 1000 - p.installed_time < 30 * 86400);
+  const counted = (label, ps, help) => [label, String(ps.length), help, ps];
+  const rows = [
+    ["Dependencies per formula you installed", mine.length ? `${(sum(mine.map((p) => reach.get(p.id).all.size)) / mine.length).toFixed(1)} on average` : "–",
+      "How many packages a formula you installed brings along on average, dependencies of its dependencies included."],
+    ["Direct dependency links", String(sum(all.map((p) => p.deps.length))),
+      "How many times an installed package names another one as its own dependency. Each arrow in a dependency graph is one link."],
+    ["Median package size", total ? fmtSize(median) : "…",
+      "Half of the packages are smaller than this, half are larger. A few huge packages do not move it, unlike the average."],
+    ["Average package size", total ? fmtSize(Math.round(total / kb.length)) : "…",
+      "The disk all packages use, divided by the number of packages."],
+    ["Share of disk in the ten largest", total ? share(sum(kb.slice(0, 10))) : "…",
+      "How much of the disk Homebrew uses goes to its ten largest packages."],
+    ["Disk taken by dependencies", total ? `${fmtSize(depKb)} (${share(depKb)})` : "…",
+      "The disk used by formulae installed only because another package needs them, and their share of the total."],
+    counted("Need nothing, needed by nothing", all.filter((p) => !p.deps.length && !p.required_by.length),
+      "Packages with no dependencies that no other package needs. Removing one of them breaks nothing else."),
+    counted("Keg-only formulae", formulae.filter((p) => p.keg_only),
+      "Formulae Homebrew installs but does not link into its prefix, for example because macOS ships its own copy or because they are an older version line. Their commands are not on PATH unless you add them."),
+    counted("Versioned (name@version)", all.filter((p) => p.name.includes("@")),
+      "Packages with @ in their name, like python@3.12 or firefox@beta: one version line or variant of a package. Upgrades stay within it; the next line is a separate package."),
+    counted("With caveats", all.filter((p) => p.caveats),
+      "Packages that come with setup notes. Each detail panel shows its notes under Caveats."),
+    ["Different licenses", String(licenses.length),
+      "How many different license texts the formulae carry; \"MIT\" and \"Apache-2.0 OR MIT\" count as two. Casks have no license field."],
+    counted("Formulae without a license", formulae.filter((p) => !p.license),
+      "Formulae whose license field is empty."),
+    counted("Packages from third-party taps", fromThirdParty,
+      "Packages from taps Homebrew does not maintain. Their owners, not Homebrew, decide what goes into them."),
+    counted("Installed in the last 30 days", recent,
+      "Packages whose installed version arrived in the last 30 days: a new install, an upgrade or a reinstall."),
+    ["Most common first letter", letters.length ? `${letters[0][0]} (${letters[0][1].length})` : "–",
+      "The letter most package names start with, and how many start with it.", letters[0]?.[1]],
+  ];
+  return `<div class="card"><h3>By the numbers</h3><div class="numbers">${rows.map(([label, value, help, ps]) => `
+    <div class="num-row" title="${esc(help + (ps?.length ? "\n\n" + nameList(ps) : ""))}"><span class="muted">${label}</span><span class="num-value">${esc(value)}</span></div>`).join("")}</div></div>`;
+}
+
+const SIZE_RANGES = [["under 1 MB", 1024], ["1–10 MB", 10240], ["10–100 MB", 102400], ["100 MB–1 GB", 1048576], ["1 GB or more", Infinity]];
+const PULLED_RANGES = [["none", 1], ["1", 2], ["2–5", 6], ["6–10", 11], ["11–20", 21], ["21–50", 51], ["more than 50", Infinity]];
+const VERSION_STYLES = [["date", DATE_VERSION],["0.x", /^0\./], ["x.y.z", /^\d+\.\d+\.\d+/], ["x.y", /^\d+\.\d+(?![.\d])/], ["one number", /^\d+(?![.\d])/]];
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+// One bar per range, in the order given; a package goes to the first range its value is under.
+function ranges(ps, value, limits) {
+  const rows = limits.map(([label]) => ({ label, pkgs: [] }));
+  for (const p of ps) rows[limits.findIndex(([, under]) => value(p) < under)].pkgs.push(p);
+  return rows.map((r) => ({ ...r, value: r.pkgs.length }));
+}
+
+// The largest groups, one bar each, and the rest folded into one bar.
+function topGroups(groups, n = 8) {
+  const rows = groups.slice(0, n).map(([label, pkgs]) => ({ label, value: pkgs.length, pkgs }));
+  const rest = groups.slice(n);
+  if (rest.length) rows.push({ label: `${rest.length} others`, value: sum(rest.map(([, ps]) => ps.length)), pkgs: rest.flatMap(([, ps]) => ps) });
+  return rows;
+}
+
+function distributionCharts(all, sizes, reach) {
+  const sized = all.filter((p) => sizes[p.id] != null);
+  const dated = all.filter((p) => p.installed_time);
+  const style = (p) => VERSION_STYLES.find(([, re]) => re.test(p.version))?.[0] || "other";
+  const weekday = (p) => (new Date(p.installed_time * 1000).getDay() + 6) % 7;
+  const pkg = (n) => `${n} pkg`;
+  return [
+    barChart("Size on disk", sized.length ? ranges(sized, (p) => sizes[p.id], SIZE_RANGES) : [], pkg, "Computing sizes…",
+      "How many packages fall into each size range."),
+    barChart("Dependencies each package brings", ranges(all, (p) => reach.get(p.id).all.size, PULLED_RANGES), pkg, "Nothing installed.",
+      "Dependencies of dependencies included; \"none\" stands alone."),
+    barChart("Licenses of formulae", topGroups(groupsBy(all.filter((p) => p.kind === "formula"), (p) => p.license || "none")), pkg, "No formulae installed.",
+      "The license text each formula declares. Casks have no license field."),
+    barChart("Packages per tap", topGroups(groupsBy(all, (p) => p.tap || "none")), pkg, "Nothing installed.",
+      "The tap each package was installed from."),
+    barChart("How versions are numbered", topGroups(groupsBy(all, style)), pkg, "Nothing installed.",
+      "\"date\" starts with a year, like 2024.10.01; \"0.x\" has not reached 1.0 yet."),
+    barChart("Installs by weekday", WEEKDAYS.map((label, i) => { const pkgs = dated.filter((p) => weekday(p) === i); return { label, value: pkgs.length, pkgs }; }),
+      pkg, "No install dates.", "The day each installed version arrived, in this Mac's time zone."),
+  ].join("");
+}
+
 function renderOverview() {
   const all = [...S.pkgs.values()];
   const c = counts();
@@ -649,6 +833,7 @@ function renderOverview() {
   const issues = attention();
   const worst = issues[0]?.level;
   const kindSize = (fn) => all.filter(fn).reduce((a, p) => a + (sizes[p.id] || 0), 0);
+  const reach = dependencyReach();
   $("#content").innerHTML = `<div class="ov">
     <div class="tiles">
       ${tile(S.pkgs.size, "packages", `${c.requested} by you · ${c.deps} dependencies · ${c.casks} casks`)}
@@ -668,6 +853,7 @@ function renderOverview() {
           <span class="att-go muted">${i.go === "update" ? "run brew update →" : "open →"}</span>
         </div>`).join("") : `<p class="ok">✔ Nothing needs attention.</p>`}
     </div>
+    ${recordsCard(all, sizes, reach)}
     <div class="cards">
       ${stackChart("What is installed", [
         { label: "installed by you", value: c.requested, color: SERIES[0], go: "requested" },
@@ -682,7 +868,10 @@ function renderOverview() {
       ${barChart("Most depended on", all.filter((p) => p.required_by.length).sort((a, b) => b.required_by.length - a.required_by.length).slice(0, 10)
         .map((p) => ({ id: p.id, label: p.name, value: p.required_by.length })), (n) => `${n} pkg`, "No package depends on another.")}
       ${installsChart()}
-    </div></div>`;
+      ${numbersCard(all, sizes, reach)}
+    </div>
+    <h3 class="ov-section">Distributions</h3>
+    <div class="cards">${distributionCharts(all, sizes, reach)}</div></div>`;
 }
 
 const LIST_GROUPS = [["tap", "Taps"], ["brew", "Formulae"], ["cask", "Casks and apps"]];

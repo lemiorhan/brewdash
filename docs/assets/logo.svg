@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#262d3a"/>
+      <stop offset="1" stop-color="#0f1115"/>
+    </linearGradient>
+    <linearGradient id="amber" gradientUnits="userSpaceOnUse" x1="0" y1="130" x2="0" y2="390">
+      <stop offset="0" stop-color="#f8c862"/>
+      <stop offset="1" stop-color="#e0961a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="114" fill="url(#tile)"/>
+  <rect x="3" y="3" width="506" height="506" rx="111" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="6"/>
+  <g fill="none" stroke="url(#amber)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M112 134V340a48 48 0 0 0 48 48H296a48 48 0 0 0 48-48V134"/>
+    <path d="M344 184h22a46 46 0 0 1 46 46v40a46 46 0 0 1-46 46h-22"/>
+  </g>
+  <g fill="#e6e8ec">
+    <rect x="150" y="272" width="42" height="80" rx="10"/>
+    <rect x="207" y="224" width="42" height="128" rx="10"/>
+    <rect x="264" y="168" width="42" height="184" rx="10" fill="#5aa9e6"/>
+  </g>
+</svg>
