@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brewdash</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">brew<span>dash</span></div>
+  <div id="stats" class="stats"></div>
+  <div class="actions">
+    <span id="last-update" class="muted"></span>
+    <button id="btn-refresh" title="Re-read installed state">Refresh</button>
+    <button id="btn-update" title="brew update, then refresh">brew update</button>
+    <button id="btn-upgrade-all" class="accent">Upgrade all</button>
+    <button id="btn-autoremove" class="danger">Autoremove</button>
+  </div>
+</header>
+<nav id="tabs"></nav>
+<div id="error" class="banner hidden"></div>
+<main>
+  <section id="view"></section>
+  <aside id="detail" class="hidden"></aside>
+</main>
+<div id="bulk" class="bulk hidden"></div>
+<div id="jobs" class="jobs collapsed">
+  <div class="jobs-head" id="jobs-head"><span id="jobs-title">Jobs</span><span class="muted">click to toggle</span></div>
+  <div class="jobs-body" id="jobs-body"></div>
+</div>
+<div id="modal" class="modal hidden"><div class="modal-card" id="modal-card"></div></div>
+<script src="/vendor/cytoscape.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
