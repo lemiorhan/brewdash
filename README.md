@@ -43,14 +43,15 @@ line of its **Needs attention** list opens the page where you can act on it.
 - **Services**: start, stop and restart `brew services`, and see the ports each
   one listens on. A port open to the network is flagged.
 - **Taps**: where your formulae come from, which third-party taps are in use,
-  and which are not used by anything.
+  and which are not used by anything. Select taps to untap them.
 - **Health**: `brew doctor`, missing dependencies, deprecated packages, orphans
   and what `brew cleanup` would free.
 - **Security**: findings from [secure-it](https://github.com/lemiorhan/secure-it),
   shown next to the packages, taps and shell files they concern (see below).
 - **Apps**: every app in `/Applications` and `~/Applications`, how it got there
   (brew, App Store or by hand), and who signed it. **Bring into brew** lets
-  Homebrew take over an app you installed by hand.
+  Homebrew take over an app you installed by hand. Uninstall a brew app, or
+  move an app you installed by hand to the Trash.
 - **Shell**: the `PATH` lines and tools set up in your shell startup files.
   brewdash flags entries that are missing, duplicated, pinned to one version,
   left over from an Intel Mac, or that put a cloud-synced folder (Dropbox,
@@ -58,6 +59,8 @@ line of its **Needs attention** list opens the page where you can act on it.
 - **Install**: search Homebrew and preview what an install would bring with it.
 - **Export**: build a Brewfile to set up another Mac.
 - **History**: every action, with a Brewfile snapshot before each removal.
+- **Settings**: the update channel, automatic updates, and where to find the
+  source and report bugs.
 - **Light and dark mode**: follows your system, or pick one with the theme
   button.
 
@@ -88,16 +91,41 @@ puts it in `/Applications` (or `~/Applications` when you cannot write to
 - **Quit** it (⌘Q) to stop the server. If the app stops without quitting, the
   server notices and stops as well.
 
-To update, run the install command again. To remove the app, run it with
-`--uninstall`; your settings and Brewfile snapshots stay in
-`~/.local/state/brewdash`:
+To remove the app, run the install command with `--uninstall`; your settings
+and Brewfile snapshots stay in `~/.local/state/brewdash`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall
 ```
 
 The top of [`install.sh`](install.sh) lists the settings it reads, such as
-`BREWDASH_APP_DIR` for another folder.
+`BREWDASH_APP_DIR` for another folder and `BREWDASH_REF` for a tag, branch or
+commit other than the latest release.
+
+### Updates
+
+The app updates itself from GitHub. Pick how on the **Settings** page:
+
+- **Stable** installs releases: the highest `vX.Y.Z` tag. This is the default.
+- **Beta** installs every commit on `master` as soon as it is pushed.
+- **Update by itself** (on by default) checks GitHub a minute after the app
+  starts and every hour after that, and installs a newer version when there
+  is one. The intervals are `UPDATE_FIRST_CHECK_SECONDS` and
+  `UPDATE_CHECK_SECONDS` in `brewdash.py`.
+- **Check now** asks GitHub straight away, and **Update to …** installs what
+  the channel is at. When you switch from Beta back to Stable, the release can
+  be older than what you have; the app never goes back on its own, only when
+  you press **Go back to …**.
+
+An update runs the `install.sh` inside the app with the version to install. It
+builds the new app, quits brewdash, replaces the app and opens it again. If it
+fails, the Settings page shows the last line of its log,
+`~/.local/state/brewdash/update.log`. Your choices are kept in
+`~/.local/state/brewdash/settings.json`.
+
+An app installed before brewdash could update itself, an app built from
+`BREWDASH_TARBALL`, and a copy run from a git checkout do not update
+themselves. Run the install command once more to get an app that does.
 
 ### From the source
 
@@ -137,8 +165,16 @@ and **Uninstall anyway and break them** runs
 `brew uninstall --ignore-dependencies` and names what may stop working.
 
 One brew command runs at a time; later ones queue, and their output streams
-into the Jobs panel. A command that needs your `sudo` password fails in the
-browser, and the panel shows the command to run in Terminal instead.
+into the Jobs panel. When a command needs your `sudo` password, macOS asks for
+it in a password dialog (brewdash sets `SUDO_ASKPASS`, which brew passes on to
+`sudo`). If you cancel the dialog, the command fails and the panel shows the
+command to run in Terminal instead.
+
+**Untap** applies only to taps nothing is installed from; uninstall their
+packages first. **Move to Trash** has Finder move an app brew did not install
+to the Trash, where you can still get it back until you empty it. It is not
+offered for Apple's own apps or for brewdash, and the settings and caches the
+app left in `~/Library` stay where they are.
 
 Before every uninstall, autoremove and multi-package action, brewdash writes a
 Brewfile snapshot to `~/.local/state/brewdash/brewfiles/`. Restore one with
@@ -179,7 +215,9 @@ The signature column comes from `codesign -dv`: who signed the app, as the app
 declares it. brewdash does not verify the signature and does not check
 notarization (`spctl --assess` does both, but takes minutes for a full
 Applications folder). Apps that are not signed at all, or signed ad-hoc with
-no identity behind them, are listed under *Needs attention*.
+no identity behind them, are listed under *Needs attention*. brewdash.app
+itself is signed ad-hoc too, because `install.sh` builds it on your Mac; it
+shows as *built on this Mac (ad-hoc)* and is left out of that list.
 
 ### Listening ports
 

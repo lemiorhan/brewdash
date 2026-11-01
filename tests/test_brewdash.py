@@ -1310,6 +1310,238 @@ class AskpassTest(unittest.TestCase):
         self.assertTrue((self.state / "askpass").exists())
 
 
+SHA_A, SHA_B, SHA_C, SHA_D = ("a" * 40, "b" * 40, "c" * 40, "d" * 40)
+API = "https://api.github.com/repos/lemiorhan/brewdash"
+TAGS = [{"name": "v0.9.0", "commit": {"sha": SHA_A}}, {"name": "v0.10.0", "commit": {"sha": SHA_B}},
+        {"name": "nightly", "commit": {"sha": SHA_D}}, {"name": "v1.0", "commit": {"sha": SHA_D}}]
+APP_ROOT = Path("/Applications/brewdash.app/Contents/Resources/brewdash")
+
+
+class FakeGitHub:
+    """Answers the three GitHub calls the updater makes; `compare` maps a target sha to GitHub's compare status."""
+    def __init__(self, tags=TAGS, master=SHA_C, compare=None, fail=None):
+        self.tags, self.master, self.compare, self.fail = tags, master, compare or {}, fail
+        self.calls = []
+
+    def __call__(self, url, accept="application/vnd.github+json"):
+        self.calls.append((url, accept))
+        if self.fail:
+            raise self.fail
+        if url == f"{API}/commits/master" and accept == "application/vnd.github.sha":
+            return self.master + "\n"
+        if url == f"{API}/tags?per_page=100":
+            return json.dumps(self.tags)
+        base, _, head = url.removeprefix(f"{API}/compare/").partition("...")
+        if url.startswith(f"{API}/compare/") and base == SHA_A:
+            return json.dumps({"status": self.compare[head]})
+        raise AssertionError(f"unexpected GitHub call {url} {accept}")
+
+
+class UpdaterTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name) / "state"
+        self.spawned = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def updater(self, github=None, installed=None, root=APP_ROOT, spawn=None):
+        self.github = github or FakeGitHub()
+        return brewdash.Updater(self.state, installed or {"sha": SHA_A, "tag": "v0.9.0"}, root=root, fetch=self.github,
+                                spawn=spawn or (lambda *a: self.spawned.append(a)))
+
+    def test_read_installed_takes_only_a_full_sha_and_a_vxyz_tag(self):
+        root = Path(self.tmp.name)
+        cases = [({"sha": SHA_A, "tag": "v1.2.3"}, {"sha": SHA_A, "tag": "v1.2.3"}),
+                 ({"sha": SHA_A, "tag": None}, {"sha": SHA_A, "tag": None}),
+                 ({"sha": SHA_A, "tag": "master"}, {"sha": SHA_A, "tag": None}),
+                 ({"sha": "abc", "tag": "v1.2.3"}, None), (["x"], None)]
+        for written, want in cases:
+            with self.subTest(written=written):
+                (root / "version.json").write_text(json.dumps(written))
+                self.assertEqual(brewdash.read_installed(root), want)
+        (root / "version.json").write_text("{")
+        self.assertIsNone(brewdash.read_installed(root))
+        (root / "version.json").unlink()
+        self.assertIsNone(brewdash.read_installed(root))
+
+    def test_settings_default_to_stable_and_auto_and_keep_only_valid_values(self):
+        u = self.updater()
+        self.assertEqual(u.settings(), {"channel": "stable", "auto": True})
+        self.state.mkdir()
+        (self.state / "settings.json").write_text(json.dumps({"channel": "nightly", "auto": "yes"}))
+        self.assertEqual(u.settings(), {"channel": "stable", "auto": True})
+        self.assertEqual({k: u.save({"channel": "beta"})[k] for k in ("channel", "auto")}, {"channel": "beta", "auto": True})
+        self.assertEqual(u.save({"auto": False})["auto"], False)
+        self.assertEqual(json.loads((self.state / "settings.json").read_text()), {"channel": "beta", "auto": False})
+        for bad in ({"channel": "nightly"}, {"auto": 1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                u.save(bad)
+        self.assertEqual(brewdash.Updater(self.state, None).settings(), {"channel": "beta", "auto": False})
+
+    def test_stable_is_the_highest_vxyz_tag_by_number(self):
+        u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}))
+        view = u.check()
+        self.assertEqual((view["latest"], view["relation"], view["error"]), ({"sha": SHA_B, "tag": "v0.10.0"}, "newer", None))
+        self.assertIsNotNone(view["checked"])
+
+    def test_a_new_channel_drops_the_last_check_and_a_new_auto_keeps_it(self):
+        u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}))
+        u.check()
+        self.assertEqual(u.save({"auto": False, "channel": "stable"})["relation"], "newer")
+        view = u.save({"channel": "beta"})
+        self.assertEqual((view["latest"], view["relation"], view["checked"]), (None, None, None))
+
+    def test_beta_is_masters_head(self):
+        u = self.updater(FakeGitHub(compare={SHA_C: "ahead"}))
+        u.save({"channel": "beta"})
+        self.assertEqual(u.check()["latest"], {"sha": SHA_C, "tag": None})
+        self.assertIn((f"{API}/commits/master", "application/vnd.github.sha"), self.github.calls)
+
+    def test_check_reads_githubs_compare_status_and_asks_nothing_for_the_installed_commit(self):
+        for status, rel in (("ahead", "newer"), ("behind", "older"), ("diverged", "diverged"), ("identical", "same"),
+                            ("odd", "diverged")):
+            with self.subTest(status=status):
+                self.assertEqual(self.updater(FakeGitHub(compare={SHA_B: status})).check()["relation"], rel)
+        u = self.updater(FakeGitHub(tags=[{"name": "v0.9.0", "commit": {"sha": SHA_A}}]))
+        self.assertEqual(u.check()["relation"], "same")
+        self.assertFalse(any("/compare/" in url for url, _ in self.github.calls))
+
+    def test_no_tag_means_no_stable_release_and_nothing_to_install(self):
+        u = self.updater(FakeGitHub(tags=[{"name": "nightly", "commit": {"sha": SHA_D}}]))
+        view = u.update(manual=True)
+        self.assertEqual((view["latest"], view["relation"], view["error"], self.spawned), (None, None, None, []))
+
+    def test_a_github_failure_is_reported_not_raised(self):
+        for err in (OSError("offline"), ValueError("bad json"), http.client.IncompleteRead(b"x"),
+                    http.client.HTTPException("bad status line")):
+            with self.subTest(err=err):
+                view = self.updater(FakeGitHub(fail=err)).update(manual=False)
+                self.assertEqual((view["error"], view["latest"], self.spawned), (str(err), None, []))
+        u = self.updater(FakeGitHub(master="<html>"))
+        u.save({"channel": "beta"})
+        self.assertEqual(u.check()["error"], "GitHub did not answer with a commit")
+        u = self.updater(FakeGitHub(tags=[{"name": "v1.0.0", "commit": {"sha": "../../evil"}}]))
+        u.save({"channel": "stable"})
+        self.assertEqual(u.check()["error"], "GitHub did not answer with a commit for v1.0.0")
+        self.assertFalse(any("/compare/" in url for url, _ in self.github.calls))
+
+    def test_a_failed_installer_is_reported_and_frees_the_update_button(self):
+        class Proc:
+            code = None
+            def poll(self):
+                return self.code
+            returncode = property(lambda self: self.code)
+        procs = []
+
+        def spawn(*a):
+            self.spawned.append(a)
+            a[3].write_text("==> Downloading x\n\x1b[31mbrewdash: building the app failed.\x1b[0m\n\n")
+            procs.append(Proc())
+            return procs[-1]
+        u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}), spawn=spawn)
+        self.state.mkdir()
+        self.assertIsNotNone(u.update(manual=True)["started"])
+        self.assertIsNotNone(u.update(manual=True)["started"])
+        self.assertEqual(len(self.spawned), 1, "a second click spawned a second installer while the first runs")
+        procs[0].code = 1
+        view = u.view()
+        self.assertEqual((view["started"], view["error"]), (None, "install.sh stopped: brewdash: building the app failed."))
+        self.assertIsNotNone(u.update(manual=True)["started"])
+        self.assertEqual(len(self.spawned), 2)
+
+    def test_an_update_already_under_way_is_not_started_again(self):
+        u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}))
+        with u.installing:
+            view = u.update(manual=True)
+        self.assertEqual((view["started"], self.spawned, self.github.calls), (None, [], []))
+
+    def test_the_hourly_check_outlives_a_failure(self):
+        with mock.patch.object(brewdash, "UPDATE_FIRST_CHECK_SECONDS", 0), \
+                mock.patch.object(brewdash, "UPDATE_CHECK_SECONDS", 0.05):
+            u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}),
+                             root=Path("/Applications/Mine.app/Contents/Resources/brewdash"))
+            u.run_hourly()
+            wait_for(lambda: "install.sh replaces brewdash.app" in (u.view()["error"] or ""))
+            rounds = lambda: sum("/tags" in url for url, _ in self.github.calls)
+            wait_for(lambda: rounds() >= 3)
+            self.assertEqual(self.spawned, [])
+
+    def test_auto_installs_only_newer_and_a_click_also_goes_back_or_aside(self):
+        log = str(self.state / "update.log")
+        for status, auto, manual in (("ahead", True, True), ("behind", False, True), ("diverged", False, True),
+                                     ("identical", False, False)):
+            for is_manual, want in ((False, auto), (True, manual)):
+                with self.subTest(status=status, manual=is_manual):
+                    self.spawned.clear()
+                    view = self.updater(FakeGitHub(compare={SHA_B: status})).update(manual=is_manual)
+                    self.assertEqual(self.spawned, [(APP_ROOT / "install.sh", "v0.10.0", Path("/Applications"),
+                                                     Path(log))] if want else [])
+                    self.assertEqual(view["started"] is not None, want)
+
+    def test_beta_installs_masters_commit_by_sha(self):
+        u = self.updater(FakeGitHub(compare={SHA_C: "ahead"}))
+        u.save({"channel": "beta"})
+        u.update(manual=False)
+        self.assertEqual([a[1] for a in self.spawned], [SHA_C])
+
+    def test_update_refuses_a_checkout_and_an_app_with_another_name(self):
+        with self.assertRaises(ValueError):
+            brewdash.Updater(self.state, None).update(manual=True)
+        with self.assertRaises(ValueError):
+            brewdash.Updater(self.state, None).check()
+        u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}), root=Path("/Applications/Mine.app/Contents/Resources/brewdash"))
+        with self.assertRaises(ValueError):
+            u.update(manual=True)
+        self.assertEqual(self.spawned, [])
+
+    def test_an_installer_that_cannot_start_is_reported(self):
+        def boom(*a):
+            raise OSError("no bash")
+        view = self.updater(FakeGitHub(compare={SHA_B: "ahead"}), spawn=boom).update(manual=True)
+        self.assertEqual((view["started"], view["error"]), (None, "could not start install.sh: no bash"))
+
+    def test_hourly_check_installs_newer_when_auto_is_on_and_stays_off_for_a_checkout(self):
+        with mock.patch.object(brewdash, "UPDATE_FIRST_CHECK_SECONDS", 0), \
+                mock.patch.object(brewdash, "UPDATE_CHECK_SECONDS", 0.05):
+            off = self.updater(FakeGitHub(compare={SHA_B: "ahead"}))
+            off.save({"auto": False})
+            off.run_hourly()
+            checkout = brewdash.Updater(self.state, None, fetch=lambda *a: self.fail("a checkout asked GitHub"))
+            with mock.patch.object(threading, "Thread", side_effect=lambda **kw: self.fail("thread for a checkout")):
+                checkout.run_hourly()
+            time.sleep(0.2)
+            self.assertEqual(self.spawned, [])
+            off.save({"auto": True})
+            wait_for(lambda: self.spawned)
+            self.assertEqual(self.spawned[0][1], "v0.10.0")
+
+    def test_spawn_installer_runs_it_detached_with_the_ref_and_app_dir(self):
+        d = Path(self.tmp.name)
+        installer = d / "install.sh"
+        installer.write_text('echo "$BREWDASH_REF $BREWDASH_APP_DIR $$ $(ps -o pgid= -p $$ | tr -d " ") stdin:$(cat)"\n')
+        proc = brewdash.spawn_installer(installer, "v1.2.3", "/Apps", d / "update.log")
+        self.assertEqual(proc.wait(timeout=10), 0)
+        out = wait_for(lambda: (d / "update.log").read_text().strip())
+        ref, app_dir, pid, pgid, stdin = out.split(" ")
+        self.assertEqual((ref, app_dir, stdin), ("v1.2.3", "/Apps", "stdin:"))
+        self.assertEqual(pgid, pid)
+        self.assertNotEqual(int(pgid), os.getpgrp())
+
+    def test_main_starts_the_hourly_check_on_the_updater_it_serves(self):
+        server = mock.Mock()
+        with mock.patch.object(brewdash, "serve", return_value=(server, "http://x", "t")) as serve, \
+                mock.patch.object(brewdash, "Updater") as updater, \
+                mock.patch.object(brewdash, "read_installed", return_value={"sha": SHA_A, "tag": None}), \
+                mock.patch.object(sys, "argv", ["brewdash", "--no-browser"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            brewdash.main()
+        updater.assert_called_once_with(brewdash.STATE_DIR, {"sha": SHA_A, "tag": None})
+        self.assertIs(serve.call_args.kwargs["updater"], updater.return_value)
+        updater.return_value.run_hourly.assert_called_once_with()
+
+
 class ServerWiringTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1357,6 +1589,19 @@ class ServerWiringTest(unittest.TestCase):
         for f in files:
             r, data = self.request("GET", "/" + f.relative_to(brewdash.WEB).as_posix(), token=False, response=True)
             self.assertEqual((r.status, r.getheader("Content-Type"), data), (200, types[f.suffix], f.read_bytes()), f)
+
+    def test_a_checkout_serves_its_settings_and_refuses_to_update_itself(self):
+        status, data = self.request("GET", "/api/settings")
+        self.assertEqual((status, json.loads(data)["installed"], json.loads(data)["channel"]), (200, None, "stable"))
+        status, data = self.request("POST", "/api/settings", {"auto": False})
+        self.assertEqual((status, json.loads(data)["auto"]), (200, False))
+        self.assertEqual(json.loads(self.request("GET", "/api/settings")[1])["auto"], False)
+        for op in ("check", "now", "later"):
+            with self.subTest(op=op):
+                status, data = self.request("POST", "/api/update", {"op": op})
+                self.assertEqual(status, 400)
+        self.assertIn("no version.json from install.sh", json.loads(self.request("POST", "/api/update", {"op": "now"})[1])["error"])
+        self.assertEqual(self.request("GET", "/api/settings", token=False)[0], 403)
 
     def test_api_rejects_missing_token_and_foreign_host(self):
         self.assertEqual(self.request("GET", "/api/state", token=False)[0], 403)

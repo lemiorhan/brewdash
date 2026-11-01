@@ -24,7 +24,7 @@ const S = {
 };
 
 const TABS = ["overview", "requested", "deps", "casks", "services", "taps", "health", "security", "apps", "shell", "history",
-  "install", "export", "contact"];
+  "install", "export", "settings"];
 const tabLabel = (k) => t("tab." + k);
 
 // ---------- formatting ----------
@@ -401,8 +401,48 @@ function renderServices() {
 
 const REPO = "https://github.com/lemiorhan/brewdash";
 
-function renderContact() {
-  $("#content").innerHTML = `<div class="card contact"><h3>brewdash</h3><table><tbody>
+// brewdash.py's CHANNELS and the values of its RELATION.
+const CHANNELS = ["stable", "beta"];
+const RELATIONS = ["same", "newer", "older", "diverged"];
+const versionName = (v) => v ? v.tag || v.sha.slice(0, 7) : "";
+
+async function loadSettings(req) {
+  try { S.settings = await (req ? api(req.path, req.body) : api("/api/settings")); }
+  catch (e) { S.settings = { ...(S.settings || {}), error: e.message }; }
+  if (S.tab !== "settings") return;
+  renderView();
+  // A failed install.sh leaves the server running; asking again is how the page learns it stopped.
+  if (S.settings.started && !S.settingsPoll) S.settingsPoll = setTimeout(() => { S.settingsPoll = null; loadSettings(); }, 3000);
+}
+
+function updatesCard(u) {
+  if (!u) return `<p class="loading">${t("settings.reading")}</p>`;
+  if (!u.installed) return u.error ? `<div class="warn">${esc(u.error)}</div>` : `<div class="info">${t("settings.not_installed")}</div>`;
+  const latest = versionName(u.latest);
+  const status = u.error ? `<div class="warn">${esc(u.error)}</div>`
+    : u.started ? `<div class="info">${t("settings.started", { version: esc(latest) })}</div>`
+    : !u.checked ? ""
+    : !u.latest ? `<p class="muted">${t("settings.no_stable")}</p>`
+    : !RELATIONS.includes(u.relation) ? ""
+    : `<p>${t("settings.rel." + u.relation, { version: `<b class="mono">${esc(latest)}</b>` })}</p>`;
+  const canUpdate = !u.started && ["newer", "older", "diverged"].includes(u.relation);
+  const radio = (ch) => `<label class="choice"><input type="radio" name="channel" data-channel="${ch}" ${u.channel === ch ? "checked" : ""}>
+    <b>${t("settings.channel." + ch)}</b> <span class="muted">${t("settings.channel." + ch + "_help")}</span></label>`;
+  return `<table><tbody>
+      <tr><td>${t("settings.installed")}</td><td class="mono">${esc(versionName(u.installed))}</td></tr>
+      <tr><td>${t("settings.channel")}</td><td>${CHANNELS.map(radio).join("<br>")}</td></tr>
+      <tr><td>${t("settings.auto")}</td><td><label class="choice"><input type="checkbox" data-auto ${u.auto ? "checked" : ""}> <span class="muted">${t("settings.auto_help")}</span></label></td></tr>
+      <tr><td>${t("settings.checked")}</td><td>${fmtAgo(u.checked)}</td></tr>
+    </tbody></table>
+    ${status}
+    <div class="btnrow"><button data-update="check">${t("settings.check")}</button>
+      <button class="accent" data-update="now" ${canUpdate ? "" : "disabled"}>${u.relation === "older" ? t("settings.go_back", { version: esc(latest) }) : t("settings.update", { version: esc(latest) })}</button></div>`;
+}
+
+function renderSettings() {
+  if (S.settings === undefined) { S.settings = null; loadSettings(); }
+  $("#content").innerHTML = `<div class="card settings"><h3>${t("settings.updates")}</h3>${updatesCard(S.settings)}</div>
+    <div class="card contact"><h3>brewdash</h3><table><tbody>
     <tr><td>${t("contact.author")}</td><td>Lemi Orhan Ergin · ${link("https://github.com/lemiorhan")}</td></tr>
     <tr><td>${t("contact.source")}</td><td>${link(REPO)}</td></tr>
     <tr><td>${t("contact.bugs")}</td><td>${link(REPO + "/issues")}</td></tr>
@@ -1089,10 +1129,10 @@ function hero() {
 
 function renderView() {
   renderIntro();
-  if (S.tab !== "contact" && !S.snap?.model) { $("#content").innerHTML = `<p class="loading">${S.snap?.error ? t("view.failed") : t("view.reading")}</p>`; return; }
+  if (S.tab !== "settings" && !S.snap?.model) { $("#content").innerHTML = `<p class="loading">${S.snap?.error ? t("view.failed") : t("view.reading")}</p>`; return; }
   if (PKG_TABS[S.tab]) renderPackages();
   else ({ overview: renderOverview, services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall,
-    apps: renderApps, shell: renderShell, export: renderExport, security: renderSecurity, contact: renderContact })[S.tab]();
+    apps: renderApps, shell: renderShell, export: renderExport, security: renderSecurity, settings: renderSettings })[S.tab]();
 }
 
 function renderAll() {
@@ -1137,6 +1177,9 @@ document.addEventListener("click", (e) => {
   }
   if (d("unlist")) { const [type, ...n] = d("unlist").split(":"); loadList({ op: "remove", items: [{ type, name: n.join(":") }] }); return; }
   if (d("adopt")) { confirmAction({ action: "adopt", app: d("adopt") }); return; }
+  if (t.matches("[data-channel]")) { loadSettings({ path: "/api/settings", body: { channel: t.dataset.channel } }); return; }
+  if (t.matches("[data-auto]")) { loadSettings({ path: "/api/settings", body: { auto: t.checked } }); return; }
+  if (d("update")) { loadSettings({ path: "/api/update", body: { op: d("update") } }); return; }
   if (d("trash")) { confirmAction({ action: "trash", app: d("trash") }); return; }
   if (d("uninstall")) { act("uninstall", [d("uninstall")]); return; }
   if (d("findcask")) { S.tab = "install"; renderTabs(); renderView(); $("#search-q").value = d("findcask"); doSearch(); return; }

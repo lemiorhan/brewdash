@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1250,9 +1251,185 @@ class ExportList:
             return keep
 
 
+# ---------- self update ----------
+
+GITHUB_API = "https://api.github.com/repos/lemiorhan/brewdash"
+TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+CHANNELS = ("stable", "beta")
+DEFAULT_SETTINGS = {"channel": "stable", "auto": True}
+UPDATE_FIRST_CHECK_SECONDS = 60
+UPDATE_CHECK_SECONDS = 3600
+# GitHub's compare status, read as what the latest commit is to the installed one.
+RELATION = {"ahead": "newer", "behind": "older", "identical": "same", "diverged": "diverged"}
+
+
+def read_installed(root=ROOT):
+    """The commit (and tag) install.sh built this copy from, or None for a checkout, which does not update itself."""
+    try:
+        v = json.loads((Path(root) / "version.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(v, dict) or not SHA_RE.match(str(v.get("sha"))):
+        return None
+    tag = v.get("tag")
+    return {"sha": v["sha"], "tag": tag if isinstance(tag, str) and TAG_RE.match(tag) else None}
+
+
+def github_fetch(url, accept="application/vnd.github+json"):
+    req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "brewdash"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return r.read().decode()
+
+
+def spawn_installer(installer, ref, app_dir, log):
+    # Its own session: install.sh quits the app, and this server with it, before it replaces the app.
+    with open(log, "w") as out:
+        return subprocess.Popen(["/bin/bash", str(installer)],
+                                env={**os.environ, "BREWDASH_REF": ref, "BREWDASH_APP_DIR": str(app_dir)},
+                                stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+
+
+def last_line(path):
+    try:
+        lines = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", Path(path).read_text(errors="replace")).splitlines() if ln.strip()]
+    except OSError:
+        return ""
+    return lines[-1].strip() if lines else ""
+
+
+class Updater:
+    def __init__(self, state_dir, installed, root=ROOT, fetch=github_fetch, spawn=spawn_installer):
+        self.state_dir = Path(state_dir)
+        self.path = self.state_dir / "settings.json"
+        self.installed = installed
+        self.root = Path(root)
+        self.fetch, self.spawn = fetch, spawn
+        self.lock = threading.Lock()
+        self.installing = threading.Lock()
+        self.installer = None
+        self.status = {"latest": None, "relation": None, "checked": None, "error": None, "started": None}
+
+    def settings(self):
+        try:
+            saved = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            saved = {}
+        s = dict(DEFAULT_SETTINGS)
+        if isinstance(saved, dict):
+            if saved.get("channel") in CHANNELS:
+                s["channel"] = saved["channel"]
+            if isinstance(saved.get("auto"), bool):
+                s["auto"] = saved["auto"]
+        return s
+
+    def save(self, req):
+        s = self.settings()
+        if "channel" in req:
+            if req["channel"] not in CHANNELS:
+                raise ValueError("channel must be stable or beta")
+            s["channel"] = req["channel"]
+        if "auto" in req:
+            if not isinstance(req["auto"], bool):
+                raise ValueError("auto must be true or false")
+            s["auto"] = req["auto"]
+        changed = s["channel"] != self.settings()["channel"]
+        self.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(s))
+        if changed:
+            with self.lock:
+                self.status.update(latest=None, relation=None, checked=None)
+        return self.view()
+
+    def view(self):
+        with self.lock:
+            # install.sh quits this server once it has built the new app, so an installer that ended while the
+            # server still runs has failed.
+            if self.installer is not None and self.installer.poll() is not None:
+                code, self.installer = self.installer.returncode, None
+                why = last_line(self.state_dir / "update.log") or f"exit status {code}"
+                self.status.update(started=None, error=f"install.sh stopped: {why}")
+            return {**self.settings(), "installed": self.installed, **self.status}
+
+    def latest(self, channel):
+        """The commit `channel` is at: master's head for beta, the highest vX.Y.Z tag for stable (None if no tag)."""
+        if channel == "beta":
+            sha = self.fetch(f"{GITHUB_API}/commits/master", "application/vnd.github.sha").strip()
+            if not SHA_RE.match(sha):
+                raise ValueError("GitHub did not answer with a commit")
+            return {"sha": sha, "tag": None}
+        tags = [(tuple(map(int, m.groups())), t) for t in json.loads(self.fetch(f"{GITHUB_API}/tags?per_page=100"))
+                if isinstance(t, dict) and (m := TAG_RE.match(str(t.get("name"))))]
+        if not tags:
+            return None
+        tag = max(tags, key=lambda vt: vt[0])[1]
+        if not SHA_RE.match(str(tag["commit"]["sha"])):
+            raise ValueError(f"GitHub did not answer with a commit for {tag['name']}")
+        return {"sha": tag["commit"]["sha"], "tag": tag["name"]}
+
+    def check(self):
+        if not self.installed:
+            raise ValueError("this copy has no version.json from install.sh, so it does not update itself")
+        try:
+            target = self.latest(self.settings()["channel"])
+            if not target or target["sha"] == self.installed["sha"]:
+                rel = "same" if target else None
+            else:
+                cmp = json.loads(self.fetch(f"{GITHUB_API}/compare/{self.installed['sha']}...{target['sha']}"))
+                rel = RELATION.get(cmp.get("status"), "diverged")
+            err = None
+        except Exception as e:  # urllib raises OSError, but http.client's IncompleteRead and HTTPException are not
+            target, rel, err = None, None, str(e) or type(e).__name__
+        with self.lock:
+            self.status.update(latest=target, relation=rel, checked=time.time(), error=err)
+        return self.view()
+
+    def update(self, manual):
+        """Install the channel's latest commit. Only a click goes back to an older or a side commit."""
+        # Two installers at once would both swap brewdash.app; one can land inside the other.
+        if not self.installing.acquire(blocking=False):
+            return self.view()
+        try:
+            if self.view()["started"]:
+                return self.view()
+            view = self.check()
+            rel = view["relation"]
+            if rel == "newer" or (manual and rel in ("older", "diverged")):
+                app = self.root.parents[2]
+                if app.name != "brewdash.app":
+                    raise ValueError(f"install.sh replaces brewdash.app, but this copy runs from {app}")
+                target = view["latest"]
+                try:
+                    proc = self.spawn(self.root / "install.sh", target["tag"] or target["sha"], app.parent,
+                                      self.state_dir / "update.log")
+                    started, err = time.time(), None
+                except OSError as e:
+                    proc, started, err = None, None, f"could not start install.sh: {e}"
+                with self.lock:
+                    self.installer = proc
+                    self.status.update(started=started, error=err)
+            return self.view()
+        finally:
+            self.installing.release()
+
+    def run_hourly(self):
+        def loop():
+            time.sleep(UPDATE_FIRST_CHECK_SECONDS)
+            while True:
+                if self.settings()["auto"]:
+                    try:
+                        self.update(manual=False)
+                    except Exception as e:  # the loop must outlive any one failure, or updates stop until a restart
+                        with self.lock:
+                            self.status.update(error=str(e) or type(e).__name__)
+                time.sleep(UPDATE_CHECK_SECONDS)
+        if self.installed:
+            threading.Thread(target=loop, daemon=True).start()
+
+
 # ---------- http ----------
 
-def make_handler(store, runner, brew, token, port_ref, export):
+def make_handler(store, runner, brew, token, port_ref, export, updater):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -1295,6 +1472,8 @@ def make_handler(store, runner, brew, token, port_ref, export):
                     return self._send(200, runner.view(open_ids))
                 if path == "/api/history":
                     return self._send(200, runner.history())
+                if path == "/api/settings":
+                    return self._send(200, updater.view())
                 if path == "/api/search":
                     return self._send(200, search(brew, qs.get("q", [""])[0], store.by_id()))
                 if path == "/api/preview":
@@ -1317,6 +1496,14 @@ def make_handler(store, runner, brew, token, port_ref, export):
                 if path == "/api/refresh":
                     threading.Thread(target=store.refresh, daemon=True).start()
                     return self._send(202, {"ok": True})
+                if path == "/api/settings":
+                    return self._send(200, updater.save(body))
+                if path == "/api/update":
+                    if body.get("op") == "check":
+                        return self._send(200, updater.check())
+                    if body.get("op") == "now":
+                        return self._send(200, updater.update(manual=True))
+                    raise ValueError("op must be check or now")
                 if path == "/api/impact":
                     pkgs = store.by_id()
                     return self._send(200, removal_impact(pkgs, check_targets(body.get("targets"), pkgs)))
@@ -1360,14 +1547,15 @@ def make_handler(store, runner, brew, token, port_ref, export):
 
 
 def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True, home=None, app_dirs=None,
-          sysrun=run_command):
+          sysrun=run_command, updater=None):
     brew = brew or Brew(askpass=write_askpass(state_dir))
+    updater = updater or Updater(state_dir, read_installed())
     store = Store(brew, home, app_dirs, sysrun)
     runner = Runner(brew, store, state_dir)
     token = secrets.token_urlsafe(24)
     port_ref = [port]
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, runner, brew, token, port_ref,
-                                                                   ExportList(state_dir)))
+                                                                   ExportList(state_dir), updater))
     port_ref[0] = server.server_address[1]
     if refresh:
         threading.Thread(target=store.refresh, daemon=True).start()
@@ -1397,7 +1585,9 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--parent", type=int, metavar="PID", help="stop when the process with this PID exits")
     args = ap.parse_args()
-    server, url, _ = serve(args.port)
+    updater = Updater(STATE_DIR, read_installed())
+    server, url, _ = serve(args.port, updater=updater)
+    updater.run_hourly()
     if args.parent:
         stop_with(args.parent, server)
     print(f"brewdash running at {url}\nCtrl+C to stop.", flush=True)

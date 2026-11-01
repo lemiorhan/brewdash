@@ -15,7 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import brewdash  # noqa: E402
-from test_brewdash import APP_CASKS, FakeBrew, cask, formula, make_app, wait_for  # noqa: E402
+from test_brewdash import (APP_CASKS, APP_ROOT, SHA_A, SHA_B, SHA_C, FakeBrew, FakeGitHub, cask, formula,  # noqa: E402
+                           make_app, wait_for)
 
 try:
     from playwright.sync_api import sync_playwright
@@ -74,7 +75,28 @@ REPORT = {"schema": 1, "generated_at": "2026-11-01T09:00:00", "alerts": [
 ]}
 
 
+class Installer:
+    """A spawned install.sh that runs until the test sets its exit status."""
+    returncode = None
+
+    def poll(self):
+        return self.returncode
+
+
 class UiFixture(unittest.TestCase):
+    spawned = []
+    installers = []
+
+    @classmethod
+    def updater(cls, state):
+        github = FakeGitHub(compare={SHA_B: "ahead", SHA_C: "ahead"})
+
+        def spawn(*a):
+            cls.spawned.append(a)
+            cls.installers.append(Installer())
+            return cls.installers[-1]
+        return brewdash.Updater(state, {"sha": SHA_A, "tag": "v0.9.0"}, root=APP_ROOT, fetch=github, spawn=spawn)
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
@@ -94,7 +116,7 @@ class UiFixture(unittest.TestCase):
         cls.brew = UiBrew(info=INFO, cache=str(root / "cache"), casks=APP_CASKS, prefix=str(root / "prefix"))
         cls.server, cls.url, _ = brewdash.serve(port=0, open_browser=False, brew=cls.brew, state_dir=str(root / "state"),
                                                 home=str(root / "home"), app_dirs=[str(root / "Applications")],
-                                                sysrun=ui_sysrun)
+                                                sysrun=ui_sysrun, updater=cls.updater(root / "state"))
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.pw = sync_playwright().start()
         cls.browser = cls.pw.chromium.launch()
@@ -866,16 +888,55 @@ class UiSmokeTest(UiFixture):
             self.assertEqual(self.page.inner_text("#intro h2"), self.page.inner_text(f'nav button[data-tab="{tab}"]').split("\n")[0].rstrip("0123456789"))
             self.assertIn("What to do:", intro, tab)
 
-    def test_contact_page_names_the_author_and_links_the_repo(self):
-        self.tab("contact")
+    def test_settings_page_names_the_author_and_links_the_repo(self):
+        self.tab("settings")
         self.assertIn("Lemi Orhan Ergin", self.page.inner_text("#content"))
         hrefs = self.page.eval_on_selector_all("#content a", "as => as.map(a => a.href)")
         self.assertEqual(hrefs, ["https://github.com/lemiorhan", "https://github.com/lemiorhan/brewdash",
                                  "https://github.com/lemiorhan/brewdash/issues",
                                  "https://github.com/lemiorhan/brewdash/security/advisories/new"])
 
-    def test_contact_page_shows_while_brew_cannot_be_read(self):
-        self.page.evaluate("S.snap = { error: 'boom' }; S.tab = 'contact'; renderView()")
+    def test_settings_page_switches_channel_and_auto_and_updates_on_a_click(self):
+        self.page.evaluate("S.settings = undefined")
+        self.page.click('nav button[data-tab="settings"]')
+        self.page.click('[data-channel="stable"]')
+        self.page.wait_for_selector('[data-channel="stable"]:checked')
+        cell = lambda name: self.page.locator(f'#content tr:has(td:text-is("{name}")) td').nth(1)
+        self.assertEqual((cell("Installed").inner_text(), cell("Last checked").inner_text()), ("v0.9.0", "never"))
+        self.assertTrue(self.page.is_disabled('[data-update="now"]'))
+        self.page.click('[data-update="check"]')
+        self.page.wait_for_selector('#content p:has-text("is available")')
+        self.assertEqual(self.page.inner_text('#content p:has-text("is available")'), "v0.10.0 is available.")
+        self.assertEqual(self.page.inner_text('[data-update="now"]'), "Update to v0.10.0")
+        self.page.click('[data-channel="beta"]')
+        self.page.wait_for_selector('[data-update="now"]:disabled')
+        self.assertEqual(cell("Last checked").inner_text(), "never")
+        self.assertNotIn("There is no stable release yet.", self.page.inner_text("#content"))
+        self.page.click('[data-update="check"]')
+        self.page.wait_for_selector(f'[data-update="now"]:text-is("Update to {SHA_C[:7]}"):enabled')
+        self.page.uncheck("[data-auto]")
+        self.page.wait_for_selector("[data-auto]:not(:checked)")
+        self.assertEqual(json.loads((Path(self.tmp.name) / "state" / "settings.json").read_text()),
+                         {"channel": "beta", "auto": False})
+        self.spawned.clear()
+        self.page.click('[data-update="now"]')
+        self.page.wait_for_selector("#content .info")
+        self.assertEqual(self.page.inner_text("#content .info"),
+                         f"Installing {SHA_C[:7]}. brewdash quits and opens again when it is done.")
+        self.assertEqual([a[1] for a in self.spawned], [SHA_C])
+        self.assertTrue(self.page.is_disabled('[data-update="now"]'))
+        self.installers[-1].returncode = 1
+        self.page.wait_for_selector('#content .warn:has-text("install.sh stopped")', timeout=10000)
+        self.assertTrue(self.page.is_enabled('[data-update="now"]'))
+
+    def test_a_copy_without_a_version_says_how_to_get_updates(self):
+        self.page.click('nav button[data-tab="settings"]')
+        self.page.evaluate("S.settings = { installed: null }; renderView()")
+        self.assertIn("Run install.sh once more to get updates.", self.page.inner_text("#content .info"))
+        self.assertEqual(self.page.locator("[data-update], [data-channel], [data-auto]").count(), 0)
+
+    def test_settings_page_shows_while_brew_cannot_be_read(self):
+        self.page.evaluate("S.snap = { error: 'boom' }; S.tab = 'settings'; renderView()")
         self.assertIn("github.com/lemiorhan/brewdash", self.page.inner_text("#content"))
 
     def test_theme_button_cycles_and_is_remembered(self):
@@ -971,7 +1032,10 @@ class I18nTest(UiFixture):
             "sig.": re.findall(r'\{"kind": "(\w+)", "signer"', server),
             "source.": list(source_kinds.groups()) if source_kinds else [],
             "issue.": re.findall(r'advice = "(\w+)", ', server),
+            "settings.channel.": [c + s for c in js("CHANNELS") for s in ("", "_help")],
+            "settings.rel.": js("RELATIONS"),
         }
+        self.assertEqual((js("CHANNELS"), set(js("RELATIONS"))), (list(brewdash.CHANNELS), set(brewdash.RELATION.values())))
         self.assertEqual(prefixes, set(domains))
         en = self.keys("en")
         for prefix, values in domains.items():

@@ -6,12 +6,13 @@
 #   curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall
 #
 # BREWDASH_APP_DIR   where the app goes; default /Applications if you can write to it, else ~/Applications
-# BREWDASH_REF       branch to install; default master
-# BREWDASH_TARBALL   a source archive URL to install from instead (file:// works)
+# BREWDASH_REF       tag, branch or commit to install; default the highest vX.Y.Z tag, or master if there is none
+# BREWDASH_TARBALL   a source archive URL to install from instead (file:// works); that app does not update itself
 # BREWDASH_NO_OPEN   set to install without starting the app
 set -euo pipefail
 
 REPO="lemiorhan/brewdash"
+API="https://api.github.com/repos/$REPO"
 BUNDLE_ID="io.github.lemiorhan.brewdash"
 work=""
 
@@ -40,6 +41,22 @@ quit_running() {
   fi
 }
 
+# The stable channel: the highest vX.Y.Z tag, or nothing.
+latest_tag() {
+  curl -fsSL "$API/tags?per_page=100" | python3 -c '
+import json, re, sys
+tags = [t["name"] for t in json.load(sys.stdin) if re.match(r"^v[0-9]+[.][0-9]+[.][0-9]+$", t.get("name", ""))]
+print(max(tags, key=lambda n: tuple(map(int, n[1:].split(".")))) if tags else "")'
+}
+
+# What the app's version.json says, so the app can tell whether GitHub has something newer.
+version_json() {
+  local ref="$1" sha
+  sha="$(curl -fsSL -H "Accept: application/vnd.github.sha" "$API/commits/$ref")" || fail "GitHub does not know $ref."
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub did not answer with a commit for $ref."
+  python3 -c 'import json, re, sys; print(json.dumps({"sha": sys.argv[1], "tag": sys.argv[2] if re.match(r"^v[0-9]+[.][0-9]+[.][0-9]+$", sys.argv[2]) else None}))' "$sha" "$ref"
+}
+
 main() {
   [ "$(uname -s)" = Darwin ] || fail "brewdash runs on macOS only."
   local app
@@ -62,13 +79,24 @@ main() {
 
   work="$(mktemp -d)"
   trap 'rm -rf "$work"' EXIT
-  local tarball="${BREWDASH_TARBALL:-https://github.com/$REPO/archive/refs/heads/${BREWDASH_REF:-master}.tar.gz}"
+  local tarball version=""
+  if [ -n "${BREWDASH_TARBALL:-}" ]; then
+    tarball="$BREWDASH_TARBALL"
+  else
+    local ref="${BREWDASH_REF:-}"
+    if [ -z "$ref" ]; then
+      ref="$(latest_tag)" || fail "could not read brewdash's tags from GitHub."
+      ref="${ref:-master}"
+    fi
+    version="$(version_json "$ref")"
+    tarball="https://github.com/$REPO/archive/$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["sha"])' "$version").tar.gz"
+  fi
   say "Downloading $tarball"
   mkdir "$work/src"
   curl -fsSL "$tarball" | tar -xz -C "$work/src" --strip-components=1
   say "Building brewdash.app"
   local log
-  if ! log="$(bash "$work/src/macos/build-app.sh" "$work/src" "$work/brewdash.app" 2>&1)"; then
+  if ! log="$(BREWDASH_VERSION="$version" bash "$work/src/macos/build-app.sh" "$work/src" "$work/brewdash.app" 2>&1)"; then
     printf '%s\n' "$log" >&2
     fail "building the app failed."
   fi
@@ -81,4 +109,5 @@ main() {
   [ -n "${BREWDASH_NO_OPEN:-}" ] || open "$app"
 }
 
-main "$@"
+# Tests read the functions above without installing anything.
+[ -n "${BREWDASH_SOURCE_ONLY:-}" ] || main "$@"

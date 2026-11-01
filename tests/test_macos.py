@@ -2,6 +2,7 @@
 
 Nothing here touches /Applications, ~/.local/state or a running brewdash.app.
 """
+import json
 import os
 import plistlib
 import shutil
@@ -198,6 +199,113 @@ class InstallScriptTest(unittest.TestCase):
     @unittest.skipUnless(has_brew(), "install.sh checks for Homebrew before the app")
     def test_install_does_not_replace_an_app_with_another_bundle_id(self):
         self.assert_refused()
+
+
+@unittest.skipUnless(sys.platform == "darwin", "build-app.sh is macOS only")
+class BuildAppTest(unittest.TestCase):
+    def build(self, **env):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        app = Path(tmp.name) / "brewdash.app"
+        r = subprocess.run(["/bin/bash", str(ROOT / "macos" / "build-app.sh"), str(ROOT), str(app)],
+                           env={k: v for k, v in {**os.environ, **env}.items() if v is not None}, capture_output=True,
+                           text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return app, app / "Contents" / "Resources" / "brewdash"
+
+    def test_the_version_install_sh_passes_is_sealed_into_the_bundle_with_the_installer(self):
+        version = '{"sha": "' + "a" * 40 + '", "tag": "v1.2.3"}'
+        app, res = self.build(BREWDASH_VERSION=version)
+        self.assertEqual((res / "version.json").read_text(), version + "\n")
+        self.assertEqual((res / "install.sh").read_bytes(), (ROOT / "install.sh").read_bytes())
+        verify = subprocess.run(["codesign", "--verify", "--strict", str(app)], capture_output=True, text=True)
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+
+    def test_a_build_without_a_version_has_no_version_file(self):
+        _, res = self.build(BREWDASH_VERSION=None)
+        self.assertFalse((res / "version.json").exists())
+        self.assertTrue((res / "install.sh").exists())
+
+
+@unittest.skipUnless(sys.platform == "darwin", "install.sh is macOS only")
+class InstallRefTest(unittest.TestCase):
+    """install.sh's ref and version helpers, with curl answered by a shell function."""
+    CURL = """curl() {{ case "$*" in
+  *"/tags?per_page=100") printf '%s' '{tags}' ;;
+  *"vnd.github.sha"*"/commits/"*) printf '%s' '{sha}' ;;
+  *) return 22 ;;
+esac; }}
+"""
+
+    def run_sh(self, call, tags="[]", sha="a" * 40):
+        script = f'source "{ROOT / "install.sh"}"\n' + self.CURL.format(tags=tags, sha=sha) + call
+        return subprocess.run(["/bin/bash", "-c", script], env=dict(os.environ, BREWDASH_SOURCE_ONLY="1"),
+                              capture_output=True, text=True, timeout=30)
+
+    def test_latest_tag_is_the_highest_vxyz_by_number(self):
+        tags = '[{"name": "v0.9.0"}, {"name": "v0.10.0"}, {"name": "v2.0"}, {"name": "nightly"}]'
+        self.assertEqual(self.run_sh("latest_tag", tags=tags).stdout, "v0.10.0\n")
+        self.assertEqual(self.run_sh("latest_tag", tags='[{"name": "nightly"}]').stdout, "\n")
+
+    def test_version_json_names_the_commit_and_only_a_vxyz_tag(self):
+        self.assertEqual(json.loads(self.run_sh("version_json v1.2.3").stdout), {"sha": "a" * 40, "tag": "v1.2.3"})
+        self.assertEqual(json.loads(self.run_sh("version_json master").stdout), {"sha": "a" * 40, "tag": None})
+
+    def test_version_json_refuses_an_answer_that_is_not_a_commit(self):
+        r = self.run_sh("version_json master", sha="<html>")
+        self.assertEqual((r.returncode, r.stdout), (1, ""))
+        self.assertIn("GitHub did not answer with a commit for master", r.stderr)
+
+
+@unittest.skipUnless(sys.platform == "darwin" and has_brew(), "install.sh is macOS only and checks for Homebrew")
+class InstallFromGitHubTest(unittest.TestCase):
+    """install.sh's main with GitHub answered by a shell function and a source archive whose build-app.sh only
+    records the version it was handed."""
+    SHA = "b" * 40
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        src = self.root / "brewdash-src" / "macos"
+        src.mkdir(parents=True)
+        (src / "build-app.sh").write_text('mkdir -p "$2"; printf %s "${BREWDASH_VERSION-unset}" > "$2/version"\n')
+        self.tarball = self.root / "src.tar.gz"
+        subprocess.run(["tar", "-czf", str(self.tarball), "-C", str(self.root), "brewdash-src"], check=True)
+        self.calls = self.root / "curl.log"
+
+    def install(self, tags, **env):
+        fake = f"""curl() {{ printf '%s\\n' "$*" >> "{self.calls}"; case "$*" in
+  *"/tags?per_page=100") printf '%s' '{tags}' ;;
+  *"vnd.github.sha"*"/commits/"*) printf '%s' '{self.SHA}' ;;
+  *"https://github.com/lemiorhan/brewdash/archive/{self.SHA}.tar.gz") cat "{self.tarball}" ;;
+  *) return 22 ;;
+esac; }}
+quit_running() {{ :; }}
+"""
+        script = f'source "{ROOT / "install.sh"}"\n{fake}main\n'
+        apps = self.root / "Applications"
+        r = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=60,
+                           env=dict(os.environ, BREWDASH_SOURCE_ONLY="1", BREWDASH_NO_OPEN="1",
+                                    BREWDASH_APP_DIR=str(apps), **env))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads((apps / "brewdash.app" / "version").read_text()), self.calls.read_text().splitlines()
+
+    def test_without_a_ref_it_installs_the_highest_tag_by_its_commit(self):
+        version, calls = self.install('[{"name": "v0.2.0"}, {"name": "v0.10.0"}]')
+        self.assertEqual(version, {"sha": self.SHA, "tag": "v0.10.0"})
+        self.assertTrue(any(c.endswith("/commits/v0.10.0") for c in calls), calls)
+
+    def test_without_a_tag_it_installs_master(self):
+        version, calls = self.install("[]")
+        self.assertEqual(version, {"sha": self.SHA, "tag": None})
+        self.assertTrue(any(c.endswith("/commits/master") for c in calls), calls)
+
+    def test_a_ref_skips_the_tags(self):
+        version, calls = self.install("[]", BREWDASH_REF="some-branch")
+        self.assertEqual(version, {"sha": self.SHA, "tag": None})
+        self.assertFalse(any("/tags" in c for c in calls), calls)
+        self.assertTrue(any(c.endswith("/commits/some-branch") for c in calls), calls)
 
 
 if __name__ == "__main__":

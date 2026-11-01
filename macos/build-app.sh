@@ -16,7 +16,9 @@ osacompile -s -o "$out" "$src/macos/brewdash.applescript"
 
 res="$out/Contents/Resources"
 mkdir "$res/brewdash"
-cp "$src/brewdash.py" "$src/macos/launch.sh" "$res/brewdash/"
+cp "$src/brewdash.py" "$src/macos/launch.sh" "$src/install.sh" "$res/brewdash/"
+# install.sh passes the commit it built, so the app can update itself; it must be in before codesign seals the bundle.
+[ -z "${BREWDASH_VERSION:-}" ] || printf '%s\n' "$BREWDASH_VERSION" >"$res/brewdash/version.json"
 cp -R "$src/web" "$res/brewdash/web"
 find "$res/brewdash/web" -name '.*' -type f -delete
 
