@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests on the Python macOS ships with
+        run: /usr/bin/python3 -m unittest tests.test_brewdash
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install chromium
+      - name: Unit and browser tests
+        run: python -m unittest discover -s tests

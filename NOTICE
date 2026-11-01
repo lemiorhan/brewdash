@@ -1,0 +1,8 @@
+brewdash
+Copyright 2026 Lemi Orhan Ergin
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes Cytoscape.js (web/vendor/cytoscape.min.js),
+Copyright (c) 2016-2026, The Cytoscape Consortium,
+licensed under the MIT License; the full notice is at the top of that file.
