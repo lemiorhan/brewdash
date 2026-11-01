@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import plistlib
 import queue
 import re
 import secrets
@@ -39,7 +40,7 @@ def _formula_record(f):
         "outdated": False, "pinned": f["pinned"], "requested": inst["installed_on_request"],
         "installed_time": inst.get("time"), "deprecated": f["deprecated"], "disabled": f["disabled"],
         "caveats": f.get("caveats"), "license": f.get("license"), "keg_only": f.get("keg_only", False),
-        "deps": [], "dependents": [], "missing_deps": [], "service": None, "orphan": False,
+        "deps": [], "dependents": [], "required_by": [], "missing_deps": [], "service": None, "orphan": False,
     }
 
 
@@ -53,7 +54,7 @@ def _cask_record(c):
         "deprecated": c["deprecated"], "disabled": c["disabled"], "caveats": c.get("caveats"),
         "license": None, "keg_only": False,
         "app_paths": [a["target"] for a in c.get("artifacts", []) if "app" in a and a.get("target")],
-        "deps": [], "dependents": [], "missing_deps": [], "service": None, "orphan": False,
+        "deps": [], "dependents": [], "required_by": [], "missing_deps": [], "service": None, "orphan": False,
     }
 
 
@@ -104,6 +105,16 @@ def build_model(info, outdated, services, taps, autoremove):
     for src, dst in sorted(edges):
         pkgs[src]["deps"].append(dst)
         pkgs[dst]["dependents"].append(src)
+    # brew uninstall refuses a formula that any installed formula lists among its runtime
+    # dependencies, indirect ones included (youtube-dl -> python@3.11 -> openssl@1.1).
+    required = set(edges)
+    for f in info["formulae"]:
+        for dep in f["installed"][-1].get("runtime_dependencies", []):
+            target = resolve.get(dep["full_name"])
+            if target and target != "f:" + f["name"]:
+                required.add(("f:" + f["name"], target))
+    for src, dst in sorted(required):
+        pkgs[dst]["required_by"].append(src)
 
     # brew outdated and autoremove print a formula's full_name (tap/name for tap formulae).
     for kind, names in (("formulae", resolve), ("casks", cask_resolve)):
@@ -255,9 +266,11 @@ def advise(rec, item, pkgs, resolve, cask_resolve):
             parts.append("A newer or replacement package is already installed, so nothing needs to be installed.")
         elif alternatives:
             parts.append("A newer or replacement package is already installed.")
-        if rec["dependents"]:
-            parts.append(f"{len(rec['dependents'])} installed package(s) still depend on it; it can be removed "
-                         "once they are upgraded off it or removed.")
+        if rec["required_by"]:
+            parts.append(f"{len(rec['required_by'])} installed package(s) still need it, directly or through "
+                         "another dependency. Uninstall offers to remove them with it, or to remove it anyway "
+                         "and break them.")
+            actions.append(uninstall)
         else:
             if rec["kind"] == "cask":
                 parts.append("Nothing installed depends on it; remove it if you no longer use the app.")
@@ -294,16 +307,22 @@ def advise(rec, item, pkgs, resolve, cask_resolve):
 def removal_impact(pkgs, selection):
     """What removing `selection` (package ids) does to the rest of the install."""
     selected = set(selection)
-    blockers = sorted({d for s in selected for d in pkgs[s]["dependents"] if d not in selected})
+    blockers, todo = set(), list(selected)
+    while todo:
+        for d in pkgs[todo.pop()]["required_by"]:
+            if d not in selected and d not in blockers:
+                blockers.add(d)
+                todo.append(d)
+    blockers = sorted(blockers)
     removed = set(selected)
     new_orphans = set()
     changed = True
     while changed:
         changed = False
         for p in pkgs.values():
-            if p["id"] in removed or p["kind"] != "formula" or p["requested"] or not p["dependents"]:
+            if p["id"] in removed or p["kind"] != "formula" or p["requested"] or not p["required_by"]:
                 continue
-            if all(d in removed for d in p["dependents"]):
+            if all(d in removed for d in p["required_by"]):
                 removed.add(p["id"])
                 new_orphans.add(p["id"])
                 changed = True
@@ -345,17 +364,22 @@ def check_targets(targets, pkgs):
     return targets
 
 
-def plan_job(req, pkgs):
+def plan_job(req, pkgs, apps=None):
     """Turn an API request into (title, [argv...], snapshot?). Raises ValueError on bad input."""
     action = req.get("action")
+    if action == "adopt":
+        app = (apps or {}).get(req.get("app"))
+        if not app or app["source"] != "manual" or not app["cask"]:
+            raise ValueError("only an app with a verified cask, installed outside brew and the App Store, can be adopted")
+        return f"bring {app['name']} into brew", [["brew", "install", "--cask", "--adopt", app["cask"]]], False
     targets = check_targets(req.get("targets"), pkgs)
     formulae = [pkgs[t]["name"] for t in targets if pkgs[t]["kind"] == "formula"]
     casks = [pkgs[t]["name"] for t in targets if pkgs[t]["kind"] == "cask"]
 
-    def split(verb):
+    def split(verb, *formula_flags):
         cmds = []
         if formulae:
-            cmds.append(["brew", verb, "--formula", *formulae])
+            cmds.append(["brew", verb, *formula_flags, "--formula", *formulae])
         if casks:
             cmds.append(["brew", verb, "--cask", *casks])
         if not cmds:
@@ -366,6 +390,11 @@ def plan_job(req, pkgs):
     if action in ("upgrade", "pin", "unpin"):
         return f"{action} {names}", split(action), len(targets) > 1
     if action == "uninstall":
+        force = req.get("ignore_dependencies", False)
+        if not isinstance(force, bool):
+            raise ValueError("ignore_dependencies must be true or false")
+        if force:
+            return f"uninstall {names}, ignoring dependents", split("uninstall", "--ignore-dependencies"), True
         return f"uninstall {names}", split("uninstall"), True
     if action == "upgrade_all":
         return "upgrade all outdated", [["brew", "upgrade"]], True
@@ -429,8 +458,12 @@ class Brew:
 
 
 class Store:
-    def __init__(self, brew):
+    def __init__(self, brew, home=None, app_dirs=None):
         self.brew = brew
+        self.home = home or str(Path.home())
+        self.app_dirs = APP_DIRS if app_dirs is None else app_dirs
+        self.apps = None
+        self.shell = None
         self.lock = threading.Lock()
         self.model = None
         self.error = None
@@ -446,6 +479,14 @@ class Store:
     def by_id(self):
         with self.lock:
             return {p["id"]: p for p in self.model["packages"]} if self.model else {}
+
+    def apps_by_id(self):
+        with self.lock:
+            return {a["id"]: a for a in (self.apps or {}).get("apps", [])}
+
+    def tap_names(self):
+        with self.lock:
+            return {t["name"] for t in self.model["taps"]} if self.model else set()
 
     def refresh(self):
         """Re-read brew state. A call during a running refresh makes that refresh read again,
@@ -491,10 +532,11 @@ class Store:
                 self.error = str(e)
 
     def _slow(self, model, generation):
-        with ThreadPoolExecutor(3) as ex:
+        with ThreadPoolExecutor(5) as ex:
             sizes_f = ex.submit(self._sizes, model)
             doctor = ex.submit(self.brew.run, "doctor")
             cleanup = ex.submit(self.brew.run, "cleanup", "-n")
+            env_f = ex.submit(self._environment, model)
         try:
             sizes = sizes_f.result()
         except Exception:
@@ -510,12 +552,38 @@ class Store:
         except Exception as e:
             health = {"doctor_ok": False, "doctor": f"brewdash could not run brew doctor: {e}",
                                  "cleanup_reclaim": None, "cleanup_preview": []}
+        try:
+            apps, shell = env_f.result()
+        except Exception as e:
+            apps, shell = {"error": str(e), "apps": []}, {"error": str(e), "path": [], "tools": []}
         with self.lock:
             if generation != self.generation:
                 return
             self.sizes = sizes
             self.health = health
+            self.apps = apps
+            self.shell = shell
             self.version += 1
+
+    def _names(self):
+        api = Path(self.brew.run("--cache")[1].strip()) / "api"
+        out = {}
+        for kind, file in (("formula", "formula_names.txt"), ("cask", "cask_names.txt")):
+            out[kind] = set((api / file).read_text().split()) if (api / file).is_file() else set()
+        return out
+
+    def _environment(self, model):
+        names = self._names()
+        brew_paths = {a: p["id"] for p in model["packages"] for a in p.get("app_paths", [])}
+        apps = scan_apps(self.app_dirs, brew_paths)
+        error = None
+        try:
+            match_casks(apps, names["cask"], self.brew)
+        except Exception as e:  # one unknown token fails the whole brew info call
+            error = f"could not match apps to casks: {e}"
+        installed = {k: {p["name"] for p in model["packages"] if p["kind"] == k} for k in ("formula", "cask")}
+        shell = scan_shell(self.home, self.prefix, names, installed)
+        return {"error": error, "apps": apps, "names_known": bool(names["cask"])}, shell
 
     def _sizes(self, model):
         id_by_path = {}
@@ -533,7 +601,7 @@ class Store:
         with self.lock:
             return {"version": self.version, "refreshing": self.refreshing, "error": self.error,
                     "last_update": self.last_update, "model": self.model,
-                    "sizes": self.sizes, "health": self.health}
+                    "sizes": self.sizes, "health": self.health, "apps": self.apps, "shell": self.shell}
 
 
 class Runner:
@@ -672,17 +740,205 @@ def preview(brew, kind, name, pkgs):
             "version": version, "caveats": item.get("caveats"), "new_deps": new_deps}
 
 
+# ---------- apps outside brew ----------
+
+APP_DIRS = ("/Applications", str(Path.home() / "Applications"))
+
+
+def _slug(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def scan_apps(dirs, brew_paths):
+    """Apps in `dirs`; `brew_paths` maps an app path a cask installed to that cask's id."""
+    apps = []
+    for d in dirs:
+        for app in sorted(Path(d).glob("*.app")):
+            try:
+                with open(app / "Contents" / "Info.plist", "rb") as f:
+                    plist = plistlib.load(f)
+            except (OSError, plistlib.InvalidFileException):
+                plist = {}
+            path = str(app)
+            source = "brew" if path in brew_paths else \
+                "appstore" if (app / "Contents" / "_MASReceipt").exists() else "manual"
+            apps.append({"id": "a:" + path, "name": app.stem, "path": path,
+                         "version": plist.get("CFBundleShortVersionString"), "bundle_id": plist.get("CFBundleIdentifier"),
+                         "source": source, "brew_id": brew_paths.get(path), "cask": None, "cask_version": None,
+                         "auto_updates": None})
+    return apps
+
+
+def match_casks(apps, cask_names, brew):
+    """Set app["cask"] on a hand-installed app where a cask with its slug installs exactly that .app."""
+    wanted = {}
+    for app in apps:
+        if app["source"] == "manual" and _slug(app["name"]) in cask_names:
+            wanted.setdefault(_slug(app["name"]), []).append(app)
+    if not wanted:
+        return
+    for c in brew.json("info", "--json=v2", "--cask", *sorted(wanted))["casks"]:
+        artifacts = {v for a in c.get("artifacts", []) if isinstance(a, dict) for v in a.get("app", [])
+                     if isinstance(v, str)}
+        for app in wanted.get(c["token"], []):
+            if app["name"] + ".app" in artifacts:
+                app.update(cask=c["full_token"], cask_version=c.get("version"), auto_updates=c.get("auto_updates"))
+
+
+# ---------- shell setup ----------
+
+RC_FILES = (".zprofile", ".zshenv", ".zshrc", ".profile", ".bash_profile", ".bashrc")
+PATH_LINE = re.compile(r"""^\s*(?:export\s+)?PATH=(?:"([^"]*)"|'([^']*)'|([^\s"'#;]*))\s*(?:[#;].*)?$""")
+TOOLS = (  # (name, pattern in an rc line, brew formula that provides it)
+    ("nvm", r"nvm\.sh", "nvm"), ("SDKMAN!", r"sdkman-init\.sh", None), ("Oh My Zsh", r"oh-my-zsh\.sh", None),
+    ("fzf", r"fzf\.(zsh|bash)|fzf --(zsh|bash)", "fzf"), ("pyenv", r"pyenv init", "pyenv"),
+    ("rbenv", r"rbenv init", "rbenv"), ("jenv", r"jenv init", "jenv"), ("asdf", r"asdf\.sh", "asdf"),
+    ("direnv", r"direnv hook", "direnv"), ("starship", r"starship init", "starship"),
+    ("zoxide", r"zoxide init", "zoxide"), ("conda", r"conda(\.sh| shell)", None), ("mise", r"mise activate", "mise"),
+    ("Homebrew", r"brew shellenv", None),
+)
+PATH_TOOLS = (  # (piece of a PATH entry, kind, brew name that provides the same tool)
+    (".jbang/bin", "formula", "jbang"), (".docker/bin", "cask", "docker-desktop"),
+    ("/usr/local/share/dotnet", "cask", "dotnet-sdk"), (".codeium/windsurf/bin", "cask", "windsurf"),
+    ("JetBrains/Toolbox/scripts", "cask", "jetbrains-toolbox"),
+)
+
+
+def _expand(raw, home):
+    if raw.startswith("~"):
+        raw = home + raw[1:]
+    return re.sub(r"\$\{?HOME\}?", home, raw)
+
+
+def scan_shell(home, prefix, names, installed):
+    """PATH entries and shell-initialised tools from the rc files, with what to change.
+
+    `names` is {"formula": set, "cask": set} of what Homebrew offers; `installed` the same for what is
+    installed. Only PATH, source and eval lines are read, so nothing else in the rc files leaves them.
+    """
+    entries, tools, seen = [], [], set()
+    for rc in RC_FILES:
+        path = Path(home) / rc
+        if not path.is_file():
+            continue
+        for n, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            m = PATH_LINE.match(line)
+            if m:
+                for raw in next(g for g in m.groups() if g is not None).split(":"):
+                    if not raw or raw in ("$PATH", "${PATH}"):
+                        continue
+                    entries.append(_path_entry(rc, n, raw, _expand(raw, home), prefix, names, installed, seen))
+                continue
+            if not re.match(r"^\s*(\[.*\]\s*&&\s*)?(source|\\?\.|eval)\s", line):
+                continue
+            for tool, pattern, formula in TOOLS:
+                if re.search(pattern, line):
+                    via_brew = prefix in line or (formula is not None and formula in installed["formula"])
+                    alt = formula if formula and not via_brew and formula in names["formula"] else None
+                    tools.append({"name": tool, "file": rc, "line": n, "via_brew": via_brew, "alternative": alt})
+    return {"path": entries, "tools": tools}
+
+
+def _path_entry(rc, n, raw, d, prefix, names, installed, seen):
+    entry = {"file": rc, "line": n, "raw": raw, "dir": d, "exists": None, "issue": None, "suggestion": None,
+             "alternative": None}
+    if "$" in d:
+        return entry
+    entry["exists"] = Path(d).is_dir()
+    shell = "bash" if "bash" in rc or rc == ".profile" else "zsh"
+    key = (shell, d.rstrip("/"))
+    pinned = re.match(re.escape(prefix) + r"/Cellar/([^/]+)/[^/]+(/.*)?$", d)
+    old_prefix = re.match(r"/usr/local/(opt|Cellar)/", d) if prefix != "/usr/local" else None
+    if key in seen:
+        entry.update(issue="duplicate", suggestion=f"{rc} already adds this directory earlier; this line can go.")
+    elif pinned:
+        fixed = f"{prefix}/opt/{pinned.group(1)}{pinned.group(2) or ''}"
+        gone = "" if entry["exists"] else " That version is no longer installed."
+        entry.update(issue="pinned", suggestion=f"Points at one installed version of {pinned.group(1)} and breaks "
+                                                f"on every upgrade.{gone} Use {fixed} instead.")
+    elif old_prefix and not entry["exists"]:
+        fixed = prefix + d[len("/usr/local"):]
+        entry.update(issue="old_prefix", suggestion=f"Homebrew lives in {prefix} on this Mac. " + (
+            f"Use {fixed} instead." if Path(fixed).is_dir() else "Nothing is installed there either; this line can go."))
+    elif not entry["exists"]:
+        entry.update(issue="missing", suggestion="The directory does not exist; this line can go.")
+    seen.add(key)
+    for piece, kind, name in PATH_TOOLS:
+        if piece in d and name in names[kind] and name not in installed[kind]:
+            entry["alternative"] = {"kind": kind, "name": name}
+    return entry
+
+
+# ---------- export list ----------
+
+LIST_TYPES = ("tap", "brew", "cask")
+DEFAULT_TAPS = {"homebrew/core", "homebrew/cask"}
+
+
+def list_item(pid, pkgs, apps, taps):
+    """The Brewfile entry for a package, app or tap id."""
+    if pid.startswith(("f:", "c:")) and pid in pkgs:
+        return {"type": "brew" if pid.startswith("f:") else "cask", "name": pkgs[pid]["full_name"]}
+    if pid.startswith("a:") and pid in apps and apps[pid]["cask"]:
+        return {"type": "cask", "name": apps[pid]["cask"]}
+    if pid.startswith("t:") and pid[2:] in taps:
+        return {"type": "tap", "name": pid[2:]}
+    raise ValueError(f"{pid} cannot go into a Brewfile")
+
+
+def brewfile(items):
+    taps = {i["name"] for i in items if i["type"] == "tap"}
+    taps |= {i["name"].rsplit("/", 1)[0] for i in items if i["type"] != "tap" and "/" in i["name"]}
+    lines = ["# Brewfile from brewdash. On the new machine: brew bundle --file=Brewfile", ""]
+    lines += [f'tap "{t}"' for t in sorted(taps - DEFAULT_TAPS)]
+    for kind in ("brew", "cask"):
+        for name in sorted(i["name"] for i in items if i["type"] == kind):
+            # A tap package needs trust before brew loads it; dump writes the same option.
+            lines.append(f'{kind} "{name}"' + (", trusted: true" if "/" in name else ""))
+    return "\n".join(lines) + "\n"
+
+
+class ExportList:
+    def __init__(self, state_dir):
+        self.path = Path(state_dir) / "list.json"
+        self.lock = threading.Lock()
+
+    def items(self):
+        with self.lock:
+            return self._load()
+
+    def _load(self):
+        if not self.path.exists():
+            return []
+        return json.loads(self.path.read_text())["items"]
+
+    def change(self, add=(), remove=()):
+        for i in [*add, *remove]:
+            if i.get("type") not in LIST_TYPES or not NAME_RE.match(i.get("name") or ""):
+                raise ValueError("bad list item")
+        with self.lock:
+            keep = [i for i in self._load() if i not in remove]
+            for i in add:
+                if i not in keep:
+                    keep.append(i)
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self.path.write_text(json.dumps({"items": keep}, indent=1))
+            return keep
+
+
 # ---------- http ----------
 
-def make_handler(store, runner, brew, token, port_ref):
+def make_handler(store, runner, brew, token, port_ref, export):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
 
-        def _send(self, code, body, ctype="application/json"):
+        def _send(self, code, body, ctype="application/json", headers=()):
             data = body if isinstance(body, bytes) else json.dumps(body).encode()
             self.send_response(code)
             self.send_header("Content-Type", ctype)
+            for k, v in headers:
+                self.send_header(k, v)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -719,6 +975,11 @@ def make_handler(store, runner, brew, token, port_ref):
                     return self._send(200, search(brew, qs.get("q", [""])[0], store.by_id()))
                 if path == "/api/preview":
                     return self._send(200, preview(brew, qs.get("kind", [""])[0], qs.get("name", [""])[0], store.by_id()))
+                if path == "/api/list":
+                    return self._send(200, self._list(export.items()))
+                if path == "/api/brewfile":
+                    return self._send(200, brewfile(export.items()).encode(), "text/plain; charset=utf-8",
+                                      [("Content-Disposition", 'attachment; filename="Brewfile"')])
             except (ValueError, RuntimeError) as e:
                 return self._send(400, {"error": str(e)})
             self._static(path)
@@ -736,14 +997,32 @@ def make_handler(store, runner, brew, token, port_ref):
                     pkgs = store.by_id()
                     return self._send(200, removal_impact(pkgs, check_targets(body.get("targets"), pkgs)))
                 if path == "/api/plan":
-                    title, cmds, snap = plan_job(body, store.by_id())
+                    title, cmds, snap = plan_job(body, store.by_id(), store.apps_by_id())
                     return self._send(200, {"title": title, "commands": [shlex.join(c) for c in cmds], "snapshot": snap})
                 if path == "/api/jobs":
-                    title, cmds, snap = plan_job(body, store.by_id())
+                    title, cmds, snap = plan_job(body, store.by_id(), store.apps_by_id())
                     return self._send(201, runner.submit(title, cmds, snap))
+                if path == "/api/list":
+                    if body.get("op") == "add":
+                        ids = body.get("ids")
+                        if not isinstance(ids, list):
+                            raise ValueError("ids must be a list")
+                        pkgs, apps, taps = store.by_id(), store.apps_by_id(), store.tap_names()
+                        items = export.change(add=[list_item(i, pkgs, apps, taps) for i in ids])
+                    elif body.get("op") == "remove":
+                        items = body.get("items")
+                        if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                            raise ValueError("items must be a list of objects")
+                        items = export.change(remove=items)
+                    else:
+                        raise ValueError("op must be add or remove")
+                    return self._send(200, self._list(items))
             except ValueError as e:  # includes json.JSONDecodeError
                 return self._send(400, {"error": str(e)})
             self._send(404, {"error": "not found"})
+
+        def _list(self, items):
+            return {"items": items, "brewfile": brewfile(items)}
 
         def _static(self, path):
             rel = "index.html" if path == "/" else path.lstrip("/")
@@ -755,13 +1034,14 @@ def make_handler(store, runner, brew, token, port_ref):
     return Handler
 
 
-def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True):
+def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True, home=None, app_dirs=None):
     brew = brew or Brew()
-    store = Store(brew)
+    store = Store(brew, home, app_dirs)
     runner = Runner(brew, store, state_dir)
     token = secrets.token_urlsafe(24)
     port_ref = [port]
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, runner, brew, token, port_ref))
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, runner, brew, token, port_ref,
+                                                                   ExportList(state_dir)))
     port_ref[0] = server.server_address[1]
     if refresh:
         threading.Thread(target=store.refresh, daemon=True).start()

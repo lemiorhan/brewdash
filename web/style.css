@@ -33,6 +33,7 @@ nav .count { font-family: var(--mono); font-size: 11px; margin-left: 4px; color:
 
 .banner { margin: 10px 16px; padding: 8px 12px; border: 1px solid var(--red); border-radius: 6px; color: var(--red); }
 main { display: flex; height: calc(100vh - 92px); }
+main > .col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 #view { flex: 1; overflow: auto; padding: 12px 16px 120px; }
 #detail { width: 460px; flex-shrink: 0; overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 14px 16px 120px; }
 
@@ -78,7 +79,9 @@ pre { background: #0b0d10; border: 1px solid var(--line); border-radius: 6px; pa
 .card h3 { margin: 0 0 8px; font-size: 14px; }
 .card pre { max-height: 300px; }
 
-.bulk { position: fixed; left: 50%; transform: translateX(-50%); bottom: 54px; background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 12px; display: flex; gap: 10px; align-items: center; z-index: 8; box-shadow: 0 6px 24px #0008; }
+.bulk { background: var(--panel2); border-bottom: 1px solid var(--accent); padding: 8px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.bulk .hint { font-size: 12px; }
+.ok { color: var(--green); }
 
 .jobs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); z-index: 9; max-height: 45vh; display: flex; flex-direction: column; }
 .jobs.collapsed .jobs-body { display: none; }
@@ -98,3 +101,5 @@ pre { background: #0b0d10; border: 1px solid var(--line); border-radius: 6px; pa
 .info { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 10px 0; color: var(--muted); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .loading { color: var(--muted); padding: 30px; text-align: center; }
+.listitem { display: flex; justify-content: space-between; align-items: center; padding: 2px 0; }
+#view h3 { font-size: 14px; margin: 18px 0 8px; }

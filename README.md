@@ -26,6 +26,45 @@ Python 3 standard library only. Cytoscape.js is vendored in `web/vendor/`.
 - **Services, Taps, Health** (`brew doctor`, `brew cleanup -n`, orphans,
   missing dependencies), **History**, **Install** (`brew search` + preview of
   new dependencies).
+- **Apps**: every `.app` in `/Applications` and `~/Applications`, with its
+  version and how it got there: brew, the App Store, or by hand. A hand-installed
+  app is matched to a cask only when the cask's name is the app's name and
+  `brew info --cask` shows that the cask installs exactly that `.app`.
+  **Bring into brew** runs `brew install --cask --adopt <cask>`; from then on
+  the app upgrades and uninstalls like any cask. App Store apps are only
+  listed. An app with no match gets **Search cask**.
+- **Shell**: the `PATH` lines and the tools started (`source`, `.`, `eval`) in
+  `.zprofile`, `.zshenv`, `.zshrc`, `.profile`, `.bash_profile` and `.bashrc`.
+  It flags directories that are missing, listed twice, pinned to one Cellar
+  version, or missing under `/usr/local` when Homebrew lives elsewhere, and says what to
+  write instead. If brew has a formula or cask for a tool installed some other
+  way, it offers to install it. Only those lines are read, and brewdash never
+  writes to these files.
+- **Export**: a list of what to install on another Mac (see below).
+
+## Selecting several
+
+Tick packages, taps or apps in any tab. The bar above the table shows each
+action with the number of selected items it applies to: Upgrade, Pin, Unpin,
+Uninstall and Add to list. An action that applies to none of them is
+disabled, and its tooltip says why.
+
+## Moving to another Mac
+
+Select what you want to keep and press **Add to list**. The list is stored in
+`~/.local/state/brewdash/list.json` and stays between runs. The **Export** tab
+groups it into taps, formulae and casks, lets you remove entries, and shows
+the Brewfile. Taps that tap-qualified names need are added on their own.
+Entries from third-party taps get `trusted: true`, as `brew bundle dump`
+writes them. Dependencies do not need to be on the list; brew installs them
+anyway.
+
+On the new Mac:
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew bundle --file=Brewfile
+```
 
 `brew update` is not run on start; use the button. The header shows when the
 last update ran.

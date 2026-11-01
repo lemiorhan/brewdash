@@ -20,12 +20,13 @@ const S = {
   selected: new Set(), current: null, depth: 1,
   jobs: [], openJobs: new Set(), history: [],
   search: { q: "", results: null, preview: null, busy: false },
+  list: { items: [], brewfile: "" },
 };
 
 const TABS = [
   ["requested", "Installed by you"], ["deps", "Dependencies"], ["casks", "Casks"],
   ["services", "Services"], ["taps", "Taps"], ["health", "Health"],
-  ["history", "History"], ["install", "Install"],
+  ["apps", "Apps"], ["shell", "Shell"], ["history", "History"], ["install", "Install"], ["export", "Export"],
 ];
 
 // ---------- formatting ----------
@@ -63,7 +64,7 @@ async function loadState() {
     if (snap.version === S.version && snap.refreshing === S.snap?.refreshing) return;
     S.snap = snap; S.version = snap.version;
     S.pkgs = new Map((snap.model?.packages || []).map((p) => [p.id, p]));
-    for (const id of [...S.selected]) if (!S.pkgs.has(id)) S.selected.delete(id);
+    for (const id of [...S.selected]) if (!itemFor(id)) S.selected.delete(id);
     if (S.current && !S.pkgs.has(S.current)) S.current = null;
     renderAll();
   } catch (e) {
@@ -71,6 +72,25 @@ async function loadState() {
     $("#error").textContent = "Cannot reach brewdash server: " + e.message;
   }
 }
+
+async function loadList(change) {
+  try { S.list = await api("/api/list", change); }
+  catch (e) { if (change) alertBox(e.message); return; }
+  renderTabs(); renderBulk();
+  if (S.tab === "export") renderExport();
+}
+
+const appsList = () => S.snap?.apps?.apps || [];
+
+// The Brewfile line an id stands for, or null when it cannot go into a Brewfile.
+function itemFor(id) {
+  const p = S.pkgs.get(id);
+  if (p) return { type: p.kind === "formula" ? "brew" : "cask", name: p.full_name };
+  if (id.startsWith("a:")) { const a = appsList().find((x) => x.id === id); return a?.cask ? { type: "cask", name: a.cask } : null; }
+  if (id.startsWith("t:") && (S.snap?.model?.taps || []).some((t) => "t:" + t.name === id)) return { type: "tap", name: id.slice(2) };
+  return null;
+}
+const inList = (item) => S.list.items.some((i) => i.type === item.type && i.name === item.name);
 
 async function loadJobs() {
   try {
@@ -89,6 +109,9 @@ function counts() {
     casks: all.filter((p) => p.kind === "cask").length,
     services: all.filter((p) => p.service).length,
     taps: S.snap?.model?.taps?.length || 0,
+    apps: S.snap?.apps ? appsList().length : null,
+    shell: S.snap?.shell ? (S.snap.shell.path || []).filter((e) => e.issue).length : null,
+    export: S.list.items.length,
     outdated: all.filter((p) => p.outdated).length,
     upgradable: all.filter(upgradable).length,
     orphans: all.filter((p) => p.orphan).length,
@@ -203,6 +226,7 @@ function renderDetail() {
   if (!p) { el.classList.add("hidden"); if (cy) { cy.destroy(); cy = null; } return; }
   el.classList.remove("hidden");
   const svc = p.service;
+  const indirect = p.required_by.filter((id) => !p.dependents.includes(id));
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:start">
       <div><h2 class="detail-title">${esc(p.name)}</h2><div>${p.kind === "cask" ? `<span class="badge b-cask">cask</span>` : ""}${badges(p)}</div></div>
@@ -230,7 +254,8 @@ function renderDetail() {
       ${svc.log_path ? `<div>Log</div><div class="mono">${esc(svc.log_path)}</div>` : ""}</div>
       <div class="btnrow" style="margin-top:6px">${["start", "stop", "restart"].map((op) => `<button class="small" data-svc="${op}" data-id="${esc(p.id)}">${op}</button>`).join("")}</div></div>` : ""}
     <div class="detail-section"><h4>Depends on (${p.deps.length})</h4><div class="chips">${p.deps.map(chip).join("") || `<span class="muted">nothing</span>`}</div></div>
-    <div class="detail-section"><h4>Used by (${p.dependents.length})</h4><div class="chips">${p.dependents.map(chip).join("") || `<span class="muted">nothing installed depends on this</span>`}</div></div>
+    <div class="detail-section"><h4>Used by (${p.dependents.length})</h4><div class="chips">${p.dependents.map(chip).join("") || `<span class="muted">nothing installed depends on this directly</span>`}</div>
+      ${indirect.length ? `<div class="chips" style="margin-top:6px"><span class="muted">Also needed indirectly by:</span>${indirect.map(chip).join("")}</div>` : ""}</div>
     <div class="detail-section"><h4>Graph
       <select id="depth" style="margin-left:8px"><option value="1" ${S.depth === 1 ? "selected" : ""}>1 hop</option><option value="2" ${S.depth === 2 ? "selected" : ""}>2 hops</option><option value="3" ${S.depth === 3 ? "selected" : ""}>3 hops</option></select></h4>
       <div id="graph"></div>
@@ -304,11 +329,11 @@ function renderServices() {
 
 function renderTaps() {
   const taps = S.snap?.model?.taps || [];
-  $("#view").innerHTML = `<table><thead><tr><th>Tap</th><th>Remote</th><th class="num">Installed from it</th><th class="num">Formulae</th><th class="num">Casks</th><th>Last commit</th></tr></thead><tbody>
-    ${taps.map((t) => `<tr><td class="name">${esc(t.name)}${t.official ? `<span class="badge b-service">official</span>` : ""}${t.private ? `<span class="badge b-pinned">private</span>` : ""}</td>
+  $("#view").innerHTML = `<table><thead><tr><th></th><th>Tap</th><th>Remote</th><th class="num">Installed from it</th><th class="num">Formulae</th><th class="num">Casks</th><th>Last commit</th></tr></thead><tbody>
+    ${taps.map((t) => `<tr><td><input type="checkbox" data-sel="t:${esc(t.name)}" ${S.selected.has("t:" + t.name) ? "checked" : ""}></td><td class="name">${esc(t.name)}${t.official ? `<span class="badge b-service">official</span>` : ""}${t.private ? `<span class="badge b-pinned">private</span>` : ""}</td>
       <td class="mono muted">${esc(t.remote || "")}</td><td class="num">${t.installed.length || `<span class="muted">0 · unused?</span>`}</td>
       <td class="num">${t.formula_count}</td><td class="num">${t.cask_count}</td><td class="muted">${esc(t.last_commit || "")}</td></tr>
-      ${t.installed.length && !t.official ? `<tr><td></td><td colspan="5"><div class="chips">${t.installed.map(chip).join("")}</div></td></tr>` : ""}`).join("")}
+      ${t.installed.length && !t.official ? `<tr><td></td><td></td><td colspan="5"><div class="chips">${t.installed.map(chip).join("")}</div></td></tr>` : ""}`).join("")}
   </tbody></table>`;
 }
 
@@ -334,6 +359,88 @@ function renderHealth() {
     <div class="card" style="grid-column:1/-1"><h3>brew doctor ${h ? (h.doctor_ok ? `<span class="st st-succeeded">ok</span>` : `<span class="st st-failed">warnings</span>`) : ""}</h3>
       ${h ? `<pre>${esc(h.doctor || "Your system is ready to brew.")}</pre>` : `<p class="loading">Running brew doctor…</p>`}</div>
   </div>`;
+}
+
+const SOURCE = { brew: "brew", appstore: "App Store", manual: "installed by hand" };
+
+function renderApps() {
+  const env = S.snap?.apps;
+  if (!env) { $("#view").innerHTML = `<p class="loading">Scanning /Applications…</p>`; return; }
+  const apps = appsList();
+  const adoptable = apps.filter((a) => a.source === "manual" && a.cask);
+  const row = (a) => {
+    const sel = a.source === "brew" ? a.brew_id : a.cask ? a.id : null;
+    const newer = a.cask_version && a.version && !a.cask_version.startsWith(a.version) ? ` <span class="muted">(cask has ${esc(a.cask_version.split(",")[0])})</span>` : "";
+    const action = a.source === "brew" ? `<span class="chip" data-goto="${esc(a.brew_id)}">${esc(S.pkgs.get(a.brew_id)?.name || a.brew_id)}</span> <span class="muted">upgrade and uninstall in Casks</span>`
+      : a.source === "appstore" ? `<span class="muted">updates through the App Store</span>`
+      : a.cask ? `<button class="small accent" data-adopt="${esc(a.id)}">Bring into brew</button> <span class="mono">${esc(a.cask)}</span>${newer}${a.auto_updates ? ` <span class="muted">updates itself</span>` : ""}`
+      : `<button class="small" data-findcask="${esc(a.name)}">Search cask</button>`;
+    return `<tr><td>${sel ? `<input type="checkbox" data-sel="${esc(sel)}" ${S.selected.has(sel) ? "checked" : ""}>` : ""}</td>
+      <td class="name">${esc(a.name)}</td><td class="mono">${esc(a.version || "")}</td><td>${SOURCE[a.source]}</td><td>${action}</td></tr>`;
+  };
+  $("#view").innerHTML = `
+    ${env.error ? `<div class="warn">${esc(env.error)}</div>` : ""}
+    ${env.names_known ? "" : `<div class="info">Homebrew's cask list is not cached yet, so apps are not matched to casks. Run brew update, then Refresh.</div>`}
+    <p class="muted">${adoptable.length} app(s) installed by hand have a matching brew cask. <b>Bring into brew</b> runs <span class="mono">brew install --cask --adopt</span>: brew takes over the existing app, and from then on upgrades and uninstalls it like any cask. A match is shown only when the cask installs exactly that .app.</p>
+    <table><thead><tr><th></th><th>App</th><th>Version</th><th>Installed by</th><th>Brew</th></tr></thead>
+    <tbody>${apps.map(row).join("")}</tbody></table>`;
+}
+
+const ISSUE = { duplicate: "duplicate", missing: "missing", pinned: "pinned version", old_prefix: "old prefix" };
+
+function renderShell() {
+  const sh = S.snap?.shell;
+  if (!sh) { $("#view").innerHTML = `<p class="loading">Reading shell setup…</p>`; return; }
+  const install = (alt) => alt ? `<button class="small" data-install="${esc(alt.kind)}:${esc(alt.name)}">Install ${esc(alt.name)} with brew</button>` : "";
+  $("#view").innerHTML = `
+    ${sh.error ? `<div class="warn">${esc(sh.error)}</div>` : ""}
+    <p class="muted">PATH lines and initialised tools from the shell startup files in your home directory. brewdash never edits these files; copy a suggestion into the file yourself.</p>
+    <h3>PATH</h3>
+    <table><thead><tr><th>File</th><th>Entry</th><th>Status</th><th>What to do</th></tr></thead><tbody>
+    ${sh.path.map((e) => `<tr><td class="mono">${esc(e.file)}:${e.line}</td><td class="mono">${esc(e.raw)}</td>
+      <td>${e.issue ? `<span class="badge b-missing">${ISSUE[e.issue]}</span>` : e.exists === null ? `<span class="muted">not checked</span>` : `<span class="ok">ok</span>`}</td>
+      <td>${esc(e.suggestion || "")} ${e.alternative ? `<div style="margin-top:4px"><span class="muted">brew has this tool:</span> ${install(e.alternative)}</div>` : ""}</td></tr>`).join("")}
+    </tbody></table>
+    <h3>Tools started by the shell</h3>
+    <table><thead><tr><th>Tool</th><th>File</th><th>From brew</th><th></th></tr></thead><tbody>
+    ${sh.tools.map((t) => `<tr><td class="name">${esc(t.name)}</td><td class="mono">${esc(t.file)}:${t.line}</td>
+      <td>${t.via_brew ? `<span class="ok">yes</span>` : "no"}</td>
+      <td>${t.alternative ? `${install({ kind: "formula", name: t.alternative })} <span class="muted">then point ${esc(t.file)}:${t.line} at brew's copy</span>` : ""}</td></tr>`).join("")}
+    </tbody></table>`;
+}
+
+const LIST_GROUPS = [["tap", "Taps"], ["brew", "Formulae"], ["cask", "Casks and apps"]];
+
+function renderExport() {
+  const items = S.list.items;
+  const deps = items.filter((i) => i.type === "brew" && [...S.pkgs.values()].some((p) => p.full_name === i.name && p.kind === "formula" && !p.requested));
+  $("#view").innerHTML = `
+    <p class="muted">Select packages, taps or apps in any tab and press <b>Add to list</b>. The list is kept between runs.</p>
+    ${items.length ? "" : `<p class="muted">The list is empty.</p>`}
+    <div class="cards">${LIST_GROUPS.map(([type, label]) => {
+      const group = items.filter((i) => i.type === type);
+      return group.length ? `<div class="card"><h3>${label} (${group.length})</h3>${group.map((i) =>
+        `<div class="listitem"><span class="mono">${esc(i.name)}</span> <button class="small" data-unlist="${esc(i.type)}:${esc(i.name)}">Remove</button></div>`).join("")}</div>` : "";
+    }).join("")}</div>
+    ${deps.length ? `<div class="info">${deps.map((i) => `<span class="mono">${esc(i.name)}</span>`).join(", ")}: installed here only as a dependency. brew installs dependencies anyway, so the list does not need them.</div>` : ""}
+    ${items.length ? `<h3>Brewfile</h3><pre id="brewfile">${esc(S.list.brewfile)}</pre>
+      <div class="btnrow" style="margin-top:8px"><button class="accent" id="dl-brewfile">Download Brewfile</button><button id="copy-brewfile">Copy</button></div>
+      <h3>On the new Mac</h3>
+      <ol>
+        <li>Install Homebrew: <pre>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</pre></li>
+        <li>Put the Brewfile in a folder and run there: <pre>brew bundle --file=Brewfile</pre></li>
+      </ol>
+      <p class="muted">Lines with <span class="mono">trusted: true</span> come from third-party taps; that option lets brew load them without asking. App Store apps are not in the list.</p>` : ""}`;
+}
+
+async function downloadBrewfile() {
+  const r = await fetch("/api/brewfile", { headers: { "X-Brewdash-Token": TOKEN } });
+  if (!r.ok) return alertBox(`HTTP ${r.status}`);
+  // As text/plain, Chrome saves it as Brewfile.txt, and brew bundle --file=Brewfile then finds nothing.
+  const url = URL.createObjectURL(new Blob([await r.text()], { type: "application/octet-stream" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: "Brewfile" });
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 async function renderHistory() {
@@ -395,25 +502,28 @@ async function doPreview(kind, name) {
 
 function closeModal() { $("#modal").classList.add("hidden"); $("#modal-card").innerHTML = ""; }
 
-async function confirmAction(req, { impact = false } = {}) {
+async function confirmAction(req, { impact = false, breaks = [] } = {}) {
   let plan, imp = null;
   try {
     plan = await api("/api/plan", req);
     if (impact) imp = await api("/api/impact", { targets: req.targets });
   } catch (e) { alertBox(e.message); return; }
   const names = (req.targets || []).map((id) => S.pkgs.get(id)?.name || id);
+  const blocked = req.action === "uninstall" && imp?.blockers.length > 0;
   $("#modal-card").innerHTML = `
     <h2>${esc(plan.title)}</h2>
     ${names.length > 1 ? `<div class="chips">${names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div>` : ""}
     <p class="muted">Will run:</p><pre>${plan.commands.map(esc).join("\n")}</pre>
-    ${imp?.blockers.length ? `<div class="warn"><b>${imp.blockers.length} installed package(s) depend on this.</b> brew will refuse the uninstall unless you remove them too:<div class="chips" style="margin-top:6px">${imp.blockers.map(chip).join("")}</div>
-      <div style="margin-top:8px"><button class="small" id="add-blockers">Add them to the selection</button></div></div>` : ""}
+    ${blocked ? `<div class="warn"><b>${imp.blockers.length} installed package(s) need this</b>, directly or through another dependency, so brew refuses the plain uninstall:<div class="chips" style="margin-top:6px">${imp.blockers.map(chip).join("")}</div>
+      <div class="btnrow" style="margin-top:8px"><button class="small" id="add-blockers">Uninstall them too</button><button class="small danger" id="force-uninstall">Uninstall anyway and break them</button></div></div>` : ""}
+    ${breaks.length ? `<div class="warn"><b>These stay installed but may stop working:</b><div class="chips" style="margin-top:6px">${breaks.map(chip).join("")}</div></div>` : ""}
     ${imp?.new_orphans.length ? `<div class="info">Afterwards <b>${imp.new_orphans.length}</b> dependencies will no longer be needed (autoremove can clean them):<div class="chips" style="margin-top:6px">${imp.new_orphans.map(chip).join("")}</div></div>` : ""}
     ${plan.snapshot ? `<div class="info">A Brewfile snapshot of the current install is written first.</div>` : ""}
-    <div class="modal-actions"><button id="m-cancel">Cancel</button><button id="m-ok" class="${req.action === "uninstall" || req.action === "autoremove" ? "danger" : "accent"}">Run</button></div>`;
+    <div class="modal-actions"><button id="m-cancel">Cancel</button>${blocked ? "" : `<button id="m-ok" class="${req.action === "uninstall" || req.action === "autoremove" ? "danger" : "accent"}">Run</button>`}</div>`;
   $("#modal").classList.remove("hidden");
   $("#m-cancel").onclick = closeModal;
-  $("#m-ok").onclick = async () => {
+  const ok = $("#m-ok");
+  if (ok) ok.onclick = async () => {
     closeModal();
     try {
       const job = await api("/api/jobs", req);
@@ -425,6 +535,8 @@ async function confirmAction(req, { impact = false } = {}) {
   };
   const add = $("#add-blockers");
   if (add) add.onclick = () => confirmAction({ ...req, targets: [...new Set([...req.targets, ...imp.blockers])] }, { impact: true });
+  const force = $("#force-uninstall");
+  if (force) force.onclick = () => confirmAction({ ...req, ignore_dependencies: true }, { breaks: imp.blockers });
 }
 
 function alertBox(msg) {
@@ -437,17 +549,31 @@ function act(action, targets) {
   return confirmAction({ action, targets }, { impact: action === "uninstall" });
 }
 
+// Each bulk action, the selected ids it applies to, and why it is off when it applies to none.
+function bulkActions(ids) {
+  const pk = ids.filter((id) => S.pkgs.has(id)).map((id) => S.pkgs.get(id));
+  const items = ids.map(itemFor).filter(Boolean);
+  const fresh = items.filter((i) => !inList(i));
+  const none = pk.length ? null : "Only installed formulae and casks; the selection has none.";
+  return [
+    ["upgrade", "Upgrade", "accent", pk.filter(upgradable).map((p) => p.id), none || "Nothing selected is outdated, or it is pinned or disabled."],
+    ["pin", "Pin", "", pk.filter((p) => !p.pinned).map((p) => p.id), none || "Everything selected is already pinned."],
+    ["unpin", "Unpin", "", pk.filter((p) => p.pinned).map((p) => p.id), none || "Nothing selected is pinned."],
+    ["uninstall", "Uninstall", "danger", pk.map((p) => p.id), none],
+    ["list", "Add to list", "", ids.filter((id) => itemFor(id) && fresh.some((i) => i.type === itemFor(id).type && i.name === itemFor(id).name)),
+      items.length ? "Everything selected is already on the export list." : "Only packages, taps and apps with a brew cask can go on the list."],
+  ];
+}
+
 function renderBulk() {
   const el = $("#bulk");
   const ids = [...S.selected];
   el.classList.toggle("hidden", !ids.length);
   if (!ids.length) return;
-  const anyOutdated = ids.some((id) => S.pkgs.has(id) && upgradable(S.pkgs.get(id)));
   el.innerHTML = `<b>${ids.length} selected</b>
-    <button class="accent" data-bulk="upgrade" ${anyOutdated ? "" : "disabled"}>Upgrade</button>
-    <button data-bulk="pin">Pin</button><button data-bulk="unpin">Unpin</button>
-    <button class="danger" data-bulk="uninstall">Uninstall</button>
-    <button data-bulk="clear">Clear</button>`;
+    ${bulkActions(ids).map(([k, label, cls, applies, why]) => `<button class="${cls}" data-bulk="${k}" ${applies.length ? "" : `disabled title="${esc(why)}"`}>${label} (${applies.length})</button>`).join("")}
+    <button data-bulk="clear">Clear</button>
+    <span class="muted hint">Each button acts only on the selected items it applies to.</span>`;
 }
 
 // ---------- jobs ----------
@@ -472,7 +598,8 @@ function renderJobs() {
 function renderView() {
   if (!S.snap?.model) { $("#view").innerHTML = `<p class="loading">${S.snap?.error ? "Failed to read brew state." : "Reading Homebrew state…"}</p>`; return; }
   if (PKG_TABS[S.tab]) renderPackages();
-  else ({ services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall })[S.tab]();
+  else ({ services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall,
+    apps: renderApps, shell: renderShell, export: renderExport })[S.tab]();
 }
 
 function renderAll() {
@@ -502,9 +629,15 @@ document.addEventListener("click", (e) => {
   if (d("bulk")) {
     const b = d("bulk");
     if (b === "clear") { S.selected.clear(); renderBulk(); renderView(); return; }
-    const ids = [...S.selected].filter((id) => b !== "upgrade" || upgradable(S.pkgs.get(id)));
+    const ids = bulkActions([...S.selected]).find(([k]) => k === b)[3];
+    if (b === "list") { loadList({ op: "add", ids }); return; }
     act(b, ids); return;
   }
+  if (d("unlist")) { const [type, ...n] = d("unlist").split(":"); loadList({ op: "remove", items: [{ type, name: n.join(":") }] }); return; }
+  if (d("adopt")) { confirmAction({ action: "adopt", app: d("adopt") }); return; }
+  if (d("findcask")) { S.tab = "install"; renderTabs(); renderView(); $("#search-q").value = d("findcask"); doSearch(); return; }
+  if (t.id === "dl-brewfile") { downloadBrewfile(); return; }
+  if (t.id === "copy-brewfile") { navigator.clipboard.writeText(S.list.brewfile); t.textContent = "Copied"; return; }
   if (d("global")) { confirmAction({ action: d("global") }); return; }
   if (d("preview")) { const [k, ...n] = d("preview").split(":"); doPreview(k, n.join(":")); return; }
   if (d("install")) { const [k, ...n] = d("install").split(":"); confirmAction({ action: "install", kind: k, name: n.join(":") }); return; }
@@ -541,4 +674,5 @@ async function tick() {
   setTimeout(tick, active ? 800 : 3000);
 }
 renderAll();
+loadList();
 tick();

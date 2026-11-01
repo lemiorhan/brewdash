@@ -1,5 +1,6 @@
 import http.client
 import json
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -337,11 +338,18 @@ class AdviceTest(unittest.TestCase):
         self.assertEqual(a["text"], "It still works, and Homebrew plans to drop it. "
                                     "Nothing installed depends on it; remove it if you no longer use the app.")
 
-    def test_deprecated_package_with_dependents_is_not_offered_an_uninstall(self):
-        a = only(advice_of([formula("lib@1", **DEPRECATED), formula("app", deps=["lib@1"])]), "f:lib@1")
-        self.assertEqual(reqs(a), [])
-        self.assertEqual(a["text"], "It still works, and Homebrew plans to drop it. 1 installed package(s) still "
-                                    "depend on it; it can be removed once they are upgraded off it or removed.")
+    def test_deprecated_package_needed_only_indirectly_is_not_called_unused(self):
+        p = advice_of([formula("ssl@1", **DEPRECATED), formula("ytdl", requested=True, indirect=["ssl@1"])])
+        self.assertIn("1 installed package(s) still need it", only(p, "f:ssl@1")["text"])
+
+    def test_deprecated_package_needed_indirectly_says_so_and_still_offers_the_uninstall(self):
+        p = advice_of([formula("ssl@1", **DEPRECATED), formula("py", deps=["ssl@1"]),
+                       formula("ytdl", requested=True, deps=["py"], indirect=["ssl@1"])])
+        a = only(p, "f:ssl@1")
+        self.assertEqual(a["text"], "It still works, and Homebrew plans to drop it. 2 installed package(s) still "
+                                    "need it, directly or through another dependency. Uninstall offers to remove "
+                                    "them with it, or to remove it anyway and break them.")
+        self.assertEqual(reqs(a), [{"action": "uninstall", "targets": ["f:ssl@1"]}])
 
     def test_missing_dependency_names_other_installed_versions_and_offers_its_install(self):
         a = only(advice_of([formula("tool", deps=["jdk@21"]), formula("jdk"), formula("jdk@25")]), "f:tool")
@@ -401,7 +409,32 @@ class AdviceTest(unittest.TestCase):
 
 class RemovalImpactTest(unittest.TestCase):
     def test_installed_dependents_outside_the_selection_block_removal(self):
-        self.assertEqual(brewdash.removal_impact(by_id(), ["f:libC"])["blockers"], ["f:libA", "f:tool"])
+        self.assertEqual(brewdash.removal_impact(by_id(), ["f:libC"])["blockers"], ["f:app", "f:libA", "f:tool"])
+
+    def test_an_indirect_runtime_dependent_blocks_removal_like_brew_does(self):
+        info = {"formulae": [formula("ssl@1"), formula("py", deps=["ssl@1"]),
+                             formula("ytdl", requested=True, deps=["py"], indirect=["ssl@1"])], "casks": []}
+        p = {r["id"]: r for r in brewdash.build_model(info, {}, [], [], [])["packages"]}
+        self.assertEqual(p["f:ssl@1"]["dependents"], ["f:py"])
+        self.assertEqual(p["f:ssl@1"]["required_by"], ["f:py", "f:ytdl"])
+        self.assertEqual(brewdash.removal_impact(p, ["f:ssl@1"])["blockers"], ["f:py", "f:ytdl"])
+
+    def test_a_dependency_still_needed_indirectly_is_not_a_new_orphan(self):
+        info = {"formulae": [formula("ssl@1"), formula("py", deps=["ssl@1"]),
+                             formula("ytdl", requested=True, deps=["py"], indirect=["ssl@1"])], "casks": []}
+        p = {r["id"]: r for r in brewdash.build_model(info, {}, [], [], [])["packages"]}
+        self.assertEqual(brewdash.removal_impact(p, ["f:py"])["new_orphans"], [])
+
+    def test_blockers_include_what_blocks_the_blockers(self):
+        info = {"formulae": [formula("a"), formula("b", deps=["a"]), formula("c", requested=True, deps=["b"])],
+                "casks": []}
+        p = {r["id"]: r for r in brewdash.build_model(info, {}, [], [], [])["packages"]}
+        self.assertEqual(brewdash.removal_impact(p, ["f:a"])["blockers"], ["f:b", "f:c"])
+
+    def test_a_package_never_requires_itself(self):
+        info = {"formulae": [formula("a", indirect=["a"])], "casks": []}
+        [rec] = brewdash.build_model(info, {}, [], [], [])["packages"]
+        self.assertEqual(rec["required_by"], [])
 
     def test_dependents_inside_the_selection_do_not_block(self):
         self.assertEqual(brewdash.removal_impact(by_id(), ["f:libC", "f:libA", "f:tool"])["blockers"], ["f:app"])
@@ -457,6 +490,16 @@ hunspell
 
 
 class PlanJobTest(unittest.TestCase):
+    def test_uninstall_can_ignore_dependents_for_formulae_only(self):
+        title, cmds, snap = brewdash.plan_job({"action": "uninstall", "targets": ["f:libC", "c:gui"],
+                                               "ignore_dependencies": True}, by_id())
+        self.assertEqual(title, "uninstall libC, gui, ignoring dependents")
+        self.assertEqual(cmds, [["brew", "uninstall", "--ignore-dependencies", "--formula", "libC"],
+                                ["brew", "uninstall", "--cask", "gui"]])
+        self.assertTrue(snap)
+        with self.assertRaises(ValueError):
+            brewdash.plan_job({"action": "uninstall", "targets": ["f:libC"], "ignore_dependencies": "yes"}, by_id())
+
     def test_uninstall_splits_formulae_and_casks_and_snapshots(self):
         title, cmds, snap = brewdash.plan_job({"action": "uninstall", "targets": ["f:libA", "c:gui", "f:tool"]}, by_id())
         self.assertEqual(cmds, [["brew", "uninstall", "--formula", "libA", "tool"], ["brew", "uninstall", "--cask", "gui"]])
@@ -527,8 +570,10 @@ class AuthorizeTest(unittest.TestCase):
 class FakeBrew:
     """Answers brew calls from the fixtures; `scripts` maps a command prefix to a shell script for popen."""
 
-    def __init__(self, scripts=None, prefix="/nonexistent", info=INFO, raises=()):
+    def __init__(self, scripts=None, prefix="/nonexistent", info=INFO, raises=(), cache="/nonexistent", casks=()):
         self.scripts = scripts or {}
+        self.cache = cache
+        self.casks = {c["token"]: c for c in casks}
         self.popened = []
         self.prefix = prefix
         self.info = info
@@ -536,7 +581,7 @@ class FakeBrew:
 
     def run(self, *args, timeout=300):
         out = {("autoremove", "--dry-run"): ParseTest.AUTOREMOVE, ("--repository",): "/nonexistent",
-               ("--prefix",): self.prefix, ("cleanup", "-n"): "free approximately 1MB of disk space",
+               ("--prefix",): self.prefix, ("--cache",): self.cache, ("cleanup", "-n"): "free approximately 1MB of disk space",
                ("doctor",): "Warning: something", ("search", "--formula", "jq"): "jq\njq-lsp\nme/tap/tool\n",
                ("search", "--cask", "jq"): "jqbook\n", ("deps", "--formula", "newpkg"): "libC\nfresh\n",
                ("search", "--formula", "gui"): "gui\n", ("search", "--cask", "gui"): "gui\nme/tap/font\n"}
@@ -547,6 +592,11 @@ class FakeBrew:
         # Like brew: a tap-qualified argument comes back with a short name/token.
         if args[0] == "info" and "--formula" in args:
             return {"formulae": [formula(args[-1].split("/")[-1], full_name=args[-1], versions={"stable": "4.2"})], "casks": []}
+        if args[0] == "info" and "--cask" in args and self.casks:
+            tokens = args[args.index("--cask") + 1:]
+            if any(t not in self.casks for t in tokens):
+                raise RuntimeError(f"Cask '{tokens[0]}' is unavailable")
+            return {"formulae": [], "casks": [self.casks[t] for t in tokens]}
         if args[0] == "info" and "--cask" in args:
             return {"formulae": [], "casks": [cask(args[-1].split("/")[-1], full_token=args[-1], version="9.0")]}
         if args[0] == "info":
@@ -834,11 +884,271 @@ class InstallHelpersTest(unittest.TestCase):
                 brewdash.preview(FakeBrew(), kind, name, by_id())
 
 
+def make_app(folder, name, version=None, bundle_id=None, app_store=False, plist=True):
+    contents = Path(folder) / f"{name}.app" / "Contents"
+    contents.mkdir(parents=True)
+    if plist:
+        data = {k: v for k, v in (("CFBundleShortVersionString", version), ("CFBundleIdentifier", bundle_id)) if v}
+        with open(contents / "Info.plist", "wb") as f:
+            plistlib.dump(data, f)
+    if app_store:
+        (contents / "_MASReceipt").mkdir()
+    return str(contents.parent)
+
+
+def app_record(path, name, source, version=None, bundle_id=None, brew_id=None, **extra):
+    rec = {"id": "a:" + path, "name": name, "path": path, "version": version, "bundle_id": bundle_id,
+           "source": source, "brew_id": brew_id, "cask": None, "cask_version": None, "auto_updates": None}
+    rec.update(extra)
+    return rec
+
+
+APP_CASKS = [
+    cask("zed", full_token="zed", version="0.9", auto_updates=True, artifacts=[{"app": ["Zed.app"]}, {"binary": ["zed"]}]),
+    cask("other", artifacts=[{"app": ["Something Else.app"]}]),
+    cask("my-tool", full_token="me/tap/my-tool", version="3.1,42", artifacts=[{"app": ["My Tool.app"]}]),
+]
+
+
+class AppsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_scan_reads_version_and_tells_brew_app_store_and_hand_installs_apart(self):
+        zed = make_app(self.dir, "Zed", "0.8", "dev.zed")
+        shop = make_app(self.dir, "Shop", "2.0", "com.shop", app_store=True)
+        bare = make_app(self.dir, "Bare", plist=False)
+        gui = make_app(self.dir, "Gui", "2.0")
+        (Path(self.dir) / "notes.txt").write_text("")
+        apps = brewdash.scan_apps([self.dir, self.dir + "/missing"], {gui: "c:gui"})
+        self.assertEqual(apps, [
+            app_record(bare, "Bare", "manual"),
+            app_record(gui, "Gui", "brew", "2.0", brew_id="c:gui"),
+            app_record(shop, "Shop", "appstore", "2.0", "com.shop"),
+            app_record(zed, "Zed", "manual", "0.8", "dev.zed"),
+        ])
+
+    def test_a_cask_matches_only_when_it_installs_exactly_that_app(self):
+        brew = FakeBrew(casks=APP_CASKS)
+        apps = [app_record("/A/Zed.app", "Zed", "manual"), app_record("/A/Other.app", "Other", "manual"),
+                app_record("/A/My Tool.app", "My Tool", "manual"), app_record("/A/Unknown.app", "Unknown", "manual"),
+                app_record("/A/Gui.app", "Gui", "brew", brew_id="c:gui"), app_record("/A/Shop.app", "Shop", "appstore")]
+        calls = []
+        real = brew.json
+        brew.json = lambda *a: calls.append(a) or real(*a)
+        brewdash.match_casks(apps, {"zed", "other", "my-tool", "gui", "shop"}, brew)
+        self.assertEqual(calls, [("info", "--json=v2", "--cask", "my-tool", "other", "zed")])
+        self.assertEqual([(a["cask"], a["cask_version"], a["auto_updates"]) for a in apps], [
+            ("zed", "0.9", True), (None, None, None), ("me/tap/my-tool", "3.1,42", None),
+            (None, None, None), (None, None, None), (None, None, None)])
+
+    def test_no_brew_call_when_no_app_name_is_a_cask(self):
+        brew = FakeBrew(casks=APP_CASKS)
+        brew.json = lambda *a: self.fail(f"unexpected brew call {a}")
+        brewdash.match_casks([app_record("/A/Unknown.app", "Unknown", "manual")], {"zed"}, brew)
+
+    def test_store_lists_apps_even_when_cask_matching_fails(self):
+        cache = Path(self.dir) / "cache"
+        (cache / "api").mkdir(parents=True)
+        (cache / "api" / "cask_names.txt").write_text("zed\nghost\n")
+        apps_dir = Path(self.dir) / "Applications"
+        zed = make_app(apps_dir, "Zed", "0.8")
+        ghost = make_app(apps_dir, "Ghost", "1.0")
+        store = brewdash.Store(FakeBrew(cache=str(cache), casks=APP_CASKS), home=self.dir, app_dirs=[str(apps_dir)])
+        store.refresh()
+        env = wait_for(lambda: store.apps)
+        self.assertEqual(env, {"error": "could not match apps to casks: Cask 'ghost' is unavailable",
+                               "apps": [app_record(ghost, "Ghost", "manual", "1.0"), app_record(zed, "Zed", "manual", "0.8")],
+                               "names_known": True})
+        self.assertEqual(store.snapshot()["shell"], {"path": [], "tools": []})
+
+    def test_store_matches_casks_and_marks_apps_a_cask_installed(self):
+        cache = Path(self.dir) / "cache"
+        (cache / "api").mkdir(parents=True)
+        (cache / "api" / "cask_names.txt").write_text("zed\ngui\n")
+        apps_dir = Path(self.dir) / "Applications"
+        zed = make_app(apps_dir, "Zed", "0.8")
+        gui = make_app(apps_dir, "Gui", "2.0")
+        info = {"formulae": [], "casks": [cask("gui", artifacts=[{"app": ["Gui.app"], "target": gui}])]}
+        store = brewdash.Store(FakeBrew(cache=str(cache), casks=APP_CASKS, info=info), home=self.dir, app_dirs=[str(apps_dir)])
+        store.refresh()
+        # gui is in cask_names but not in APP_CASKS: asking brew about it would set an error.
+        self.assertEqual(wait_for(lambda: store.apps), {"error": None, "names_known": True, "apps": [
+            app_record(gui, "Gui", "brew", "2.0", brew_id="c:gui"),
+            app_record(zed, "Zed", "manual", "0.8", cask="zed", cask_version="0.9", auto_updates=True)]})
+
+
+class ShellTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = str(Path(self.tmp.name) / "home")
+        self.prefix = str(Path(self.tmp.name) / "brew")
+        for d in ("home/bin", "home/.jbang/bin", "brew/opt/helm@2/bin"):
+            (Path(self.tmp.name) / d).mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, rc, *lines):
+        (Path(self.home) / rc).write_text("\n".join(lines) + "\n")
+
+    def scan(self, names=None, installed=None):
+        names = names or {"formula": {"jbang", "nvm", "fzf"}, "cask": set()}
+        installed = installed or {"formula": {"fzf"}, "cask": set()}
+        return brewdash.scan_shell(self.home, self.prefix, names, installed)
+
+    def entry(self, rc, line, raw, d, exists, issue=None, suggestion=None, alternative=None):
+        return {"file": rc, "line": line, "raw": raw, "dir": d, "exists": exists, "issue": issue,
+                "suggestion": suggestion, "alternative": alternative}
+
+    def test_path_entries_get_an_issue_and_a_fix(self):
+        h, pre = self.home, self.prefix
+        self.write(".zshrc",
+                   'export PATH="$HOME/bin:$PATH"',
+                   "export API_TOKEN=secret-value",
+                   "PATH=/nope/bin:$PATH  # old tool",
+                   'export PATH="${HOME}/bin:$PATH"',
+                   f'export PATH="{pre}/Cellar/php@8.0/8.0.30/bin:$PATH"',
+                   'export PATH="/usr/local/opt/helm@2/bin:/usr/local/opt/gone/bin:$PATH"',
+                   "export PATH=~/.jbang/bin:$FOO/bin:$PATH")
+        self.write(".bashrc", 'export PATH="$HOME/bin:$PATH"')
+        self.assertEqual(self.scan()["path"], [
+            self.entry(".zshrc", 1, "$HOME/bin", f"{h}/bin", True),
+            self.entry(".zshrc", 3, "/nope/bin", "/nope/bin", False, "missing", "The directory does not exist; this line can go."),
+            self.entry(".zshrc", 4, "${HOME}/bin", f"{h}/bin", True, "duplicate", ".zshrc already adds this directory earlier; this line can go."),
+            self.entry(".zshrc", 5, f"{pre}/Cellar/php@8.0/8.0.30/bin", f"{pre}/Cellar/php@8.0/8.0.30/bin", False, "pinned",
+                       f"Points at one installed version of php@8.0 and breaks on every upgrade. That version is no longer installed. Use {pre}/opt/php@8.0/bin instead."),
+            self.entry(".zshrc", 6, "/usr/local/opt/helm@2/bin", "/usr/local/opt/helm@2/bin", False, "old_prefix",
+                       f"Homebrew lives in {pre} on this Mac. Use {pre}/opt/helm@2/bin instead."),
+            self.entry(".zshrc", 6, "/usr/local/opt/gone/bin", "/usr/local/opt/gone/bin", False, "old_prefix",
+                       f"Homebrew lives in {pre} on this Mac. Nothing is installed there either; this line can go."),
+            self.entry(".zshrc", 7, "~/.jbang/bin", f"{h}/.jbang/bin", True, alternative={"kind": "formula", "name": "jbang"}),
+            self.entry(".zshrc", 7, "$FOO/bin", "$FOO/bin", None),
+            self.entry(".bashrc", 1, "$HOME/bin", f"{h}/bin", True),
+        ])
+
+    def test_an_existing_pinned_version_still_gets_the_opt_path(self):
+        cellar = Path(self.prefix) / "Cellar" / "node@20" / "20.1" / "bin"
+        cellar.mkdir(parents=True)
+        self.write(".zprofile", f"export PATH={cellar}:$PATH")
+        [e] = self.scan()["path"]
+        self.assertEqual((e["issue"], e["exists"], e["suggestion"]), ("pinned", True,
+                         f"Points at one installed version of node@20 and breaks on every upgrade. Use {self.prefix}/opt/node@20/bin instead."))
+
+    def test_brew_alternative_only_for_what_brew_has_and_is_not_installed(self):
+        self.write(".zshrc", "export PATH=$HOME/.jbang/bin:$PATH")
+        names = {"formula": {"jbang"}, "cask": set()}
+        self.assertIsNone(self.scan(names, {"formula": {"jbang"}, "cask": set()})["path"][0]["alternative"])
+        self.assertIsNone(self.scan({"formula": set(), "cask": set()})["path"][0]["alternative"])
+
+    def test_tools_started_by_the_shell_and_whether_brew_provides_them(self):
+        self.write(".zshrc",
+                   f'eval "$({self.prefix}/bin/brew shellenv)"',
+                   'export NVM_DIR="$HOME/.nvm"',
+                   '[ -s "$NVM_DIR/nvm.sh" ] && \\. "$NVM_DIR/nvm.sh"',
+                   "source $ZSH/oh-my-zsh.sh",
+                   "source <(fzf --zsh)",
+                   "# source ~/.pyenv/pyenv init",
+                   'alias nvm.sh="echo"')
+        self.assertEqual(self.scan()["tools"], [
+            {"name": "Homebrew", "file": ".zshrc", "line": 1, "via_brew": True, "alternative": None},
+            {"name": "nvm", "file": ".zshrc", "line": 3, "via_brew": False, "alternative": "nvm"},
+            {"name": "Oh My Zsh", "file": ".zshrc", "line": 4, "via_brew": False, "alternative": None},
+            {"name": "fzf", "file": ".zshrc", "line": 5, "via_brew": True, "alternative": None},
+        ])
+
+    def test_no_rc_files_means_nothing_to_show(self):
+        self.assertEqual(self.scan(), {"path": [], "tools": []})
+
+
+PKGS_WITH_TAP = {**by_id(), "f:tool2": {"full_name": "me/tap/tool2", "kind": "formula"}}
+
+
+class ExportListTest(unittest.TestCase):
+    def test_list_item_maps_each_kind_to_its_brewfile_entry(self):
+        apps = {"a:/A/Zed.app": {"cask": "zed"}, "a:/A/Bare.app": {"cask": None}}
+        taps = {"me/tap"}
+        self.assertEqual([brewdash.list_item(i, PKGS_WITH_TAP, apps, taps) for i in
+                          ("f:libA", "f:tool2", "c:gui", "a:/A/Zed.app", "t:me/tap")], [
+            {"type": "brew", "name": "libA"}, {"type": "brew", "name": "me/tap/tool2"}, {"type": "cask", "name": "gui"},
+            {"type": "cask", "name": "zed"}, {"type": "tap", "name": "me/tap"}])
+        for bad in ("f:nope", "a:/A/Bare.app", "a:/A/Nope.app", "t:other/tap", "x:libA", "libA"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                brewdash.list_item(bad, PKGS_WITH_TAP, apps, taps)
+
+    def test_brewfile_puts_taps_first_and_trusts_tap_packages(self):
+        items = [{"type": "cask", "name": "zed"}, {"type": "brew", "name": "jq"}, {"type": "brew", "name": "me/tap/tool2"},
+                 {"type": "tap", "name": "other/tap"}, {"type": "tap", "name": "homebrew/core"},
+                 {"type": "cask", "name": "homebrew/cask/iterm2"}, {"type": "brew", "name": "abc"}]
+        self.assertEqual(brewdash.brewfile(items), (
+            "# Brewfile from brewdash. On the new machine: brew bundle --file=Brewfile\n"
+            "\n"
+            'tap "me/tap"\n'
+            'tap "other/tap"\n'
+            'brew "abc"\n'
+            'brew "jq"\n'
+            'brew "me/tap/tool2", trusted: true\n'
+            'cask "homebrew/cask/iterm2", trusted: true\n'
+            'cask "zed"\n'))
+
+    def test_list_persists_skips_duplicates_and_removes(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d) / "state"
+            jq, zed, tap = {"type": "brew", "name": "jq"}, {"type": "cask", "name": "zed"}, {"type": "tap", "name": "me/tap"}
+            self.assertEqual(brewdash.ExportList(state).items(), [])
+            self.assertEqual(brewdash.ExportList(state).change(add=[jq, zed]), [jq, zed])
+            self.assertEqual(brewdash.ExportList(state).change(add=[zed, tap, tap]), [jq, zed, tap])
+            self.assertEqual(brewdash.ExportList(state).change(remove=[zed]), [jq, tap])
+            self.assertEqual(brewdash.ExportList(state).items(), [jq, tap])
+            self.assertEqual(json.loads((state / "list.json").read_text()), {"items": [jq, tap]})
+
+    def test_list_rejects_what_would_break_the_brewfile(self):
+        with tempfile.TemporaryDirectory() as d:
+            export = brewdash.ExportList(d)
+            for bad in ({"type": "mas", "name": "x"}, {"type": "brew", "name": 'x", args: ["evil"]'},
+                        {"type": "brew", "name": "-x"}, {"type": "brew"}, {"type": "cask", "name": "a b"}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    export.change(add=[bad])
+                with self.subTest(bad=bad, op="remove"), self.assertRaises(ValueError):
+                    export.change(remove=[bad])
+            self.assertFalse((Path(d) / "list.json").exists())
+
+
+class AdoptTest(unittest.TestCase):
+    APPS = {"a:/A/Zed.app": {"name": "Zed", "source": "manual", "cask": "zed"},
+            "a:/A/Shop.app": {"name": "Shop", "source": "appstore", "cask": "shop"},
+            "a:/A/Bare.app": {"name": "Bare", "source": "manual", "cask": None},
+            "a:/A/Gui.app": {"name": "Gui", "source": "brew", "cask": None}}
+
+    def test_adopt_hands_a_verified_hand_installed_app_to_brew(self):
+        self.assertEqual(brewdash.plan_job({"action": "adopt", "app": "a:/A/Zed.app"}, by_id(), self.APPS),
+                         ("bring Zed into brew", [["brew", "install", "--cask", "--adopt", "zed"]], False))
+
+    def test_adopt_refuses_app_store_unmatched_brew_and_unknown_apps(self):
+        for app in ("a:/A/Shop.app", "a:/A/Bare.app", "a:/A/Gui.app", "a:/A/Nope.app", None):
+            with self.subTest(app=app), self.assertRaises(ValueError):
+                brewdash.plan_job({"action": "adopt", "app": app}, by_id(), self.APPS)
+        with self.assertRaises(ValueError):
+            brewdash.plan_job({"action": "adopt", "app": "a:/A/Zed.app"}, by_id())
+
+
 class ServerWiringTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        cls.server, url, cls.token = brewdash.serve(port=0, open_browser=False, brew=FakeBrew(), state_dir=cls.tmp.name)
+        root = Path(cls.tmp.name)
+        (root / "cache" / "api").mkdir(parents=True)
+        (root / "cache" / "api" / "cask_names.txt").write_text("zed\n")
+        cls.zed = make_app(root / "Applications", "Zed", "0.8")
+        (root / "home").mkdir()
+        (root / "home" / ".zshrc").write_text("export PATH=/nope/bin:$PATH\n")
+        brew = FakeBrew(cache=str(root / "cache"), casks=APP_CASKS)
+        cls.server, url, cls.token = brewdash.serve(port=0, open_browser=False, brew=brew, state_dir=str(root / "state"),
+                                                    home=str(root / "home"), app_dirs=[str(root / "Applications")])
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 
@@ -848,7 +1158,7 @@ class ServerWiringTest(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    def request(self, method, path, body=None, token=True, host=None):
+    def request(self, method, path, body=None, token=True, host=None, response=False):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         headers = {"Host": host or f"127.0.0.1:{self.port}"}
         if token:
@@ -857,7 +1167,7 @@ class ServerWiringTest(unittest.TestCase):
         r = conn.getresponse()
         data = r.read()
         conn.close()
-        return r.status, data
+        return (r, data) if response else (r.status, data)
 
     def state(self):
         status, data = self.request("GET", "/api/state")
@@ -879,7 +1189,7 @@ class ServerWiringTest(unittest.TestCase):
         status, data = self.request("POST", "/api/plan", {"action": "uninstall", "targets": ["f:libC"]})
         self.assertEqual((status, json.loads(data)), (200, {"title": "uninstall libC", "commands": ["brew uninstall --formula libC"], "snapshot": True}))
         status, data = self.request("POST", "/api/impact", {"targets": ["f:libC"]})
-        self.assertEqual(json.loads(data)["blockers"], ["f:libA", "f:tool"])
+        self.assertEqual(json.loads(data)["blockers"], ["f:app", "f:libA", "f:tool"])
         self.assertEqual(self.request("POST", "/api/plan", {"action": "install", "kind": "formula", "name": "-x"})[0], 400)
 
     def test_a_job_submitted_over_http_runs_and_shows_up_in_jobs_and_history(self):
@@ -897,6 +1207,41 @@ class ServerWiringTest(unittest.TestCase):
         self.assertEqual(job["log"], ["$ brew pin --formula libA"])
         history = json.loads(self.request("GET", "/api/history")[1])
         self.assertEqual(history[0]["commands"], ["brew pin --formula libA"])
+
+    def apps_ready(self):
+        snap = self.state()
+        return snap if snap and snap["apps"] else None
+
+    def test_state_carries_apps_and_shell_from_the_given_home_and_app_dirs(self):
+        snap = wait_for(self.apps_ready)
+        self.assertEqual([(a["name"], a["cask"]) for a in snap["apps"]["apps"]], [("Zed", "zed")])
+        self.assertEqual([(e["raw"], e["issue"]) for e in snap["shell"]["path"]], [("/nope/bin", "missing")])
+
+    def test_adopt_is_planned_from_the_scanned_apps(self):
+        wait_for(self.apps_ready)
+        status, data = self.request("POST", "/api/plan", {"action": "adopt", "app": "a:" + self.zed})
+        self.assertEqual((status, json.loads(data)["commands"]), (200, ["brew install --cask --adopt zed"]))
+
+    def test_export_list_add_download_and_remove(self):
+        wait_for(self.apps_ready)
+        status, data = self.request("POST", "/api/list", {"op": "add", "ids": ["t:me/tap", "f:libA", "a:" + self.zed]})
+        items = [{"type": "tap", "name": "me/tap"}, {"type": "brew", "name": "libA"}, {"type": "cask", "name": "zed"}]
+        text = ('# Brewfile from brewdash. On the new machine: brew bundle --file=Brewfile\n\n'
+                'tap "me/tap"\nbrew "libA"\ncask "zed"\n')
+        self.assertEqual((status, json.loads(data)), (200, {"items": items, "brewfile": text}))
+        self.assertEqual(json.loads(self.request("GET", "/api/list")[1]), {"items": items, "brewfile": text})
+        r, body = self.request("GET", "/api/brewfile", response=True)
+        self.assertEqual((r.status, body.decode(), r.getheader("Content-Disposition"), r.getheader("Content-Type")),
+                         (200, text, 'attachment; filename="Brewfile"', "text/plain; charset=utf-8"))
+        self.assertEqual(json.loads((Path(self.tmp.name) / "state" / "list.json").read_text())["items"], items)
+        status, data = self.request("POST", "/api/list", {"op": "remove", "items": [items[1]]})
+        self.assertEqual((status, json.loads(data)["items"]), (200, [items[0], items[2]]))
+        self.assertEqual(self.request("GET", "/api/brewfile", token=False)[0], 403)
+        for body in ({"op": "add", "ids": ["f:nope"]}, {"op": "add", "ids": "f:libA"}, {"op": "drop"},
+                     {"op": "remove", "items": ["libA"]}, {"op": "remove", "items": [{"type": "x", "name": "y"}]}):
+            with self.subTest(body=body):
+                self.assertEqual(self.request("POST", "/api/list", body)[0], 400)
+        self.assertEqual(json.loads(self.request("GET", "/api/list")[1])["items"], [items[0], items[2]])
 
     def test_refresh_endpoint_bumps_the_version(self):
         before = wait_for(self.state)["version"]
