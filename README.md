@@ -1,8 +1,10 @@
 # brewdash
 
 A local web dashboard for Homebrew: what is installed, what it is for, what is
-outdated, what depends on what. Uninstall, upgrade, pin, start services and
-install new packages from the browser.
+outdated, what depends on what, which apps and shell tools live outside brew.
+Uninstall, upgrade, pin, start services, install new packages and bring
+hand-installed apps into brew from the browser, and export a Brewfile for
+another Mac.
 
 ```sh
 python3 brewdash.py            # opens the browser
@@ -17,7 +19,8 @@ Python 3 standard library only. Cytoscape.js is vendored in `web/vendor/`.
   size, install date, how many packages use it, description. Filters for
   outdated, orphan, pinned, missing dependency and service.
 - **Detail panel**: homepage, tap, caveats,
-  "depends on" and "used by" lists, and a dependency graph (1–3 hops).
+  "depends on" and "used by" lists (with the packages that need it only
+  indirectly), and a dependency graph (1–3 hops).
 - **What to do**: for an outdated, pinned, deprecated, disabled or broken
   package, the detail panel says whether brew can still update it, whether a
   newer version or Homebrew's replacement is already installed, what to install
@@ -41,6 +44,9 @@ Python 3 standard library only. Cytoscape.js is vendored in `web/vendor/`.
   way, it offers to install it. Only those lines are read, and brewdash never
   writes to these files.
 - **Export**: a list of what to install on another Mac (see below).
+
+`brew update` is not run on start; use the button. The header shows when the
+last update ran.
 
 ## Selecting several
 
@@ -66,14 +72,14 @@ On the new Mac:
 brew bundle --file=Brewfile
 ```
 
-`brew update` is not run on start; use the button. The header shows when the
-last update ran.
-
 ## Actions
 
 Every action opens a confirmation with the exact command. Uninstall also lists
-installed packages that depend on the selection (brew refuses the uninstall
-while they are installed) and the dependencies that will become orphans.
+the dependencies that will become orphans. If installed packages still need
+the selection, directly or through another dependency, brew refuses the plain
+uninstall, so the dialog offers two ways instead: **Uninstall them too** adds
+those packages to the uninstall, and **Uninstall anyway and break them** runs
+`brew uninstall --ignore-dependencies` and names what may stop working.
 
 One brew command runs at a time; later ones queue. Output streams into the
 Jobs panel. A command that needs a `sudo` password fails in the browser and
