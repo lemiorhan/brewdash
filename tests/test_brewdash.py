@@ -1215,6 +1215,101 @@ class AdoptTest(unittest.TestCase):
             brewdash.plan_job({"action": "adopt", "app": "a:/A/Zed.app"}, by_id())
 
 
+class TrashTest(unittest.TestCase):
+    APPS = {"a:/A/Zed.app": {"name": "Zed", "path": "/A/Zed.app", "source": "manual", "cask": "zed"},
+            "a:/A/Shop.app": {"name": "Shop", "path": "/A/Shop.app", "source": "appstore", "cask": None},
+            "a:/A/Gui.app": {"name": "Gui", "path": "/A/Gui.app", "source": "brew", "cask": None}}
+    SCRIPT = ["osascript", "-e", "on run argv", "-e", "set f to POSIX file (item 1 of argv) as alias",
+              "-e", 'tell application "Finder" to delete f', "-e", "end run"]
+
+    def test_trash_hands_a_hand_installed_or_app_store_app_to_finder_by_path(self):
+        for app, name in (("a:/A/Zed.app", "Zed"), ("a:/A/Shop.app", "Shop")):
+            with self.subTest(app=app):
+                self.assertEqual(brewdash.plan_job({"action": "trash", "app": app}, by_id(), self.APPS),
+                                 (f"move {name} to the Trash", [[*self.SCRIPT, f"/A/{name}.app"]], False))
+
+    def test_trash_refuses_a_brew_app_and_unknown_apps(self):
+        for app in ("a:/A/Gui.app", "a:/A/Nope.app", None):
+            with self.subTest(app=app), self.assertRaises(ValueError):
+                brewdash.plan_job({"action": "trash", "app": app}, by_id(), self.APPS)
+
+
+class UntapTest(unittest.TestCase):
+    TAPS = {"me/tap", "you/tap", "homebrew/core"}
+
+    def test_untap_runs_one_brew_untap_for_every_named_tap(self):
+        self.assertEqual(brewdash.plan_job({"action": "untap", "taps": ["me/tap", "you/tap"]}, by_id(), taps=self.TAPS),
+                         ("untap me/tap, you/tap", [["brew", "untap", "me/tap", "you/tap"]], True))
+
+    def test_untap_refuses_unknown_taps_and_malformed_requests(self):
+        for taps in (["me/tap", "nope/tap"], [], "me/tap", None, [1]):
+            with self.subTest(taps=taps), self.assertRaises(ValueError):
+                brewdash.plan_job({"action": "untap", "taps": taps}, by_id(), taps=self.TAPS)
+        with self.assertRaises(ValueError):
+            brewdash.plan_job({"action": "untap", "taps": ["me/tap"]}, by_id())
+
+
+class AskpassTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name) / "state"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_askpass_is_a_private_executable_that_asks_in_a_hidden_dialog(self):
+        path = Path(brewdash.write_askpass(self.state))
+        self.assertEqual((path, path.stat().st_mode & 0o777, self.state.stat().st_mode & 0o777),
+                         (self.state / "askpass", 0o700, 0o700))
+        self.assertEqual(path.read_text(), brewdash.ASKPASS)
+
+    def test_askpass_makes_an_existing_open_state_dir_private(self):
+        self.state.mkdir(mode=0o755)
+        self.state.chmod(0o755)
+        brewdash.write_askpass(self.state)
+        self.assertEqual(self.state.stat().st_mode & 0o777, 0o700)
+
+    def run_askpass(self, osascript_body, *args):
+        """Runs the askpass with /usr/bin/osascript swapped for a fake, which no test may run for real."""
+        fake = Path(self.tmp.name) / "osascript"
+        fake.write_text("#!/bin/sh\n" + osascript_body)
+        fake.chmod(0o700)
+        self.assertEqual(brewdash.ASKPASS.count("/usr/bin/osascript"), 1)
+        script = brewdash.ASKPASS.replace("/usr/bin/osascript", str(fake))
+        return subprocess.run(["/bin/sh", "-c", script, "askpass", *args], capture_output=True, text=True)
+
+    def test_askpass_shows_sudos_prompt_and_prints_only_the_typed_text(self):
+        p = self.run_askpass('for a in "$@"; do printf "[%s]\\n" "$a"; done', "Password for me:")
+        self.assertEqual((p.returncode, p.stderr), (0, ""))
+        self.assertEqual(p.stdout.splitlines(), [
+            "[-e]", "[on run argv]", "[-e]",
+            '[text returned of (display dialog (item 1 of argv) default answer "" with hidden answer '
+            'with title "brewdash" with icon caution)]',
+            "[-e]", "[end run]", "[Password for me:]"])
+        self.assertEqual(self.run_askpass('printf "%s" "$7"').stdout, "brewdash needs your password for sudo")
+
+    def test_a_cancelled_dialog_fails_with_the_line_that_shows_the_terminal_hint(self):
+        p = self.run_askpass("exit 1", "Password:")
+        self.assertEqual((p.returncode, p.stdout), (1, ""))
+        self.assertRegex(p.stderr, brewdash.SUDO_RE)
+
+    def test_brew_hands_sudo_the_askpass_unless_the_user_set_one(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("SUDO_ASKPASS", None)
+            self.assertEqual(brewdash.Brew("/b", askpass="/s/askpass").env["SUDO_ASKPASS"], "/s/askpass")
+            self.assertNotIn("SUDO_ASKPASS", brewdash.Brew("/b").env)
+            os.environ["SUDO_ASKPASS"] = "/mine"
+            self.assertEqual(brewdash.Brew("/b", askpass="/s/askpass").env["SUDO_ASKPASS"], "/mine")
+
+    def test_serve_writes_the_askpass_into_its_state_dir_for_the_real_brew(self):
+        made = []
+        with mock.patch.object(brewdash, "Brew", side_effect=lambda **kw: made.append(kw) or FakeBrew()):
+            server, _, _ = brewdash.serve(port=0, open_browser=False, state_dir=str(self.state), refresh=False)
+        server.server_close()
+        self.assertEqual(made, [{"askpass": str(self.state / "askpass")}])
+        self.assertTrue((self.state / "askpass").exists())
+
+
 class ServerWiringTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

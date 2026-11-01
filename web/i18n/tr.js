@@ -26,7 +26,7 @@ I18N.tr = {
   "col.name": "Ad", "col.version": "Sürüm", "col.latest": "En yeni", "col.size": "Boyut", "col.installed": "Kurulum",
   "col.usedby": "Kullanan", "col.deps": "Bağımlılık", "col.desc": "Açıklama",
 
-  "btn.upgrade": "Yükselt", "btn.pin": "Sabitle", "btn.unpin": "Sabitlemeyi kaldır", "btn.uninstall": "Kaldır", "btn.copy": "Kopyala",
+  "btn.upgrade": "Yükselt", "btn.pin": "Sabitle", "btn.unpin": "Sabitlemeyi kaldır", "btn.uninstall": "Kaldır", "btn.untap": "Untap", "btn.copy": "Kopyala",
   "btn.copied": "Kopyalandı", "btn.remove": "Çıkar", "btn.cancel": "Vazgeç", "btn.run": "Çalıştır", "btn.close": "Kapat",
 
   "detail.cask": "cask", "detail.what_to_do": "Ne yapmalı", "detail.already_installed": "Zaten kurulu:",
@@ -56,11 +56,12 @@ I18N.tr = {
   "common.computing": "Hesaplanıyor…", "common.ok": "tamam", "common.yes": "evet", "common.no": "hayır",
 
   "sig.apple": "Apple", "sig.appstore": "App Store", "sig.developer_id": "Developer ID", "sig.other": "başka imzalayan",
-  "sig.adhoc": "ad-hoc, imzalayan yok", "sig.unsigned": "imzasız", "sig.unknown": "bilinmiyor",
+  "sig.adhoc": "ad-hoc, imzalayan yok", "sig.unsigned": "imzasız", "sig.unknown": "bilinmiyor", "sig.built_here": "bu Mac'te build edildi (ad-hoc)",
   "source.brew": "brew", "source.appstore": "App Store", "source.manual": "elle kuruldu",
   "apps.scanning": "/Applications taranıyor…", "apps.cask_has": "(cask'te {version} var)", "apps.in_casks": "yükseltme ve kaldırma Cask'ler sekmesinde",
   "apps.via_store": "App Store üzerinden güncellenir", "apps.adopt": "brew'a al", "apps.auto_updates": "kendini günceller",
-  "apps.search_cask": "Cask ara",
+  "apps.search_cask": "Cask ara", "apps.trash": "Çöp Kutusu'na taşı",
+  "apps.trash_help": "<b>Kaldır</b>, brew'un kurduğu bir uygulamayı <span class=\"mono\">brew uninstall --cask</span> ile siler. <b>Çöp Kutusu'na taşı</b>, brew'un kurmadığı bir uygulamayı Finder ile Çöp Kutusu'na taşır. Apple'ın kendi uygulamalarında ve brewdash'te bu buton yok. Çöp Kutusu'nu boşaltana kadar geri alabilirsin. Uygulamanın ~/Library altında bıraktığı ayar ve cache dosyaları yerinde kalır.",
   "apps.no_cask_list": "Homebrew'un cask listesi henüz cache'te yok, bu yüzden uygulamalar cask'lerle eşleştirilmedi. brew update çalıştır, sonra Yenile'ye bas.",
   "apps.adopt_help": "Elle kurulmuş {n} uygulamanın eşleşen bir brew cask'i var. <b>brew'a al</b>, <span class=\"mono\">brew install --cask --adopt</span> çalıştırır: brew mevcut uygulamayı devralır ve bundan sonra onu her cask gibi yükseltir ve kaldırır. Eşleşme sadece cask tam olarak o .app'i kuruyorsa gösterilir.",
   "apps.signature_help": "İmza sütunu her uygulamayı kimin imzaladığını, uygulamanın kendi söylediğine göre gösterir. brewdash imzayı doğrulamaz, notarization'a da bakmaz; <span class=\"mono\">spctl --assess</span> ikisini de yapar ama dolu bir Applications klasörü için dakikalar sürer.",
@@ -194,6 +195,7 @@ I18N.tr = {
   "bulk.why.pin": "Seçilenlerin hepsi zaten sabitlendi.", "bulk.why.unpin": "Seçilenlerden hiçbiri sabitlenmemiş.",
   "bulk.why.listed": "Seçilenlerin hepsi zaten dışa aktarma listesinde.",
   "bulk.why.unlistable": "Listeye sadece paketler, tap'ler ve brew cask'i olan uygulamalar girebilir.",
+  "bulk.why.untap": "Sadece hiçbir paketi kurulu olmayan tap'ler untap edilebilir. Önce paketlerini kaldır.",
   "bulk.add_to_list": "Listeye ekle", "bulk.selected": "{n} seçili", "bulk.clear": "Temizle",
   "bulk.hint": "Her buton, seçilenlerden sadece kendine uyanlara uygulanır.",
 
@@ -291,6 +293,8 @@ I18N.tr = {
   "srv.path.old_prefix_gone": "Bu Mac'te Homebrew {prefix} altında. Bu dizinde de kurulu bir şey yok; bu satır silinebilir.",
   "srv.path.missing": "Dizin yok; bu satır silinebilir.",
   "srv.plan.adopt": "brew'a al: {name}",
+  "srv.plan.trash": "Çöp Kutusu'na taşı: {name}",
+  "srv.plan.untap": "untap: {names}",
   "srv.plan.upgrade": "yükselt: {names}",
   "srv.plan.pin": "sabitle: {names}",
   "srv.plan.unpin": "sabitlemeyi kaldır: {names}",

@@ -448,10 +448,14 @@ function renderHealth() {
 const SIGNATURE = {
   apple: "ok", appstore: "ok", developer_id: "ok", other: "muted", adhoc: "bad", unsigned: "bad", unknown: "muted",
 };
-const weakSignature = (a) => ["adhoc", "unsigned"].includes(a.signature?.kind);
+// macos/build-app.sh sets this id and signs ad-hoc: brewdash.app is built on the Mac it runs on.
+const BREWDASH_ID = "io.github.lemiorhan.brewdash";
+const builtHere = (a) => a.bundle_id === BREWDASH_ID && a.signature?.kind === "adhoc";
+const weakSignature = (a) => ["adhoc", "unsigned"].includes(a.signature?.kind) && !builtHere(a);
 
-function signature(sig) {
+function signature(sig, app) {
   if (!sig) return `<span class="muted">…</span>`;
+  if (app && builtHere(app)) return `<span class="muted">${t("sig.built_here")}</span>`;
   const kind = SIGNATURE[sig.kind] ? sig.kind : "unknown";
   const cls = SIGNATURE[kind];
   return `<span class="${cls === "bad" ? "sig-bad" : cls}" title="${esc(sig.error || sig.signer || "")}">${t("sig." + kind)}</span>${kind === "developer_id" || kind === "other" ? ` <span class="muted">${esc(sig.signer)}</span>` : ""}`;
@@ -469,15 +473,20 @@ function renderApps() {
       : a.source === "appstore" ? `<span class="muted">${t("apps.via_store")}</span>`
       : a.cask ? `<button class="small accent" data-adopt="${esc(a.id)}">${t("apps.adopt")}</button> <span class="mono">${esc(a.cask)}</span>${newer}${a.auto_updates ? ` <span class="muted">${t("apps.auto_updates")}</span>` : ""}`
       : `<button class="small" data-findcask="${esc(a.name)}">${t("apps.search_cask")}</button>`;
+    // Apple's own apps ship with macOS, and trashing brewdash would pull the app out from under itself.
+    const remove = a.source === "brew" ? `<button class="small danger" data-uninstall="${esc(a.brew_id)}">${t("btn.uninstall")}</button>`
+      : builtHere(a) || a.signature?.kind === "apple" ? ""
+      : `<button class="small danger" data-trash="${esc(a.id)}">${t("apps.trash")}</button>`;
     return `<tr><td>${sel ? `<input type="checkbox" data-sel="${esc(sel)}" ${S.selected.has(sel) ? "checked" : ""}>` : ""}</td>
-      <td class="name">${esc(a.name)}</td><td class="mono">${esc(a.version || "")}</td><td>${t("source." + a.source)}</td><td>${signature(a.signature)}</td><td>${action}</td></tr>`;
+      <td class="name">${esc(a.name)}</td><td class="mono">${esc(a.version || "")}</td><td>${t("source." + a.source)}</td><td>${signature(a.signature, a)}</td><td>${action}</td><td>${remove}</td></tr>`;
   };
   $("#content").innerHTML = `
     ${env.error ? `<div class="warn">${esc(env.error)}</div>` : ""}
     ${env.names_known ? "" : `<div class="info">${t("apps.no_cask_list")}</div>`}
     <p class="muted">${t("apps.adopt_help", { n: adoptable.length })}</p>
     <p class="muted">${t("apps.signature_help")}</p>
-    <table><thead><tr><th></th><th>${t("detail.app")}</th><th>${t("col.version")}</th><th>${t("apps.installed_by")}</th><th>${t("apps.signature")}</th><th>Brew</th></tr></thead>
+    <p class="muted">${t("apps.trash_help")}</p>
+    <table><thead><tr><th></th><th>${t("detail.app")}</th><th>${t("col.version")}</th><th>${t("apps.installed_by")}</th><th>${t("apps.signature")}</th><th>Brew</th><th></th></tr></thead>
     <tbody>${apps.map(row).join("")}</tbody></table>`;
 }
 
@@ -973,7 +982,7 @@ async function confirmAction(req, { impact = false, breaks = [] } = {}) {
     ${breaks.length ? `<div class="warn"><b>${t("modal.breaks")}</b><div class="chips" style="margin-top:6px">${breaks.map(chip).join("")}</div></div>` : ""}
     ${imp?.new_orphans.length ? `<div class="info">${t("modal.new_orphans", { n: imp.new_orphans.length })}<div class="chips" style="margin-top:6px">${imp.new_orphans.map(chip).join("")}</div></div>` : ""}
     ${plan.snapshot ? `<div class="info">${t("modal.snapshot")}</div>` : ""}
-    <div class="modal-actions"><button id="m-cancel">${t("btn.cancel")}</button>${blocked ? "" : `<button id="m-ok" class="${req.action === "uninstall" || req.action === "autoremove" ? "danger" : "accent"}">${t("btn.run")}</button>`}</div>`;
+    <div class="modal-actions"><button id="m-cancel">${t("btn.cancel")}</button>${blocked ? "" : `<button id="m-ok" class="${["uninstall", "autoremove", "trash", "untap"].includes(req.action) ? "danger" : "accent"}">${t("btn.run")}</button>`}</div>`;
   $("#modal").classList.remove("hidden");
   $("#m-cancel").onclick = closeModal;
   const ok = $("#m-ok");
@@ -984,6 +993,7 @@ async function confirmAction(req, { impact = false, breaks = [] } = {}) {
       S.openJobs.add(job.id);
       $("#jobs").classList.remove("collapsed");
       if (req.targets?.length > 1) S.selected.clear();
+      req.taps?.forEach((n) => S.selected.delete("t:" + n));
       loadJobs(); renderBulk();
     } catch (e) { alertBox(e.message); }
   };
@@ -1004,6 +1014,10 @@ function act(action, targets) {
 }
 
 // Each bulk action, the selected ids it applies to, and why it is off when it applies to none.
+function tapOf(id) {
+  return id.startsWith("t:") ? (S.snap?.model?.taps || []).find((tp) => tp.name === id.slice(2)) : null;
+}
+
 function bulkActions(ids) {
   const pk = ids.filter((id) => S.pkgs.has(id)).map((id) => S.pkgs.get(id));
   const items = ids.map(itemFor).filter(Boolean);
@@ -1014,6 +1028,7 @@ function bulkActions(ids) {
     ["pin", t("btn.pin"), "", pk.filter((p) => !p.pinned).map((p) => p.id), none || t("bulk.why.pin")],
     ["unpin", t("btn.unpin"), "", pk.filter((p) => p.pinned).map((p) => p.id), none || t("bulk.why.unpin")],
     ["uninstall", t("btn.uninstall"), "danger", pk.map((p) => p.id), none],
+    ["untap", t("btn.untap"), "danger", ids.filter((id) => !tapOf(id)?.installed.length && tapOf(id)), t("bulk.why.untap")],
     ["list", t("bulk.add_to_list"), "", ids.filter((id) => itemFor(id) && fresh.some((i) => i.type === itemFor(id).type && i.name === itemFor(id).name)),
       items.length ? t("bulk.why.listed") : t("bulk.why.unlistable")],
   ];
@@ -1117,10 +1132,13 @@ document.addEventListener("click", (e) => {
     if (b === "clear") { S.selected.clear(); renderBulk(); renderView(); return; }
     const ids = bulkActions([...S.selected]).find(([k]) => k === b)[3];
     if (b === "list") { loadList({ op: "add", ids }); return; }
+    if (b === "untap") { confirmAction({ action: "untap", taps: ids.map((id) => id.slice(2)) }); return; }
     act(b, ids); return;
   }
   if (d("unlist")) { const [type, ...n] = d("unlist").split(":"); loadList({ op: "remove", items: [{ type, name: n.join(":") }] }); return; }
   if (d("adopt")) { confirmAction({ action: "adopt", app: d("adopt") }); return; }
+  if (d("trash")) { confirmAction({ action: "trash", app: d("trash") }); return; }
+  if (d("uninstall")) { act("uninstall", [d("uninstall")]); return; }
   if (d("findcask")) { S.tab = "install"; renderTabs(); renderView(); $("#search-q").value = d("findcask"); doSearch(); return; }
   if (t.id === "dl-brewfile") { downloadBrewfile(); return; }
   if (t.id === "copy-brewfile") { navigator.clipboard.writeText(S.list.brewfile); t.textContent = copiedLabel(); return; }

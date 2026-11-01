@@ -26,7 +26,7 @@ I18N.es = {
   "col.name": "Nombre", "col.version": "Versión", "col.latest": "Última", "col.size": "Tamaño", "col.installed": "Instalado",
   "col.usedby": "Usado por", "col.deps": "Deps.", "col.desc": "Descripción",
 
-  "btn.upgrade": "Actualizar", "btn.pin": "Fijar", "btn.unpin": "Desfijar", "btn.uninstall": "Desinstalar", "btn.copy": "Copiar",
+  "btn.upgrade": "Actualizar", "btn.pin": "Fijar", "btn.unpin": "Desfijar", "btn.uninstall": "Desinstalar", "btn.untap": "Quitar tap", "btn.copy": "Copiar",
   "btn.copied": "Copiado", "btn.remove": "Quitar", "btn.cancel": "Cancelar", "btn.run": "Ejecutar", "btn.close": "Cerrar",
 
   "detail.cask": "cask", "detail.what_to_do": "Qué hacer", "detail.already_installed": "Ya instalado:",
@@ -56,11 +56,12 @@ I18N.es = {
   "common.computing": "Calculando…", "common.ok": "ok", "common.yes": "sí", "common.no": "no",
 
   "sig.apple": "Apple", "sig.appstore": "App Store", "sig.developer_id": "Developer ID", "sig.other": "otro firmante",
-  "sig.adhoc": "ad-hoc, sin firmante", "sig.unsigned": "sin firmar", "sig.unknown": "desconocida",
+  "sig.adhoc": "ad-hoc, sin firmante", "sig.unsigned": "sin firmar", "sig.unknown": "desconocida", "sig.built_here": "compilada en este Mac (ad-hoc)",
   "source.brew": "brew", "source.appstore": "App Store", "source.manual": "instalada a mano",
   "apps.scanning": "Escaneando /Applications…", "apps.cask_has": "(el cask tiene {version})", "apps.in_casks": "actualizar y desinstalar en Casks",
   "apps.via_store": "se actualiza desde la App Store", "apps.adopt": "Pasar a brew", "apps.auto_updates": "se actualiza sola",
-  "apps.search_cask": "Buscar cask",
+  "apps.search_cask": "Buscar cask", "apps.trash": "Mover a la Papelera",
+  "apps.trash_help": "<b>Desinstalar</b> quita una app que instaló brew con <span class=\"mono\">brew uninstall --cask</span>. <b>Mover a la Papelera</b> hace que el Finder mueva a la Papelera una app que no instaló brew (no aparece en las apps de Apple ni en brewdash), de donde puedes recuperarla hasta que la vacíes. Los ajustes y cachés que la app dejó en ~/Library se quedan donde están.",
   "apps.no_cask_list": "La lista de casks de Homebrew aún no está en caché, así que las apps no se asocian a casks. Ejecuta brew update y luego Recargar.",
   "apps.adopt_help": {
     one: "{n} app instalada a mano tiene un cask de brew equivalente. <b>Pasar a brew</b> ejecuta <span class=\"mono\">brew install --cask --adopt</span>: brew se hace cargo de la app existente y, desde entonces, la actualiza y desinstala como cualquier cask. Solo se muestra una coincidencia cuando el cask instala exactamente esa .app.",
@@ -201,6 +202,7 @@ I18N.es = {
   "bulk.why.pin": "Todo lo seleccionado ya está fijado.", "bulk.why.unpin": "Nada de lo seleccionado está fijado.",
   "bulk.why.listed": "Todo lo seleccionado ya está en la lista de exportación.",
   "bulk.why.unlistable": "Solo los paquetes, los taps y las apps con un cask de brew pueden ir en la lista.",
+  "bulk.why.untap": "Solo los taps de los que no hay nada instalado; desinstala antes sus paquetes.",
   "bulk.add_to_list": "Añadir a la lista", "bulk.selected": "{n} seleccionados", "bulk.clear": "Limpiar",
   "bulk.hint": "Cada botón actúa solo sobre los elementos seleccionados a los que se aplica.",
 
@@ -301,6 +303,8 @@ I18N.es = {
   "srv.path.old_prefix_gone": "En este Mac, Homebrew está en {prefix}. Tampoco hay nada instalado ahí; esta línea sobra.",
   "srv.path.missing": "El directorio no existe; esta línea sobra.",
   "srv.plan.adopt": "pasar {name} a brew",
+  "srv.plan.trash": "mover {name} a la Papelera",
+  "srv.plan.untap": "quitar tap {names}",
   "srv.plan.upgrade": "actualizar {names}",
   "srv.plan.pin": "fijar {names}",
   "srv.plan.unpin": "desfijar {names}",

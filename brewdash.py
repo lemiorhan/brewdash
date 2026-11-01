@@ -216,6 +216,8 @@ MESSAGES = {
                             "Nothing is installed there either; this line can go.",
     "path.missing": "The directory does not exist; this line can go.",
     "plan.adopt": "bring {name} into brew",
+    "plan.trash": "move {name} to the Trash",
+    "plan.untap": "untap {names}",
     "plan.upgrade": "upgrade {names}",
     "plan.pin": "pin {names}",
     "plan.unpin": "unpin {names}",
@@ -450,20 +452,35 @@ def check_targets(targets, pkgs):
     return targets
 
 
-def plan_job(req, pkgs, apps=None):
+def plan_job(req, pkgs, apps=None, taps=None):
     """Turn an API request into (title, [argv...], snapshot?). Raises ValueError on bad input."""
-    title, cmds, snap = plan_job_msg(req, pkgs, apps)
+    title, cmds, snap = plan_job_msg(req, pkgs, apps, taps)
     return render(title), cmds, snap
 
 
-def plan_job_msg(req, pkgs, apps=None):
+def plan_job_msg(req, pkgs, apps=None, taps=None):
     """plan_job with the title as a message."""
     action = req.get("action")
+    if action == "untap":
+        names = req.get("taps")
+        if not isinstance(names, list) or not names or not all(isinstance(n, str) and n in (taps or ()) for n in names):
+            raise ValueError("unknown tap in taps")
+        return msg("plan.untap", names=", ".join(names)), [["brew", "untap", *names]], True
     if action == "adopt":
         app = (apps or {}).get(req.get("app"))
         if not app or app["source"] != "manual" or not app["cask"]:
             raise ValueError("only an app with a verified cask, installed outside brew and the App Store, can be adopted")
         return msg("plan.adopt", name=app["name"]), [["brew", "install", "--cask", "--adopt", app["cask"]]], False
+    if action == "trash":
+        app = (apps or {}).get(req.get("app"))
+        # A cask's app goes through brew uninstall, or brew keeps a record of an app that is gone.
+        if not app or app["source"] == "brew":
+            raise ValueError("only an app installed outside brew can be moved to the Trash")
+        # The path goes in as an argument, so no app name is ever parsed as AppleScript.
+        # Inside a Finder tell block POSIX file does not resolve, so the alias is made outside it.
+        script = ["-e", "on run argv", "-e", "set f to POSIX file (item 1 of argv) as alias",
+                  "-e", 'tell application "Finder" to delete f', "-e", "end run"]
+        return msg("plan.trash", name=app["name"]), [["osascript", *script, app["path"]]], False
     targets = check_targets(req.get("targets"), pkgs)
     formulae = [pkgs[t]["name"] for t in targets if pkgs[t]["kind"] == "formula"]
     casks = [pkgs[t]["name"] for t in targets if pkgs[t]["kind"] == "cask"]
@@ -658,10 +675,33 @@ def sign_apps(apps, sysrun):
 
 # ---------- brew access ----------
 
+# On Cancel, or with no screen to draw on, the helper prints a line SUDO_RE matches, so the job shows the Terminal hint.
+ASKPASS = """#!/bin/sh
+/usr/bin/osascript -e 'on run argv' \\
+  -e 'text returned of (display dialog (item 1 of argv) default answer "" with hidden answer with title "brewdash" with icon caution)' \\
+  -e 'end run' "${1:-brewdash needs your password for sudo}" && exit 0
+echo "sudo: a password is required; the brewdash password dialog was cancelled or could not open" >&2
+exit 1
+"""
+
+
+def write_askpass(state_dir):
+    """A SUDO_ASKPASS helper in `state_dir`: a job has no terminal, so sudo asks in a macOS dialog instead.
+    sudo passes its prompt as $1 and reads the password from stdout."""
+    d = Path(state_dir)
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    d.chmod(0o700)
+    path = d / "askpass"
+    path.write_text(ASKPASS)
+    path.chmod(0o700)
+    return str(path)
+
+
 class Brew:
-    def __init__(self, exe=None):
+    def __init__(self, exe=None, askpass=None):
         self.exe = exe or shutil.which("brew") or "/opt/homebrew/bin/brew"
-        self.env = {**os.environ, **BREW_ENV}
+        # brew calls sudo with -A whenever SUDO_ASKPASS is set; one the user set wins.
+        self.env = {**({"SUDO_ASKPASS": askpass} if askpass else {}), **os.environ, **BREW_ENV}
 
     def argv(self, cmd):
         return [self.exe, *cmd[1:]] if cmd[0] == "brew" else cmd
@@ -1281,11 +1321,11 @@ def make_handler(store, runner, brew, token, port_ref, export):
                     pkgs = store.by_id()
                     return self._send(200, removal_impact(pkgs, check_targets(body.get("targets"), pkgs)))
                 if path == "/api/plan":
-                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id())
+                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id(), store.tap_names())
                     return self._send(200, {"title": render(title), "title_msg": title,
                                             "commands": [shlex.join(c) for c in cmds], "snapshot": snap})
                 if path == "/api/jobs":
-                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id())
+                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id(), store.tap_names())
                     return self._send(201, runner.submit(render(title), cmds, snap, title))
                 if path == "/api/list":
                     if body.get("op") == "add":
@@ -1321,7 +1361,7 @@ def make_handler(store, runner, brew, token, port_ref, export):
 
 def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True, home=None, app_dirs=None,
           sysrun=run_command):
-    brew = brew or Brew()
+    brew = brew or Brew(askpass=write_askpass(state_dir))
     store = Store(brew, home, app_dirs, sysrun)
     runner = Runner(brew, store, state_dir)
     token = secrets.token_urlsafe(24)

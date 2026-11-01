@@ -29,7 +29,7 @@ I18N.en = {
   "col.name": "Name", "col.version": "Version", "col.latest": "Latest", "col.size": "Size", "col.installed": "Installed",
   "col.usedby": "Used by", "col.deps": "Deps", "col.desc": "Description",
 
-  "btn.upgrade": "Upgrade", "btn.pin": "Pin", "btn.unpin": "Unpin", "btn.uninstall": "Uninstall", "btn.copy": "Copy",
+  "btn.upgrade": "Upgrade", "btn.pin": "Pin", "btn.unpin": "Unpin", "btn.uninstall": "Uninstall", "btn.untap": "Untap", "btn.copy": "Copy",
   "btn.copied": "Copied", "btn.remove": "Remove", "btn.cancel": "Cancel", "btn.run": "Run", "btn.close": "Close",
 
   "detail.cask": "cask", "detail.what_to_do": "What to do", "detail.already_installed": "Already installed:",
@@ -59,11 +59,12 @@ I18N.en = {
   "common.computing": "Computing…", "common.ok": "ok", "common.yes": "yes", "common.no": "no",
 
   "sig.apple": "Apple", "sig.appstore": "App Store", "sig.developer_id": "Developer ID", "sig.other": "other signer",
-  "sig.adhoc": "ad-hoc, no signer", "sig.unsigned": "not signed", "sig.unknown": "unknown",
+  "sig.adhoc": "ad-hoc, no signer", "sig.unsigned": "not signed", "sig.unknown": "unknown", "sig.built_here": "built on this Mac (ad-hoc)",
   "source.brew": "brew", "source.appstore": "App Store", "source.manual": "installed by hand",
   "apps.scanning": "Scanning /Applications…", "apps.cask_has": "(cask has {version})", "apps.in_casks": "upgrade and uninstall in Casks",
   "apps.via_store": "updates through the App Store", "apps.adopt": "Bring into brew", "apps.auto_updates": "updates itself",
-  "apps.search_cask": "Search cask",
+  "apps.search_cask": "Search cask", "apps.trash": "Move to Trash",
+  "apps.trash_help": "<b>Uninstall</b> removes an app brew installed with <span class=\"mono\">brew uninstall --cask</span>. <b>Move to Trash</b> has Finder move an app brew did not install to the Trash (not offered for Apple's own apps or for brewdash), where you can still get it back until you empty it. Settings and caches the app left in ~/Library stay where they are.",
   "apps.no_cask_list": "Homebrew's cask list is not cached yet, so apps are not matched to casks. Run brew update, then Refresh.",
   "apps.adopt_help": "{n} app(s) installed by hand have a matching brew cask. <b>Bring into brew</b> runs <span class=\"mono\">brew install --cask --adopt</span>: brew takes over the existing app, and from then on upgrades and uninstalls it like any cask. A match is shown only when the cask installs exactly that .app.",
   "apps.signature_help": "Signature shows who signed each app, as the app itself declares it. brewdash does not verify the signature and does not check notarization; <span class=\"mono\">spctl --assess</span> does both, but takes minutes for a full Applications folder.",
@@ -197,6 +198,7 @@ I18N.en = {
   "bulk.why.pin": "Everything selected is already pinned.", "bulk.why.unpin": "Nothing selected is pinned.",
   "bulk.why.listed": "Everything selected is already on the export list.",
   "bulk.why.unlistable": "Only packages, taps and apps with a brew cask can go on the list.",
+  "bulk.why.untap": "Only taps nothing is installed from; uninstall their packages first.",
   "bulk.add_to_list": "Add to list", "bulk.selected": "{n} selected", "bulk.clear": "Clear",
   "bulk.hint": "Each button acts only on the selected items it applies to.",
 

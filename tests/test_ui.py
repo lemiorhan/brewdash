@@ -5,6 +5,7 @@ then run the suite with `.venv/bin/python -m unittest discover -s tests`. Skippe
 """
 import json
 import re
+import shlex
 import sys
 import tempfile
 import threading
@@ -304,7 +305,9 @@ class UiSmokeTest(UiFixture):
         self.page.check('[data-sel="f:held"]')
         self.assertEqual(self.bulk(), {
             "upgrade": ("Upgrade (1)", False, None), "pin": ("Pin (1)", False, None), "unpin": ("Unpin (1)", False, None),
-            "uninstall": ("Uninstall (2)", False, None), "list": ("Add to list (2)", False, None), "clear": ("Clear", False, None)})
+            "uninstall": ("Uninstall (2)", False, None),
+            "untap": ("Untap (0)", True, "Only taps nothing is installed from; uninstall their packages first."),
+            "list": ("Add to list (2)", False, None), "clear": ("Clear", False, None)})
         self.page.uncheck('[data-sel="f:jq"]')
         self.assertEqual(self.bulk()["upgrade"], ("Upgrade (0)", True, "Nothing selected is outdated, or it is pinned or disabled."))
         self.assertEqual(self.bulk()["pin"], ("Pin (0)", True, "Everything selected is already pinned."))
@@ -318,12 +321,26 @@ class UiSmokeTest(UiFixture):
         self.page.wait_for_selector("#modal-card pre")
         self.assertEqual(self.page.inner_text("#modal-card pre"), "brew pin --formula jq")
 
-    def test_a_tap_and_an_app_alone_offer_only_the_list(self):
+    def test_a_tap_alone_offers_the_list_and_untap(self):
         self.page.click('nav button[data-tab="taps"]')
         self.page.check('[data-sel="t:me/tap"]')
         b = self.bulk()
         self.assertEqual(b["list"], ("Add to list (1)", False, None))
+        self.assertEqual(b["untap"], ("Untap (1)", False, None))
         self.assertEqual(b["uninstall"], ("Uninstall (0)", True, "Only installed formulae and casks; the selection has none."))
+
+    def test_untap_skips_a_selected_tap_something_is_installed_from(self):
+        self.page.click('nav button[data-tab="taps"]')
+        self.page.check('[data-sel="t:me/tap"]')
+        self.page.check('[data-sel="t:homebrew/core"]')
+        self.assertEqual(self.bulk()["untap"], ("Untap (1)", False, None))
+        self.page.click('[data-bulk="untap"]')
+        self.page.wait_for_selector("#modal-card pre")
+        self.assertEqual((self.page.inner_text("#modal-card h2"), self.page.inner_text("#modal-card pre")),
+                         ("untap me/tap", "brew untap me/tap"))
+        self.page.click("#m-ok")
+        wait_for(lambda: ["brew", "untap", "me/tap"] in self.brew.popened)
+        self.assertEqual(self.page.evaluate("[...S.selected]"), ["t:homebrew/core"])
 
     def test_a_new_state_keeps_selected_taps_and_apps(self):
         self.page.click('nav button[data-tab="taps"]')
@@ -361,15 +378,45 @@ class UiSmokeTest(UiFixture):
         self.page.click('nav button[data-tab="apps"]')
         self.page.wait_for_selector("[data-adopt]")
         rows = {r.locator("td.name").inner_text(): r for r in self.page.locator("#view tbody tr").all()}
-        self.assertEqual(rows["Shop"].locator("input, button").count(), 0)
+        self.assertEqual(rows["Shop"].locator("input, button:not([data-trash])").count(), 0)
         self.assertIn("updates through the App Store", rows["Shop"].inner_text())
-        self.assertEqual(rows["Bare"].locator("button").inner_text(), "Search cask")
+        self.assertEqual(rows["Bare"].locator("button:not([data-trash])").inner_text(), "Search cask")
         self.assertEqual(self.page.locator("[data-adopt]").count(), 1)
         rows["Zed"].locator("[data-adopt]").click()
         self.page.wait_for_selector("#modal-card pre")
         self.assertEqual(self.page.inner_text("#modal-card pre"), "brew install --cask --adopt zed")
         self.page.click("#m-ok")
         wait_for(lambda: ["brew", "install", "--cask", "--adopt", "zed"] in self.brew.popened)
+
+    def test_apps_tab_moves_an_app_brew_did_not_install_to_the_trash(self):
+        self.page.click('nav button[data-tab="apps"]')
+        self.page.wait_for_selector("[data-trash]")
+        rows = {r.locator("td.name").inner_text(): r for r in self.page.locator("#view tbody tr").all()}
+        self.assertEqual({n: r.locator("[data-trash]").inner_text() for n, r in rows.items()},
+                         {"Bare": "Move to Trash", "Shop": "Move to Trash", "Zed": "Move to Trash"})
+        self.assertEqual(self.page.locator("[data-uninstall]").count(), 0)
+        shop = str(Path(self.zed).with_name("Shop.app"))
+        argv = ["osascript", "-e", "on run argv", "-e", "set f to POSIX file (item 1 of argv) as alias",
+                "-e", 'tell application "Finder" to delete f', "-e", "end run", shop]
+        rows["Shop"].locator("[data-trash]").click()
+        self.page.wait_for_selector("#modal-card pre")
+        self.assertEqual((self.page.inner_text("#modal-card h2"), self.page.inner_text("#modal-card pre")),
+                         ("move Shop to the Trash", shlex.join(argv)))
+        self.page.click("#m-ok")
+        wait_for(lambda: argv in self.brew.popened)
+
+    def test_apps_tab_uninstalls_an_app_brew_installed_through_its_cask(self):
+        self.page.click('nav button[data-tab="apps"]')
+        self.page.wait_for_selector("[data-trash]")
+        self.page.evaluate("""S.snap.apps.apps.push({ ...S.snap.apps.apps.find((a) => a.name === 'Shop'),
+            id: 'a:/x/Drv.app', name: 'Drv', source: 'brew', brew_id: 'c:drv' }); renderView()""")
+        row = self.page.locator('#view tbody tr:has(td.name:text-is("Drv"))')
+        self.assertEqual(row.locator("[data-trash]").count(), 0)
+        row.locator("[data-uninstall]").click()
+        self.page.wait_for_selector("#modal-card pre")
+        self.assertEqual(self.page.inner_text("#modal-card pre"), "brew uninstall --cask drv")
+        self.page.click("#m-ok")
+        wait_for(lambda: ["brew", "uninstall", "--cask", "drv"] in self.brew.popened)
 
     def test_shell_tab_shows_the_issue_and_what_to_do(self):
         self.page.click('nav button[data-tab="shell"]')
@@ -786,6 +833,26 @@ class UiSmokeTest(UiFixture):
         sig = {r.locator("td.name").inner_text(): r.locator("td:nth-child(5)").inner_text()
                for r in self.page.locator("#content tbody tr").all()}
         self.assertEqual(sig, {"Bare": "not signed", "Shop": "App Store", "Zed": "Developer ID Zed Industries (ZED1)"})
+
+    def test_brewdash_app_built_here_is_not_flagged_for_its_ad_hoc_signature(self):
+        self.tab("apps")
+        self.page.wait_for_selector("[data-adopt]")
+        self.page.evaluate("""const bare = S.snap.apps.apps.find((a) => a.name === 'Bare');
+            S.snap.apps.apps.push({ ...bare, id: 'a:/x/brewdash.app', name: 'brewdash', bundle_id: 'io.github.lemiorhan.brewdash',
+                                    signature: { kind: 'adhoc', signer: null } },
+                                  { ...bare, id: 'a:/x/Other.app', name: 'Other', bundle_id: 'com.other',
+                                    signature: { kind: 'adhoc', signer: null } },
+                                  { ...bare, id: 'a:/x/Fork.app', name: 'Fork', bundle_id: 'io.github.lemiorhan.brewdash',
+                                    signature: { kind: 'unsigned', signer: null } },
+                                  { ...bare, id: 'a:/x/Safari.app', name: 'Safari', bundle_id: 'com.apple.Safari',
+                                    signature: { kind: 'apple', signer: 'Software Signing' } }); renderView()""")
+        rows = {r.locator("td.name").inner_text(): r for r in self.page.locator("#content tbody tr").all()}
+        sig = {n: r.locator("td:nth-child(5)").inner_text() for n, r in rows.items()}
+        self.assertEqual((sig["brewdash"], sig["Other"], sig["Fork"]),
+                         ("built on this Mac (ad-hoc)", "ad-hoc, no signer", "not signed"))
+        self.assertEqual(self.page.evaluate("appsList().filter(weakSignature).map((a) => a.name).sort()"), ["Bare", "Fork", "Other"])
+        self.assertEqual(sorted(n for n, r in rows.items() if r.locator("[data-trash]").count()),
+                         ["Bare", "Fork", "Other", "Shop", "Zed"])
 
     def test_every_page_says_what_it_is_and_what_to_do(self):
         tabs = self.page.eval_on_selector_all("nav button[data-tab]", "bs => bs.map(b => b.dataset.tab)")

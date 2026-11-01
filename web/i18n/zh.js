@@ -26,7 +26,7 @@ I18N.zh = {
   "col.name": "名称", "col.version": "版本", "col.latest": "最新", "col.size": "大小", "col.installed": "安装时间",
   "col.usedby": "被依赖", "col.deps": "依赖", "col.desc": "描述",
 
-  "btn.upgrade": "升级", "btn.pin": "固定", "btn.unpin": "取消固定", "btn.uninstall": "卸载", "btn.copy": "拷贝",
+  "btn.upgrade": "升级", "btn.pin": "固定", "btn.unpin": "取消固定", "btn.uninstall": "卸载", "btn.untap": "移除 tap", "btn.copy": "拷贝",
   "btn.copied": "已拷贝", "btn.remove": "移除", "btn.cancel": "取消", "btn.run": "运行", "btn.close": "关闭",
 
   "detail.cask": "cask", "detail.what_to_do": "怎么做", "detail.already_installed": "已安装：",
@@ -56,11 +56,12 @@ I18N.zh = {
   "common.computing": "正在计算…", "common.ok": "正常", "common.yes": "是", "common.no": "否",
 
   "sig.apple": "Apple", "sig.appstore": "App Store", "sig.developer_id": "Developer ID", "sig.other": "其他签名者",
-  "sig.adhoc": "临时签名，无签名者", "sig.unsigned": "未签名", "sig.unknown": "未知",
+  "sig.adhoc": "临时签名，无签名者", "sig.unsigned": "未签名", "sig.unknown": "未知", "sig.built_here": "在本机构建（ad-hoc）",
   "source.brew": "brew", "source.appstore": "App Store", "source.manual": "手动安装",
   "apps.scanning": "正在扫描 /Applications…", "apps.cask_has": "（cask 版本为 {version}）", "apps.in_casks": "在 Cask 中升级和卸载",
   "apps.via_store": "通过 App Store 更新", "apps.adopt": "交由 brew 管理", "apps.auto_updates": "自动更新",
-  "apps.search_cask": "搜索 cask",
+  "apps.search_cask": "搜索 cask", "apps.trash": "移到废纸篓",
+  "apps.trash_help": "<b>卸载</b>用 <span class=\"mono\">brew uninstall --cask</span> 移除 brew 安装的应用程序。<b>移到废纸篓</b>由访达把不是 brew 安装的应用程序移到废纸篓（Apple 自带的应用程序和 brewdash 不提供此按钮），清倒废纸篓之前都可以取回。应用程序留在 ~/Library 中的设置和缓存不会被移除。",
   "apps.no_cask_list": "Homebrew 的 cask 列表尚未缓存，因此无法将应用程序与 cask 匹配。请运行 brew update，然后刷新。",
   "apps.adopt_help": "有 {n} 个手动安装的应用程序存在对应的 brew cask。<b>交由 brew 管理</b>会运行 <span class=\"mono\">brew install --cask --adopt</span>：brew 接管现有的应用程序，之后像其他 cask 一样升级和卸载它。只有当 cask 安装的正是该 .app 时才会显示匹配。",
   "apps.signature_help": "签名一栏显示每个应用程序自己声明的签名者。brewdash 不验证签名，也不检查公证；<span class=\"mono\">spctl --assess</span> 两者都做，但扫描整个应用程序文件夹需要几分钟。",
@@ -194,6 +195,7 @@ I18N.zh = {
   "bulk.why.pin": "所选项均已固定。", "bulk.why.unpin": "所选项中没有已固定的。",
   "bulk.why.listed": "所选项均已在导出列表中。",
   "bulk.why.unlistable": "只有软件包、tap 以及有 brew cask 的应用程序可以加入列表。",
+  "bulk.why.untap": "只能移除没有安装任何软件包的 tap；请先卸载其中的软件包。",
   "bulk.add_to_list": "加入列表", "bulk.selected": "已选 {n} 个", "bulk.clear": "清除",
   "bulk.hint": "每个按钮仅作用于所选项中适用的项目。",
 
@@ -291,6 +293,8 @@ I18N.zh = {
   "srv.path.old_prefix_gone": "在这台 Mac 上，Homebrew 位于 {prefix}。那里也没有安装任何内容；这一行可以删除。",
   "srv.path.missing": "该目录不存在；这一行可以删除。",
   "srv.plan.adopt": "将 {name} 交由 brew 管理",
+  "srv.plan.trash": "将 {name} 移到废纸篓",
+  "srv.plan.untap": "移除 tap {names}",
   "srv.plan.upgrade": "升级 {names}",
   "srv.plan.pin": "固定 {names}",
   "srv.plan.unpin": "取消固定 {names}",
