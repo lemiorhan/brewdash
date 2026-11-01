@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_brewdash import wait_for  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+BUNDLE_ID = "io.github.lemiorhan.brewdash"
 
 
 def servers_of(script):
@@ -168,6 +169,79 @@ class LaunchScriptWithTheRealServerTest(unittest.TestCase):
         self.assertFalse(self.opened.exists())
 
 
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("swiftc"), "the Mac app is built with swiftc")
+class MacAppPolicyTest(unittest.TestCase):
+    def test_navigation_connect_gate_retry_limit_and_header_colour(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp) / "main.swift"
+            shutil.copy(ROOT / "tests" / "policy_check.swift", main)
+            exe = Path(tmp) / "policy_check"
+            build = subprocess.run(["swiftc", "-swift-version", "5", "-o", str(exe), str(main),
+                                    str(ROOT / "macos" / "policy.swift")], capture_output=True, text=True, timeout=300)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            r = subprocess.run([str(exe)], capture_output=True, text=True, timeout=30)
+            self.assertEqual((r.returncode, r.stdout), (0, "ok\n"), r.stdout)
+
+
+# Asks one app, by pid, to quit as ⌘Q does; osascript would pick the user's own brewdash, which has the same bundle id.
+QUIT_SWIFT = """import AppKit
+exit(NSRunningApplication(processIdentifier: Int32(CommandLine.arguments[1])!)?.terminate() == true ? 0 : 1)
+"""
+
+
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("swiftc"), "the Mac app is built with swiftc")
+class MacAppTest(unittest.TestCase):
+    """The Mac app built into a temporary folder and run with a stand-in brew and login shell. It shows its window
+    for a few seconds."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        root = Path(cls.tmp.name)
+        cls.app = root / "brewdash.app"
+        subprocess.run(["/bin/bash", str(ROOT / "macos" / "build-app.sh"), str(ROOT), str(cls.app)],
+                       env=dict(os.environ, BREWDASH_MODE="app"), check=True, capture_output=True, timeout=300)
+        cls.server = cls.app / "Contents" / "Resources" / "brewdash" / "brewdash.py"
+        (root / "quit.swift").write_text(QUIT_SWIFT)
+        cls.quit = root / "quit"
+        subprocess.run(["swiftc", "-o", str(cls.quit), str(root / "quit.swift")], check=True, capture_output=True,
+                       timeout=300)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "python3").symlink_to(sys.executable)
+        shell_script(bin_dir / "brew", "exit 1")
+        self.state = root / "state" / "brewdash"
+        self.env = {"HOME": str(root), "XDG_STATE_HOME": str(root / "state"), "PATH": "/usr/bin:/bin",
+                    "SHELL": str(shell_script(root / "login-shell", f"printf '\\n%s' '{bin_dir}:/usr/bin:/bin'"))}
+        self.addCleanup(lambda: [os.kill(pid, signal.SIGKILL) for pid in servers_of(self.server)])
+
+    def test_the_app_starts_one_server_for_itself_and_quitting_stops_it(self):
+        app = subprocess.Popen([str(self.app / "Contents" / "MacOS" / "brewdash")], env=self.env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: app.poll() is None and app.kill())
+        record = wait_for(lambda: (self.state / "app-server").exists() and (self.state / "app-server").read_text(),
+                          timeout=30)
+        server, owner, url = record.split()
+        self.assertEqual((owner, servers_of(self.server)), (str(app.pid), {int(server)}))
+        token = parse_qs(urlparse(url).query)["t"][0]
+        with urlopen(Request(urljoin(url, "/api/jobs"), headers={"X-Brewdash-Token": token}), timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+        r = subprocess.run([str(self.quit), str(app.pid)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(app.wait(timeout=30), 0)
+        self.assertFalse((self.state / "app-server").exists(), "quitting did not run launch.sh stop")
+        wait_for(lambda: not servers_of(self.server))
+
+
 def has_brew():
     return bool(shutil.which("brew")) or any(Path(p).exists() for p in ("/opt/homebrew/bin/brew", "/usr/local/bin/brew"))
 
@@ -185,7 +259,7 @@ class InstallScriptTest(unittest.TestCase):
 
     def assert_refused(self, *args):
         before = self.plist.read_bytes()
-        env = dict(os.environ, BREWDASH_APP_DIR=str(self.apps), BREWDASH_NO_OPEN="1",
+        env = dict(os.environ, BREWDASH_APP_DIR=str(self.apps), BREWDASH_APP_DIRS=str(self.apps), BREWDASH_NO_OPEN="1",
                    BREWDASH_TARBALL=f"file://{self.root}/missing.tar.gz")
         r = subprocess.run(["/bin/bash", str(ROOT / "install.sh"), *args], env=env, capture_output=True, text=True,
                            timeout=60)
@@ -225,6 +299,36 @@ class BuildAppTest(unittest.TestCase):
         _, res = self.build(BREWDASH_VERSION=None)
         self.assertFalse((res / "version.json").exists())
         self.assertTrue((res / "install.sh").exists())
+
+    def test_without_a_mode_it_builds_the_browser_applet_as_apps_from_before_the_mode_expect(self):
+        app, res = self.build(BREWDASH_MODE=None)
+        self.assertEqual((res / "mode").read_text(), "browser\n")
+        info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+        self.assertEqual((info["CFBundleExecutable"], info["CFBundleIdentifier"]), ("applet", BUNDLE_ID))
+
+    @unittest.skipUnless(shutil.which("swiftc"), "the Mac app is built with swiftc")
+    def test_the_app_mode_is_a_signed_native_app_with_the_same_bundle_id_and_resources(self):
+        version = '{"sha": "' + "a" * 40 + '", "tag": "v1.2.3"}'
+        app, res = self.build(BREWDASH_MODE="app", BREWDASH_VERSION=version)
+        self.assertEqual((res / "mode").read_text(), "app\n")
+        info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+        self.assertEqual((info["CFBundleExecutable"], info["CFBundleIdentifier"], info["CFBundleShortVersionString"],
+                          info["CFBundleVersion"]), ("brewdash", BUNDLE_ID, "1.2.3", "1.2.3"))
+        kind = subprocess.run(["file", str(app / "Contents" / "MacOS" / "brewdash")], capture_output=True, text=True)
+        self.assertIn("Mach-O", kind.stdout)
+        for name in ("brewdash.py", "launch.sh", "install.sh", "version.json", "web/app.js"):
+            self.assertTrue((res / name).exists(), name)
+        self.assertTrue((app / "Contents" / "Resources" / "brewdash.icns").exists())
+        verify = subprocess.run(["codesign", "--verify", "--strict", str(app)], capture_output=True, text=True)
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+
+    def test_an_unknown_mode_builds_nothing(self):
+        out = Path(tempfile.mkdtemp()) / "brewdash.app"
+        self.addCleanup(shutil.rmtree, out.parent)
+        r = subprocess.run(["/bin/bash", str(ROOT / "macos" / "build-app.sh"), str(ROOT), str(out)],
+                           env=dict(os.environ, BREWDASH_MODE="window"), capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 2)
+        self.assertFalse(out.exists())
 
 
 @unittest.skipUnless(sys.platform == "darwin", "install.sh is macOS only")
@@ -269,12 +373,20 @@ class InstallFromGitHubTest(unittest.TestCase):
         self.root = Path(tmp.name)
         src = self.root / "brewdash-src" / "macos"
         src.mkdir(parents=True)
-        (src / "build-app.sh").write_text('mkdir -p "$2"; printf %s "${BREWDASH_VERSION-unset}" > "$2/version"\n')
+        (src / "build-app.sh").write_text('mkdir -p "$2"; printf %s "${BREWDASH_VERSION-unset}" > "$2/version"; '
+                                          'printf %s "${BREWDASH_MODE-unset}" > "$2/mode"; mkdir "$2/Contents"; '
+                                          f'/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string {BUNDLE_ID}" '
+                                          '"$2/Contents/Info.plist" >/dev/null\n')
         self.tarball = self.root / "src.tar.gz"
         subprocess.run(["tar", "-czf", str(self.tarball), "-C", str(self.root), "brewdash-src"], check=True)
         self.calls = self.root / "curl.log"
 
-    def install(self, tags, **env):
+    def install(self, tags, *args, **env):
+        r = self.run_main(tags, *args, **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads((self.apps / "brewdash.app" / "version").read_text()), self.calls.read_text().splitlines()
+
+    def run_main(self, tags, *args, **env):
         fake = f"""curl() {{ printf '%s\\n' "$*" >> "{self.calls}"; case "$*" in
   *"/tags?per_page=100") printf '%s' '{tags}' ;;
   *"vnd.github.sha"*"/commits/"*) printf '%s' '{self.SHA}' ;;
@@ -283,13 +395,91 @@ class InstallFromGitHubTest(unittest.TestCase):
 esac; }}
 quit_running() {{ :; }}
 """
-        script = f'source "{ROOT / "install.sh"}"\n{fake}main\n'
-        apps = self.root / "Applications"
-        r = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=60,
-                           env=dict(os.environ, BREWDASH_SOURCE_ONLY="1", BREWDASH_NO_OPEN="1",
-                                    BREWDASH_APP_DIR=str(apps), **env))
+        script = f'source "{ROOT / "install.sh"}"\n{fake}main "$@"\n'
+        base = {k: v for k, v in os.environ.items() if k != "BREWDASH_MODE"}
+        base.update(BREWDASH_SOURCE_ONLY="1", BREWDASH_NO_OPEN="1", BREWDASH_APP_DIR=str(self.apps),
+                    BREWDASH_APP_DIRS=f"{self.apps}:{self.home_apps}")
+        base.update(env)
+        return subprocess.run(["/bin/bash", "-c", script, "install.sh", *args], capture_output=True, text=True,
+                              timeout=60, env=base)
+
+    @property
+    def apps(self):
+        return self.root / "Applications"
+
+    @property
+    def home_apps(self):
+        return self.root / "home" / "Applications"
+
+    def mode(self):
+        return (self.apps / "brewdash.app" / "mode").read_text()
+
+    def fake_app(self, folder, bundle_id=BUNDLE_ID):
+        plist = folder / "brewdash.app" / "Contents" / "Info.plist"
+        plist.parent.mkdir(parents=True)
+        plist.write_bytes(plistlib.dumps({"CFBundleIdentifier": bundle_id}))
+        return plist.parent.parent
+
+    def test_without_a_choice_it_builds_the_mac_app(self):
+        self.install("[]")
+        self.assertEqual(self.mode(), "app")
+
+    def test_browser_and_app_flags_and_the_env_choose_the_kind(self):
+        for args, env, want in ((["--browser"], {}, "browser"), (["--app"], {}, "app"),
+                                ([], {"BREWDASH_MODE": "browser"}, "browser"),
+                                (["--app"], {"BREWDASH_MODE": "browser"}, "app")):
+            with self.subTest(args=args, env=env):
+                self.install("[]", *args, **env)
+                self.assertEqual(self.mode(), want)
+
+    def test_an_unknown_option_or_mode_installs_nothing(self):
+        for args, env in ((["--window"], {}), ([], {"BREWDASH_MODE": "window"})):
+            with self.subTest(args=args, env=env):
+                r = self.run_main("[]", *args, **env)
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertFalse((self.apps / "brewdash.app").exists())
+
+    def test_installing_removes_brewdash_from_the_other_folder_but_not_someone_elses_app(self):
+        ours = self.fake_app(self.home_apps)
+        self.install("[]", "--browser")
+        self.assertFalse(ours.exists())
+        theirs = self.fake_app(self.home_apps, "com.example.other")
+        self.install("[]", "--app")
+        self.assertTrue(theirs.exists())
+        self.assertEqual(self.mode(), "app")
+
+    def test_the_folders_swept_by_default_are_both_applications_folders(self):
+        env = {k: v for k, v in os.environ.items() if k != "BREWDASH_APP_DIRS"}
+        r = subprocess.run(["/bin/bash", "-c", f'source "{ROOT / "install.sh"}"; app_dirs'], capture_output=True,
+                           text=True, env=dict(env, BREWDASH_SOURCE_ONLY="1", HOME="/Users/someone"))
+        self.assertEqual(r.stdout, "/Applications:/Users/someone/Applications\n")
+
+    def test_the_app_just_installed_survives_when_its_folder_is_spelled_another_way(self):
+        self.apps.mkdir()
+        alias = self.root / "alias"
+        alias.symlink_to(self.apps)
+        self.install("[]", BREWDASH_APP_DIR=str(alias))
+        self.assertEqual(self.mode(), "app")
+
+    def test_uninstall_with_nothing_installed_fails(self):
+        r = self.run_main("[]", "--uninstall")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("there is no brewdash.app", r.stderr)
+
+    def test_uninstall_finding_only_someone_elses_app_fails_and_leaves_it(self):
+        theirs = self.fake_app(self.home_apps, "com.example.other")
+        r = self.run_main("[]", "--uninstall")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("there is no brewdash.app", r.stderr)
+        self.assertTrue(theirs.exists())
+
+    def test_uninstall_removes_brewdash_from_every_folder(self):
+        self.install("[]")
+        other = self.fake_app(self.home_apps)
+        r = self.run_main("[]", "--uninstall")
         self.assertEqual(r.returncode, 0, r.stderr)
-        return json.loads((apps / "brewdash.app" / "version").read_text()), self.calls.read_text().splitlines()
+        self.assertFalse((self.apps / "brewdash.app").exists())
+        self.assertFalse(other.exists())
 
     def test_without_a_ref_it_installs_the_highest_tag_by_its_commit(self):
         version, calls = self.install('[{"name": "v0.2.0"}, {"name": "v0.10.0"}]')

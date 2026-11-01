@@ -14,8 +14,17 @@ function applyTheme(theme) {
     btn.textContent = `${THEME_ICON[theme]} ${name}`;
     btn.title = t("theme.title", { name });
   }
+  tellWindow(theme);
   return theme;
 }
+
+// In the Mac app the title bar takes the theme and the header's colour; a browser has no such handler.
+function tellWindow(theme) {
+  const handler = window.webkit?.messageHandlers?.brewdash;
+  if (handler) handler.postMessage({ theme, panel: getComputedStyle(document.documentElement).getPropertyValue("--panel") });
+}
+
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => tellWindow(currentTheme()));
 
 function currentTheme() {
   try { return localStorage.getItem("brewdash-theme") || "auto"; } catch (e) { return "auto"; }

@@ -974,6 +974,76 @@ class UiSmokeTest(UiFixture):
         self.page.click("#btn-theme")
         self.assertEqual((theme(), bg()), ("auto", "rgb(245, 246, 248)"))
 
+    def mac_app_page(self):
+        """The page as macos/brewdash.swift's window shows it, with the window's message handler recorded."""
+        page = self.browser.new_page(color_scheme="dark")
+        self.addCleanup(page.close)
+        page.add_init_script("window.sent = []; window.webkit = { messageHandlers: { brewdash: "
+                             "{ postMessage: (m) => window.sent.push(m) } } };")
+        page.goto(self.url)
+        page.wait_for_selector(".ov .att")
+        return page
+
+    def test_the_mac_app_window_hears_every_theme_and_its_header_colour(self):
+        page = self.mac_app_page()
+        sent = lambda: [(m["theme"], m["panel"].strip()) for m in page.evaluate("window.sent") if "theme" in m]
+        page.click("#btn-theme")
+        page.click("#btn-theme")
+        page.click("#btn-theme")
+        self.assertEqual(sent()[-4:], [("auto", "#161a21"), ("light", "#ffffff"), ("dark", "#161a21"),
+                                       ("auto", "#161a21")])
+        page.emulate_media(color_scheme="light")
+        page.wait_for_function("window.sent.at(-1).panel.trim() === '#ffffff'")
+        self.assertEqual(sent()[-1], ("auto", "#ffffff"))
+
+    def test_the_mac_app_saves_the_brewfile_through_its_own_dialog_instead_of_a_download(self):
+        page = self.mac_app_page()
+        downloads = []
+        page.on("download", lambda d: downloads.append(d))
+        page.evaluate("downloadBrewfile()")
+        page.wait_for_function("window.sent.some((m) => m.save)")
+        saved = [m for m in page.evaluate("window.sent") if "save" in m]
+        self.assertEqual([m["save"] for m in saved], ["Brewfile"])
+        self.assertTrue(saved[0]["text"].startswith("# Brewfile from brewdash."), saved[0]["text"])
+        self.assertEqual(downloads, [])
+
+
+@unittest.skipUnless(sync_playwright, "Playwright for Python is not installed")
+class ProjectPageInstallTest(unittest.TestCase):
+    """docs/index.html, the page that hands out the install command."""
+    PAGE = (Path(brewdash.__file__).resolve().parent / "docs" / "index.html").as_uri()
+    SCRIPT = "https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pw = sync_playwright().start()
+        cls.browser = cls.pw.chromium.launch()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.pw.stop()
+
+    def test_the_command_follows_both_choices_and_the_note_follows_the_kind_in_every_language(self):
+        page = self.browser.new_page(locale="en-US")
+        self.addCleanup(page.close)
+        page.goto(self.PAGE)
+        seen = lambda: (page.inner_text("#install-command"), page.inner_text("#install-kind-note"))
+        app_note = "brewdash opens in its own window, with a menu bar and a Dock icon. Only one kind is installed at a time: installing the other replaces it."
+        browser_note = "brewdash opens in your default browser; its Dock icon brings the tab back. Only one kind is installed at a time: installing the other replaces it."
+        self.assertEqual(seen(), (f"curl -fsSL {self.SCRIPT} | bash", app_note))
+        page.click(".install-kind [data-kind=browser]")
+        self.assertEqual(seen(), (f"curl -fsSL {self.SCRIPT} | bash -s -- --browser", browser_note))
+        page.click(".install-tool button:text-is('wget')")
+        self.assertEqual(seen()[0], f"wget -qO- {self.SCRIPT} | bash -s -- --browser")
+        page.select_option("select", "tr")
+        self.assertEqual(seen()[1], "brewdash default browser'ında açılır; Dock ikonu sekmeyi geri getirir. "
+                                    "Aynı anda tek tip kurulu olur: diğerini kurmak bunun yerini alır.")
+        page.click(".install-kind [data-kind=app]")
+        self.assertEqual(seen(), (f"wget -qO- {self.SCRIPT} | bash",
+                                  "brewdash kendi penceresinde, menü bar'ı ve Dock ikonuyla açılır. "
+                                  "Aynı anda tek tip kurulu olur: diğerini kurmak bunun yerini alır."))
+
 
 LANGS = ["en", "tr", "es", "zh"]
 WEB = Path(brewdash.__file__).resolve().parent / "web"

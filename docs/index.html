@@ -334,7 +334,11 @@ footer a { color: var(--muted); }
     </div>
 
     <div class="install" id="install">
-      <div class="install-tabs" role="tablist" aria-label="Download with" data-i18n-attr="aria-label:install.tabsAria">
+      <div class="install-tabs install-kind" role="tablist" aria-label="How it opens" data-i18n-attr="aria-label:install.kindAria">
+        <button type="button" role="tab" aria-selected="true" aria-controls="install-command" data-kind="app" data-flag="" data-i18n="install.kind.app">Mac app</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="install-command" data-kind="browser" data-flag=" -s -- --browser" data-i18n="install.kind.browser">In your browser</button>
+      </div>
+      <div class="install-tabs install-tool" role="tablist" aria-label="Download with" data-i18n-attr="aria-label:install.tabsAria">
         <button type="button" role="tab" aria-selected="true" aria-controls="install-command" data-command="curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash">curl</button>
         <button type="button" role="tab" aria-selected="false" aria-controls="install-command" data-command="wget -qO- https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash">wget</button>
       </div>
@@ -343,6 +347,7 @@ footer a { color: var(--muted); }
         <button type="button" class="copy" data-copy="install-command" data-i18n="copy.button">Copy</button>
       </div>
       <p class="install-note" data-i18n-html="install.note">Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a href="https://github.com/lemiorhan/brewdash/blob/master/install.sh">Read the script first</a>.</p>
+      <p class="install-note" id="install-kind-note" data-i18n-html="install.kind.app_note">brewdash opens in its own window, with a menu bar and a Dock icon. Only one kind is installed at a time: installing the other replaces it.</p>
       <p class="install-note" role="status" aria-live="polite" id="copy-status"></p>
     </div>
 
@@ -493,6 +498,11 @@ window.brewdashI18n = (() => {
       "copy.status": "The install command is on your clipboard. Paste it in Terminal.",
       "copy.fallback": "Press ⌘C to copy the selected command.",
       "install.note": `Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a ${RS}>Read the script first</a>.`,
+      "install.kindAria": "How it opens",
+      "install.kind.app": "Mac app",
+      "install.kind.browser": "In your browser",
+      "install.kind.app_note": "brewdash opens in its own window, with a menu bar and a Dock icon. Only one kind is installed at a time: installing the other replaces it.",
+      "install.kind.browser_note": "brewdash opens in your default browser; its Dock icon brings the tab back. Only one kind is installed at a time: installing the other replaces it.",
       "terminal.aria": "brew list output with what brewdash tells you about each package",
       "terminal.caption": "Each comment is something brewdash tells you about that package. These come from its demo data.",
       "tour.title": "Everything brew knows, on one page",
@@ -563,6 +573,11 @@ window.brewdashI18n = (() => {
       "copy.status": "Kurulum komutu panoda. Terminal'e yapıştır.",
       "copy.fallback": "Seçili komutu kopyalamak için ⌘C'ye bas.",
       "install.note": `Terminal'e yapıştır. brewdash'i Uygulamalar klasörüne koyup açıyor. <a ${RS}>Önce script'i oku</a>.`,
+      "install.kindAria": "Nasıl açılır",
+      "install.kind.app": "Mac app",
+      "install.kind.browser": "Browser'da",
+      "install.kind.app_note": "brewdash kendi penceresinde, menü bar'ı ve Dock ikonuyla açılır. Aynı anda tek tip kurulu olur: diğerini kurmak bunun yerini alır.",
+      "install.kind.browser_note": "brewdash default browser'ında açılır; Dock ikonu sekmeyi geri getirir. Aynı anda tek tip kurulu olur: diğerini kurmak bunun yerini alır.",
       "terminal.aria": "brewdash'in her paket için söyledikleriyle birlikte brew list çıktısı",
       "terminal.caption": "Her yorum, brewdash'in o paket hakkında sana söylediği bir şey. Bunlar demo verisinden geliyor.",
       "tour.title": "brew'un bildiği her şey, tek sayfada",
@@ -633,6 +648,11 @@ window.brewdashI18n = (() => {
       "copy.status": "El comando de instalación está en tu portapapeles. Pégalo en Terminal.",
       "copy.fallback": "Pulsa ⌘C para copiar el comando seleccionado.",
       "install.note": `Pégalo en Terminal. Instala brewdash en tu carpeta Aplicaciones y lo abre. <a ${RS}>Lee antes el script</a>.`,
+      "install.kindAria": "Cómo se abre",
+      "install.kind.app": "App de Mac",
+      "install.kind.browser": "En tu navegador",
+      "install.kind.app_note": "brewdash se abre en su propia ventana, con barra de menús e icono en el Dock. Solo se instala un tipo a la vez: instalar el otro lo sustituye.",
+      "install.kind.browser_note": "brewdash se abre en tu navegador predeterminado; su icono del Dock vuelve a mostrar la pestaña. Solo se instala un tipo a la vez: instalar el otro lo sustituye.",
       "terminal.aria": "Salida de brew list con lo que brewdash te dice de cada paquete",
       "terminal.caption": "Cada comentario es algo que brewdash te dice sobre ese paquete. Salen de sus datos de demostración.",
       "tour.title": "Todo lo que sabe brew, en una sola página",
@@ -703,6 +723,11 @@ window.brewdashI18n = (() => {
       "copy.status": "安装命令已复制到剪贴板，粘贴到“终端”即可。",
       "copy.fallback": "按 ⌘C 复制选中的命令。",
       "install.note": `粘贴到“终端”中运行。它会把 brewdash 放进“应用程序”文件夹并打开。<a ${RS}>先看看脚本</a>。`,
+      "install.kindAria": "打开方式",
+      "install.kind.app": "Mac 应用",
+      "install.kind.browser": "在浏览器中",
+      "install.kind.app_note": "brewdash 在自己的窗口中打开，带菜单栏和程序坞图标。同一时间只安装一种：安装另一种会替换它。",
+      "install.kind.browser_note": "brewdash 在默认浏览器中打开；点按程序坞图标会重新显示该标签页。同一时间只安装一种：安装另一种会替换它。",
       "terminal.aria": "brew list 的输出，以及 brewdash 对每个包的说明",
       "terminal.caption": "每条注释都是 brewdash 对该包给出的提示，来自它的演示数据。",
       "tour.title": "brew 知道的一切，尽在一页",
@@ -827,16 +852,26 @@ window.brewdashI18n = (() => {
     for (const t of tabs) t.tabIndex = t.getAttribute("aria-selected") === "true" ? 0 : -1;
   }
 
-  const installTabs = [...document.querySelectorAll(".install-tabs [role=tab]")];
-  const chooseInstall = (tab) => {
-    selectTab(installTabs, tab);
-    roving(installTabs);
-    command.textContent = tab.dataset.command;
+  const kindNote = document.getElementById("install-kind-note");
+  const showCommand = () => {
+    const tool = document.querySelector(".install-tool [aria-selected=true]");
+    const kind = document.querySelector(".install-kind [aria-selected=true]");
+    command.textContent = tool.dataset.command + kind.dataset.flag;
+    kindNote.dataset.i18nHtml = "install.kind." + kind.dataset.kind + "_note";
+    kindNote.innerHTML = t(kindNote.dataset.i18nHtml);
     status.textContent = "";
   };
-  installTabs.forEach((tab) => tab.addEventListener("click", () => chooseInstall(tab)));
-  arrowKeys(installTabs, chooseInstall);
-  roving(installTabs);
+  for (const group of document.querySelectorAll(".install-tabs")) {
+    const tabs = [...group.querySelectorAll("[role=tab]")];
+    const choose = (tab) => {
+      selectTab(tabs, tab);
+      roving(tabs);
+      showCommand();
+    };
+    tabs.forEach((tab) => tab.addEventListener("click", () => choose(tab)));
+    arrowKeys(tabs, choose);
+    roving(tabs);
+  }
 
   document.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", async () => {
     const text = document.getElementById(button.dataset.copy).textContent;

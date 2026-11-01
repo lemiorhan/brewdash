@@ -38,6 +38,11 @@ input[type=search], input[type=text], select { background: var(--panel2); color:
 .mono { font-family: var(--mono); }
 .hidden { display: none !important; }
 
+/* The Mac app (macos/brewdash.swift sets .app): controls behave like a native window's, not like a web page's. */
+html.app header, html.app nav, html.app button, html.app label, html.app th, html.app .jobs-head { -webkit-user-select: none; user-select: none; }
+html.app button, html.app label, html.app tr.row, html.app .chip, html.app .att, html.app .rec, html.app .jobs-head, html.app .job-head { cursor: default; }
+html.app header { padding-top: 4px; }
+
 header { display: flex; align-items: center; gap: 18px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
 .brand { font: 700 18px var(--mono); white-space: nowrap; }
 .brand img { width: 26px; height: 26px; vertical-align: -7px; margin-right: 8px; }

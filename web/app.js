@@ -940,6 +940,8 @@ function renderExport() {
 async function downloadBrewfile() {
   const r = await fetch("/api/brewfile", { headers: { "X-Brewdash-Token": TOKEN } });
   if (!r.ok) return alertBox(`HTTP ${r.status}`);
+  const app = window.webkit?.messageHandlers?.brewdash;
+  if (app) return app.postMessage({ save: "Brewfile", text: await r.text() });
   // As text/plain, Chrome saves it as Brewfile.txt, and brew bundle --file=Brewfile then finds nothing.
   const url = URL.createObjectURL(new Blob([await r.text()], { type: "application/octet-stream" }));
   const a = Object.assign(document.createElement("a"), { href: url, download: "Brewfile" });

@@ -7,6 +7,10 @@ numbered releases yet; changes are listed by date.
 ## Unreleased
 
 ### Added
+- brewdash as a Mac app: the dashboard in its own window, with a menu bar,
+  keyboard shortcuts and a save dialog for the Brewfile. `install.sh` builds
+  it by default; `--browser` installs the app that opens the browser instead.
+  Only one kind is installed at a time, and an update keeps the kind.
 - **Security** tab with the findings of
   [secure-it](https://github.com/lemiorhan/secure-it), read from
   `~/secure-it/report.json`. Findings appear in *Needs attention*, in the

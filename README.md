@@ -81,13 +81,30 @@ curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.s
 wget -qO- https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash
 ```
 
-The script builds `brewdash.app` on your Mac with tools macOS already has,
+The script builds `brewdash.app` on your Mac with the Command Line Tools,
 puts it in `/Applications` (or `~/Applications` when you cannot write to
-`/Applications`), and opens it. From then on:
+`/Applications`), and opens it. brewdash comes in two kinds:
+
+- **Mac app** (the default): the dashboard in its own window, with a menu bar,
+  ⌘, for Settings, ⌘R to reload, ⌘W to close the window, zoom and full
+  screen, and a save dialog for the Brewfile. Links to other sites open in
+  your browser. It is built with `swiftc` from the Command Line Tools.
+- **Browser**: an app that opens the dashboard in your default browser. Add
+  `--browser`:
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --browser
+  ```
+
+Both are `brewdash.app` with the same bundle id, so only one is installed at
+a time: installing one kind replaces the other, also when the other is in the
+other Applications folder. To switch, run the install command with `--app` or
+`--browser`. An update keeps the kind you have. From then on:
 
 - **Open** brewdash from Launchpad, Spotlight or the Dock. It starts the
-  server and opens the dashboard in your browser.
-- **Click its Dock icon** to open the dashboard again.
+  server and opens the dashboard.
+- **Click its Dock icon** to open the dashboard again, also after you closed
+  the Mac app's window.
 - **Quit** it (⌘Q) to stop the server. If the app stops without quitting, the
   server notices and stops as well.
 
@@ -135,7 +152,8 @@ git clone https://github.com/lemiorhan/brewdash.git
 cd brewdash
 python3 brewdash.py                            # opens your browser
 python3 brewdash.py --port 8765 --no-browser   # fixed port, no browser
-bash macos/build-app.sh                        # build brewdash.app into build/
+bash macos/build-app.sh                        # build the browser kind of brewdash.app into build/
+BREWDASH_MODE=app bash macos/build-app.sh      # build the Mac app kind
 ```
 
 To look around without touching your own setup, run the demo. It serves

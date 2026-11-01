@@ -1346,10 +1346,23 @@ class UpdaterTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def updater(self, github=None, installed=None, root=APP_ROOT, spawn=None):
+    def updater(self, github=None, installed=None, root=APP_ROOT, spawn=None, mode="browser"):
         self.github = github or FakeGitHub()
         return brewdash.Updater(self.state, installed or {"sha": SHA_A, "tag": "v0.9.0"}, root=root, fetch=self.github,
-                                spawn=spawn or (lambda *a: self.spawned.append(a)))
+                                spawn=spawn or (lambda *a: self.spawned.append(a)), mode=mode)
+
+    def test_read_mode_takes_app_or_browser_and_falls_back_to_browser(self):
+        d = Path(self.tmp.name)
+        self.assertEqual(brewdash.read_mode(d), "browser")
+        for written, want in (("app\n", "app"), ("browser\n", "browser"), ("window\n", "browser")):
+            (d / "mode").write_text(written)
+            self.assertEqual(brewdash.read_mode(d), want, written)
+
+    def test_an_update_builds_the_same_kind_of_app(self):
+        for mode in ("app", "browser"):
+            self.spawned.clear()
+            self.updater(FakeGitHub(compare={SHA_B: "ahead"}), mode=mode).update(manual=True)
+            self.assertEqual([a[4] for a in self.spawned], [mode])
 
     def test_read_installed_takes_only_a_full_sha_and_a_vxyz_tag(self):
         root = Path(self.tmp.name)
@@ -1489,7 +1502,7 @@ class UpdaterTest(unittest.TestCase):
                     self.spawned.clear()
                     view = self.updater(FakeGitHub(compare={SHA_B: status})).update(manual=is_manual)
                     self.assertEqual(self.spawned, [(APP_ROOT / "install.sh", "v0.10.0", Path("/Applications"),
-                                                     Path(log))] if want else [])
+                                                     Path(log), "browser")] if want else [])
                     self.assertEqual(view["started"] is not None, want)
 
     def test_beta_installs_masters_commit_by_sha(self):
@@ -1529,15 +1542,15 @@ class UpdaterTest(unittest.TestCase):
             wait_for(lambda: self.spawned)
             self.assertEqual(self.spawned[0][1], "v0.10.0")
 
-    def test_spawn_installer_runs_it_detached_with_the_ref_and_app_dir(self):
+    def test_spawn_installer_runs_it_detached_with_the_ref_app_dir_and_mode(self):
         d = Path(self.tmp.name)
         installer = d / "install.sh"
-        installer.write_text('echo "$BREWDASH_REF $BREWDASH_APP_DIR $$ $(ps -o pgid= -p $$ | tr -d " ") stdin:$(cat)"\n')
-        proc = brewdash.spawn_installer(installer, "v1.2.3", "/Apps", d / "update.log")
+        installer.write_text('echo "$BREWDASH_REF $BREWDASH_APP_DIR $BREWDASH_MODE $$ $(ps -o pgid= -p $$ | tr -d " ") stdin:$(cat)"\n')
+        proc = brewdash.spawn_installer(installer, "v1.2.3", "/Apps", d / "update.log", "app")
         self.assertEqual(proc.wait(timeout=10), 0)
         out = wait_for(lambda: (d / "update.log").read_text().strip())
-        ref, app_dir, pid, pgid, stdin = out.split(" ")
-        self.assertEqual((ref, app_dir, stdin), ("v1.2.3", "/Apps", "stdin:"))
+        ref, app_dir, mode, pid, pgid, stdin = out.split(" ")
+        self.assertEqual((ref, app_dir, mode, stdin), ("v1.2.3", "/Apps", "app", "stdin:"))
         self.assertEqual(pgid, pid)
         self.assertNotEqual(int(pgid), os.getpgrp())
 
@@ -1546,10 +1559,11 @@ class UpdaterTest(unittest.TestCase):
         with mock.patch.object(brewdash, "serve", return_value=(server, "http://x", "t")) as serve, \
                 mock.patch.object(brewdash, "Updater") as updater, \
                 mock.patch.object(brewdash, "read_installed", return_value={"sha": SHA_A, "tag": None}), \
+                mock.patch.object(brewdash, "read_mode", return_value="app"), \
                 mock.patch.object(sys, "argv", ["brewdash", "--no-browser"]), \
                 contextlib.redirect_stdout(io.StringIO()):
             brewdash.main()
-        updater.assert_called_once_with(brewdash.STATE_DIR, {"sha": SHA_A, "tag": None})
+        updater.assert_called_once_with(brewdash.STATE_DIR, {"sha": SHA_A, "tag": None}, mode="app")
         self.assertIs(serve.call_args.kwargs["updater"], updater.return_value)
         updater.return_value.run_hourly.assert_called_once_with()
 
