@@ -1,4 +1,4 @@
-"""macos/launch.sh and install.sh, run with bash against a stand-in brewdash.py and temporary folders.
+"""macos/launch.sh and install.sh, run with bash in temporary folders.
 
 Nothing here touches /Applications, ~/.local/state or a running brewdash.app.
 """
@@ -11,11 +11,24 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_brewdash import wait_for  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def servers_of(script):
+    out = subprocess.run(["pgrep", "-f", str(script)], capture_output=True, text=True).stdout
+    return {int(pid) for pid in out.split()}
+
+
+def shell_script(path, body):
+    path.write_text(f"#!/bin/sh\n{body}\n")
+    path.chmod(0o755)
+    return path
 
 # Reports the umask and PATH it was started with, prints a URL whose token names its --parent, then waits.
 FAKE_SERVER = """import os, sys, time
@@ -65,8 +78,7 @@ class LaunchScriptTest(unittest.TestCase):
         return int(server), app, url
 
     def servers(self):
-        out = subprocess.run(["pgrep", "-f", str(self.fake)], capture_output=True, text=True).stdout
-        return {int(pid) for pid in out.split()}
+        return servers_of(self.fake)
 
     def test_an_app_gets_one_server_and_keeps_getting_it(self):
         url = self.open(111)
@@ -111,6 +123,48 @@ class LaunchScriptTest(unittest.TestCase):
         self.assertEqual((mode(self.state), mode(self.state / "server.log"), mode(self.state / "app-server")),
                          (0o700, 0o600, 0o600))
         self.assertEqual(self.report.read_text(), f"22 {self.login_path}")
+
+
+@unittest.skipUnless(sys.platform == "darwin", "brewdash.app is macOS only")
+class LaunchScriptWithTheRealServerTest(unittest.TestCase):
+    """launch.sh next to a symlink to the real brewdash.py. brew, the browser, the login shell and the app are
+    stand-ins, so the server reads no Homebrew and a tab it opens lands in a file."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        app = root / "app"
+        app.mkdir()
+        self.launch = Path(shutil.copy(ROOT / "macos" / "launch.sh", app))
+        self.server = app / "brewdash.py"
+        self.server.symlink_to(ROOT / "brewdash.py")
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "python3").symlink_to(sys.executable)
+        shell_script(bin_dir / "brew", "exit 1")
+        self.opened = root / "opened"
+        self.env = {"HOME": str(root), "XDG_STATE_HOME": str(root / "state"), "PATH": "/usr/bin:/bin",
+                    "SHELL": str(shell_script(root / "login-shell", f"printf '\\n%s' '{bin_dir}:/usr/bin:/bin'")),
+                    "BROWSER": str(shell_script(root / "browser", f'echo "$1" > "{self.opened}"'))}
+        self.addCleanup(lambda: [os.kill(pid, signal.SIGKILL) for pid in servers_of(self.server)])
+
+    def test_the_app_gets_a_server_that_answers_opens_no_tab_and_stops_when_the_app_is_gone(self):
+        app = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(app.wait)
+        self.addCleanup(app.kill)
+        r = subprocess.run(["/bin/bash", str(self.launch), "open", str(app.pid)], env=self.env, capture_output=True,
+                           text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        url = r.stdout.strip()
+        token = parse_qs(urlparse(url).query)["t"][0]
+        with urlopen(Request(urljoin(url, "/api/jobs"), headers={"X-Brewdash-Token": token}), timeout=5) as resp:
+            self.assertEqual(resp.status, 200)
+        self.assertEqual(len(servers_of(self.server)), 1)
+        app.kill()
+        app.wait()
+        wait_for(lambda: not servers_of(self.server))
+        self.assertFalse(self.opened.exists())
 
 
 def has_brew():

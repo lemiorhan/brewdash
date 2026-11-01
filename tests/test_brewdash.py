@@ -1227,7 +1227,7 @@ class ServerWiringTest(unittest.TestCase):
     def test_every_web_file_is_served_with_its_type(self):
         types = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml",
                  ".png": "image/png"}
-        files = [f for f in brewdash.WEB.rglob("*") if f.is_file()]
+        files = [f for f in brewdash.WEB.rglob("*") if f.is_file() and not f.name.startswith(".")]
         self.assertLessEqual({"index.html", "app.js", "logo.svg", "favicon-32.png"}, {f.name for f in files})
         for f in files:
             r, data = self.request("GET", "/" + f.relative_to(brewdash.WEB).as_posix(), token=False, response=True)

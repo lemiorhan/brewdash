@@ -716,11 +716,10 @@ function recordsCard(all, sizes, reach) {
     recordTile("Heaviest with its dependencies", best(sized, (p) => pulled(p).size ? withDeps(p) : null), fmtSize,
       (p) => `${fmtSize(sizes[p.id])} itself and ${plural(pulled(p).size, "dependency", "dependencies")}`),
     recordTile("Most dependencies", best(all, (p) => pulled(p).size || null), pkgs, (p) => `${p.deps.length} direct`),
-    recordTile("Most depended on", best(all, (p) => p.required_by.length || null), pkgs, (p) => `${p.dependents.length} direct`),
     recordTile("Longest dependency chain", best(all, (p) => reach.get(p.id).chain.length - 1 || null), (n) => plural(n, "level"),
       (p) => reach.get(p.id).chain.map((id) => S.pkgs.get(id).name).join(" → ")),
-    recordTile("Longest without an upgrade",best(all, (p) => p.installed_time || null, true), fmtDate, (p) => fmtAgo(p.installed_time)),
-    recordTile("Newest install", best(all, (p) => p.installed_time || null), fmtDate, (p) => fmtAgo(p.installed_time)),
+    recordTile("Longest without an upgrade", best(all, (p) => p.installed_time || null, true), fmtDate, (p) => fmtAgo(p.installed_time)),
+    recordTile("Latest install or upgrade", best(all, (p) => p.installed_time || null), fmtDate, (p) => fmtAgo(p.installed_time)),
     recordTile("Shortest name", best(all, (p) => p.name.length, true), (n) => plural(n, "character")),
     recordTile("Longest name", best(all, (p) => p.name.length), (n) => plural(n, "character")),
     recordTile("Highest version", best(all, majorVersion), (_, p) => p.version),
@@ -782,7 +781,7 @@ function numbersCard(all, sizes, reach) {
 
 const SIZE_RANGES = [["under 1 MB", 1024], ["1–10 MB", 10240], ["10–100 MB", 102400], ["100 MB–1 GB", 1048576], ["1 GB or more", Infinity]];
 const PULLED_RANGES = [["none", 1], ["1", 2], ["2–5", 6], ["6–10", 11], ["11–20", 21], ["21–50", 51], ["more than 50", Infinity]];
-const VERSION_STYLES = [["date", DATE_VERSION],["0.x", /^0\./], ["x.y.z", /^\d+\.\d+\.\d+/], ["x.y", /^\d+\.\d+(?![.\d])/], ["one number", /^\d+(?![.\d])/]];
+const VERSION_STYLES = [["date", DATE_VERSION], ["0.x", /^0\./], ["x.y.z", /^\d+\.\d+\.\d+/], ["x.y", /^\d+\.\d+(?![.\d])/], ["one number", /^\d+(?![.\d])/]];
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 // One bar per range, in the order given; a package goes to the first range its value is under.
@@ -796,7 +795,7 @@ function ranges(ps, value, limits) {
 function topGroups(groups, n = 8) {
   const rows = groups.slice(0, n).map(([label, pkgs]) => ({ label, value: pkgs.length, pkgs }));
   const rest = groups.slice(n);
-  if (rest.length) rows.push({ label: `${rest.length} others`, value: sum(rest.map(([, ps]) => ps.length)), pkgs: rest.flatMap(([, ps]) => ps) });
+  if (rest.length) rows.push({ label: plural(rest.length, "other"), value: sum(rest.map(([, ps]) => ps.length)), pkgs: rest.flatMap(([, ps]) => ps) });
   return rows;
 }
 

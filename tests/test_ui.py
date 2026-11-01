@@ -520,21 +520,20 @@ class UiSmokeTest(unittest.TestCase):
         self.page.click('nav button[data-tab="overview"]')
         self.assertTrue(self.page.get_attribute('.bar-row[data-goto="f:jq"]', "title").endswith(" — jq desc"))
 
-    def records(self):
+    def records(self, page=None):
         sub = lambda r: r.locator(".rec-sub").text_content() if r.locator(".rec-sub").count() else ""  # noqa: E731
         return {r.locator(".rec-title").text_content(): (r.locator(".rec-name").text_content(),
                                                          r.locator(".rec-value").text_content(), sub(r))
-                for r in self.page.locator(".rec").all()}
+                for r in (page or self.page).locator(".rec").all()}
 
     def test_records_name_the_package_its_value_and_its_ties(self):
         recs = self.records()
         self.assertEqual(recs["Most dependencies"], ("ytdl", "2 packages", "1 direct"))
-        self.assertEqual(recs["Most depended on"], ("ssl@1", "2 packages", "1 direct"))
         self.assertEqual(recs["Longest dependency chain"], ("ytdl", "2 levels", "ytdl → py → ssl@1"))
         self.assertEqual(recs["Shortest name"], ("jq", "2 characters", "also py"))
         self.assertEqual(recs["Longest name"], ("php@8.0", "7 characters", ""))
         self.assertEqual(recs["Highest version"], ("drv", "2.0", ""))
-        self.assertEqual(recs["Newest install"][0], "drv")
+        self.assertEqual(recs["Latest install or upgrade"][0], "drv")
         name, _, sub = recs["Longest without an upgrade"]
         self.assertEqual(name, "held")
         self.assertTrue(sub.endswith(" · also jq, odd, php@8.0 and 3 more"), sub)
@@ -594,6 +593,90 @@ class UiSmokeTest(unittest.TestCase):
             return ["a", "b", "c", "d"].map((id) => [[...reach.get(id).all].sort(), reach.get(id).chain])
               .concat([reach.has("e") && reach.has("f")]);
         }"""), [[["b", "c"], ["a", "b", "c"]], [["c"], ["b", "c"]], [[], ["c"]], [["b", "c"], ["d", "b", "c"]], True])
+
+    def test_every_overview_figure_matches_a_value_worked_out_by_hand(self):
+        page = self.browser.new_page(timezone_id="UTC")
+        self.addCleanup(page.close)
+        page.goto(self.url)
+        page.wait_for_selector('.tile:has-text("64 KB")')
+        page.evaluate(r"""() => {
+            const now = 1700864000, day = 86400;
+            Date.now = () => now * 1000;
+            for (const name of ["gawk", "tree", "wget"]) {
+              S.pkgs.set(`f:${name}`, { ...S.pkgs.get("f:held"), id: `f:${name}`, name, requested: false });
+            }
+            S.snap.sizes = {};
+            for (const [id, kb, version, days, fields] of [
+              ["c:drv", 409600, "126", 1 / 24, {}],
+              ["f:php@8.0", 204800, "8.0.30", 60, { license: "PHP-3.01", keg_only: true }],
+              ["f:py", 102400, "3.12.4", 60, { license: "Python-2.0" }],
+              ["f:ssl@1", 51200, "r3108", 60, { license: "OpenSSL", keg_only: true }],
+              ["f:ytdl", 40960, "2026.10.31", 45, { license: "Unlicense" }],
+              ["f:held", 30720, "2.3", 400, {}],
+              ["f:odd", 20480, "0.9.1", 60, { license: null, tap: "me/tools", caveats: "one line" }],
+              ["f:gawk", 15360, "5.3.1", 60, { license: "GPL-3.0-or-later", tap: "me/tools" }],
+              ["f:tree", 10240, "2.2.1", 60, { license: "GPL-2.0-or-later" }],
+              ["f:wget", 8192, "1.25.0", 60, { license: "GPL-3.0-only" }],
+              ["f:jq", 6144, "1.7.1", 5, { caveats: "a\nb\nc" }],
+            ]) {
+              Object.assign(S.pkgs.get(id), { version, installed_time: now - days * day, ...fields });
+              S.snap.sizes[id] = kb;
+            }
+            S.snap.model.taps = [{ name: "me/tools", official: false, installed: ["f:gawk", "f:odd"] },
+                                 { name: "homebrew/core", official: true, installed: ["f:jq"] }];
+            renderView();
+        }""")
+        numbers = lambda: {r.locator("span").first.text_content(): r.locator(".num-value").text_content()  # noqa: E731
+                           for r in page.locator(".num-row").all()}
+        self.assertEqual(self.records(page), {
+            "Largest": ("drv", "400 MB", ""),
+            "Smallest": ("jq", "6 MB", ""),
+            "Heaviest with its dependencies": ("ytdl", "190 MB", "40 MB itself and 2 dependencies"),
+            "Most dependencies": ("ytdl", "2 packages", "1 direct"),
+            "Longest dependency chain": ("ytdl", "2 levels", "ytdl → py → ssl@1"),
+            "Longest without an upgrade": ("held", "2022-10-20", "400 days ago"),
+            "Latest install or upgrade": ("drv", "2023-11-24", "1 h ago"),
+            "Shortest name": ("jq", "2 characters", "also py"),
+            "Longest name": ("php@8.0", "7 characters", ""),
+            "Highest version": ("drv", "126", ""),
+            "Longest caveats": ("jq", "3 lines", ""),
+        })
+        self.assertEqual(numbers(), {
+            "Dependencies per formula you installed": "0.4 on average",
+            "Direct dependency links": "2",
+            "Median package size": "30 MB",
+            "Average package size": "80 MB",
+            "Share of disk in the ten largest": "99%",
+            "Disk taken by dependencies": "183 MB (21%)",
+            "Need nothing, needed by nothing": "8",
+            "Keg-only formulae": "2",
+            "Versioned (name@version)": "2",
+            "With caveats": "2",
+            "Different licenses": "8",
+            "Formulae without a license": "1",
+            "Packages from third-party taps": "2",
+            "Installed in the last 30 days": "2",
+            "Most common first letter": "p (2)",
+        })
+        charts = {c.locator("h3").text_content(): [(r.locator(".bar-label").text_content(),
+                                                    r.locator(".bar-value").text_content()) for r in c.locator(".bar-row").all()]
+                  for c in page.locator("h3.ov-section + .cards .card").all()}
+        pkg = lambda *rows: [(label, f"{n} pkg") for label, n in rows]  # noqa: E731
+        self.assertEqual(charts, {
+            "Size on disk": pkg(("under 1 MB", 0), ("1–10 MB", 2), ("10–100 MB", 6), ("100 MB–1 GB", 3), ("1 GB or more", 0)),
+            "Dependencies each package brings": pkg(("none", 9), ("1", 1), ("2–5", 1), ("6–10", 0), ("11–20", 0),
+                                                    ("21–50", 0), ("more than 50", 0)),
+            "Licenses of formulae": pkg(("MIT", 2), ("GPL-2.0-or-later", 1), ("GPL-3.0-only", 1), ("GPL-3.0-or-later", 1),
+                                        ("none", 1), ("OpenSSL", 1), ("PHP-3.01", 1), ("Python-2.0", 1), ("1 other", 1)),
+            "Packages per tap": pkg(("homebrew/core", 8), ("me/tools", 2), ("homebrew/cask", 1)),
+            "How versions are numbered": pkg(("x.y.z", 6), ("0.x", 1), ("date", 1), ("one number", 1), ("other", 1),
+                                             ("x.y", 1)),
+            "Installs by weekday": pkg(("Monday", 7), ("Tuesday", 1), ("Wednesday", 0), ("Thursday", 1), ("Friday", 1),
+                                       ("Saturday", 0), ("Sunday", 1)),
+        })
+        page.evaluate('delete S.snap.sizes["c:drv"]; renderView()')
+        self.assertEqual({k: v for k, v in numbers().items() if k in ("Median package size", "Average package size")},
+                         {"Median package size": "25 MB", "Average package size": "48 MB"})
 
     def test_detail_lists_indirect_dependents(self):
         self.open("deps", "f:ssl@1")

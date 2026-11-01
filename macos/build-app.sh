@@ -18,6 +18,7 @@ res="$out/Contents/Resources"
 mkdir "$res/brewdash"
 cp "$src/brewdash.py" "$src/macos/launch.sh" "$res/brewdash/"
 cp -R "$src/web" "$res/brewdash/web"
+find "$res/brewdash/web" -name '.*' -type f -delete
 
 # osacompile's icon lives in Assets.car, which macOS prefers over applet.icns.
 cp "$src/macos/brewdash.icns" "$res/applet.icns"
