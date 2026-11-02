@@ -123,8 +123,10 @@ commit other than the latest release.
 
 The app updates itself from GitHub. Pick how on the **Settings** page:
 
-- **Stable** installs releases: the highest `vX.Y.Z` tag. This is the default.
-- **Beta** installs the latest commit on `master`, whatever its tag.
+- **Stable** installs GitHub's latest release, the one made from the highest
+  `vX.Y.Z` tag. This is the default.
+- **Beta** installs the `beta` prerelease: the latest build made from
+  anything but a `vX.Y.Z` tag.
 - **Update by itself** (on by default) checks GitHub a minute after the app
   starts and every hour after that, and installs a newer version when there
   is one. The intervals are `UPDATE_FIRST_CHECK_SECONDS` and
@@ -134,8 +136,10 @@ The app updates itself from GitHub. Pick how on the **Settings** page:
   be older than what you have; the app never goes back on its own, only when
   you press **Go back to …**.
 
-An update runs the `install.sh` inside the app with the version to install. It
-builds the new app, quits brewdash, replaces the app and opens it again. If it
+An update runs the `install.sh` inside the app with the release to install.
+The Mac app downloads the release's signed and notarized ZIP and takes it only
+once Gatekeeper accepts it; the browser kind is built from the release's
+commit. Then `install.sh` quits brewdash, replaces the app and opens it again. If it
 fails before it quits brewdash, the Settings page shows the last line of its log,
 `~/.local/state/brewdash/update.log`; a failure after it has quit brewdash is
 only in that log. Your choices are kept in

@@ -1,13 +1,14 @@
 name: macos-release
 
 # Started only by hand, from the Actions tab or `gh workflow run`, on the branch or tag picked there. It runs that
-# ref's copy of this file with the signing secrets; RELEASING.md says how to limit that, and what to do when a step
-# fails.
+# ref's copy of this file with the signing secrets and publishes the app to the repository's Releases; RELEASING.md
+# says how to limit that, and what to do when a step fails.
 on:
   workflow_dispatch:
 
+# Write, for the release the last step publishes.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: macos-release
@@ -48,7 +49,9 @@ jobs:
           sha, ref = sys.argv[1], sys.argv[2]
           tag = ref if re.match(r"^v[0-9]+[.][0-9]+[.][0-9]+$", ref) else None
           print("BREWDASH_VERSION=" + json.dumps({"sha": sha, "tag": tag}))
-          print(f"ARTIFACT=brewdash-{tag or sha[:7]}-macos.zip")
+          print("RELEASE_TAG=" + (tag or ""))
+          # One name for every release, so releases/latest/download/<it> always reaches the newest.
+          print("ARTIFACT=brewdash-macos.zip")
           PY
 
       - name: Put the Developer ID certificate in a temporary keychain
@@ -197,6 +200,39 @@ jobs:
           path: ${{ runner.temp }}/dist/${{ env.ARTIFACT }}
           archive: false
           if-no-files-found: error
+
+      # brewdash.py's updater reads these by its RELEASE_ASSET and BETA_TAG: a vX.Y.Z tag's release, made here if it
+      # is not there, and the one `beta` prerelease, made anew at this commit.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          zip="$RUNNER_TEMP/dist/$ARTIFACT"
+          if [ -n "$RELEASE_TAG" ]; then
+            if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+              gh release upload "$RELEASE_TAG" "$zip" --clobber
+            else
+              # releases/latest is what the stable channel installs, so only the highest version may become it.
+              highest="$(gh api --paginate "repos/$GH_REPO/tags?per_page=100" --jq '.[].name' | python3 -c 'import re, sys
+          tags = [t for t in sys.stdin.read().split() if re.match(r"^v[0-9]+[.][0-9]+[.][0-9]+$", t)]
+          print(max(tags, key=lambda n: tuple(map(int, n[1:].split(".")))))')"
+              latest=false
+              [ "$highest" != "$RELEASE_TAG" ] || latest=true
+              gh release create "$RELEASE_TAG" "$zip" --verify-tag --title "$RELEASE_TAG" --generate-notes --latest="$latest"
+            fi
+          else
+            if gh release view beta >/dev/null 2>&1; then
+              gh release delete beta --cleanup-tag --yes
+            fi
+            # A release deleted by hand leaves its tag behind, and gh would make the new one on that old commit.
+            if gh api "repos/$GH_REPO/git/ref/tags/beta" >/dev/null 2>&1; then
+              gh api -X DELETE "repos/$GH_REPO/git/refs/tags/beta"
+            fi
+            gh release create beta "$zip" --target "$GITHUB_SHA" --prerelease --latest=false --title beta \
+              --notes "A test build of $GITHUB_REF_NAME at $GITHUB_SHA. The next run from anything but a vX.Y.Z tag replaces it."
+          fi
+          echo "- release: https://github.com/$GH_REPO/releases/tag/${RELEASE_TAG:-beta}" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Remove the keychain and the keys
         if: always()

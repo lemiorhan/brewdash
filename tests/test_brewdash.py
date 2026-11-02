@@ -4,12 +4,14 @@ import io
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -1312,25 +1314,42 @@ class AskpassTest(unittest.TestCase):
 
 SHA_A, SHA_B, SHA_C, SHA_D = ("a" * 40, "b" * 40, "c" * 40, "d" * 40)
 API = "https://api.github.com/repos/lemiorhan/brewdash"
-TAGS = [{"name": "v0.9.0", "commit": {"sha": SHA_A}}, {"name": "v0.10.0", "commit": {"sha": SHA_B}},
-        {"name": "nightly", "commit": {"sha": SHA_D}}, {"name": "v1.0", "commit": {"sha": SHA_D}}]
 APP_ROOT = Path("/Applications/brewdash.app/Contents/Resources/brewdash")
 
 
+def zip_url(tag, name="brewdash-macos.zip"):
+    return f"https://github.com/lemiorhan/brewdash/releases/download/{tag}/{name}"
+
+
+def release(tag, *assets):
+    names = assets or ("brewdash.zip.sig", "brewdash-macos.zip")
+    return {"tag_name": tag, "assets": [{"name": n, "browser_download_url": zip_url(tag, n)} for n in names]}
+
+
+def not_found(url):
+    return urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+
 class FakeGitHub:
-    """Answers the three GitHub calls the updater makes; `compare` maps a target sha to GitHub's compare status."""
-    def __init__(self, tags=TAGS, master=SHA_C, compare=None, fail=None):
-        self.tags, self.master, self.compare, self.fail = tags, master, compare or {}, fail
+    """Answers the GitHub calls the updater makes: the latest release, the beta prerelease, a tag's commit and a
+    compare from SHA_A. A release that is None is not there; `compare` maps a target sha to GitHub's compare status."""
+    def __init__(self, stable=release("v0.10.0"), beta=release("beta"), shas=None, compare=None, fail=None):
+        self.releases = {f"{API}/releases/latest": stable, f"{API}/releases/tags/beta": beta}
+        self.shas = shas or {"v0.10.0": SHA_B, "beta": SHA_C}
+        self.compare, self.fail = compare or {}, fail
         self.calls = []
 
     def __call__(self, url, accept="application/vnd.github+json"):
         self.calls.append((url, accept))
         if self.fail:
             raise self.fail
-        if url == f"{API}/commits/master" and accept == "application/vnd.github.sha":
-            return self.master + "\n"
-        if url == f"{API}/tags?per_page=100":
-            return json.dumps(self.tags)
+        if url in self.releases:
+            if self.releases[url] is None:
+                raise not_found(url)
+            return json.dumps(self.releases[url])
+        tag = url.removeprefix(f"{API}/commits/")
+        if accept == "application/vnd.github.sha" and tag in self.shas:
+            return self.shas[tag] + "\n"
         base, _, head = url.removeprefix(f"{API}/compare/").partition("...")
         if url.startswith(f"{API}/compare/") and base == SHA_A:
             return json.dumps({"status": self.compare[head]})
@@ -1358,11 +1377,18 @@ class UpdaterTest(unittest.TestCase):
             (d / "mode").write_text(written)
             self.assertEqual(brewdash.read_mode(d), want, written)
 
-    def test_an_update_builds_the_same_kind_of_app(self):
-        for mode in ("app", "browser"):
-            self.spawned.clear()
-            self.updater(FakeGitHub(compare={SHA_B: "ahead"}), mode=mode).update(manual=True)
-            self.assertEqual([a[4] for a in self.spawned], [mode])
+    def test_the_mac_app_installs_the_release_zip_and_the_browser_kind_builds_the_releases_commit(self):
+        log = self.state / "update.log"
+        for channel, target, zip_, ref in (("stable", SHA_B, zip_url("v0.10.0"), "v0.10.0"),
+                                           ("beta", SHA_C, zip_url("beta"), SHA_C)):
+            for mode, source in (("app", {"BREWDASH_ZIP": zip_}), ("browser", {"BREWDASH_REF": ref})):
+                with self.subTest(channel=channel, mode=mode):
+                    self.spawned.clear()
+                    u = self.updater(FakeGitHub(compare={target: "ahead"}), mode=mode)
+                    u.save({"channel": channel})
+                    u.update(manual=False)
+                    self.assertEqual(self.spawned, [(APP_ROOT / "install.sh", {**source, "BREWDASH_APP_DIR": "/Applications",
+                                                                              "BREWDASH_MODE": mode}, log)])
 
     def test_read_installed_takes_only_a_full_sha_and_a_vxyz_tag(self):
         root = Path(self.tmp.name)
@@ -1393,11 +1419,14 @@ class UpdaterTest(unittest.TestCase):
                 u.save(bad)
         self.assertEqual(brewdash.Updater(self.state, None).settings(), {"channel": "beta", "auto": False})
 
-    def test_stable_is_the_highest_vxyz_tag_by_number(self):
+    def test_stable_is_githubs_latest_release_with_its_tags_commit_and_zip(self):
         u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}))
         view = u.check()
-        self.assertEqual((view["latest"], view["relation"], view["error"]), ({"sha": SHA_B, "tag": "v0.10.0"}, "newer", None))
+        self.assertEqual((view["latest"], view["relation"], view["error"]),
+                         ({"sha": SHA_B, "tag": "v0.10.0", "zip": zip_url("v0.10.0")}, "newer", None))
         self.assertIsNotNone(view["checked"])
+        self.assertEqual(self.github.calls[:2], [(f"{API}/releases/latest", "application/vnd.github+json"),
+                                                 (f"{API}/commits/v0.10.0", "application/vnd.github.sha")])
 
     def test_a_new_channel_drops_the_last_check_and_a_new_auto_keeps_it(self):
         u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}))
@@ -1406,38 +1435,50 @@ class UpdaterTest(unittest.TestCase):
         view = u.save({"channel": "beta"})
         self.assertEqual((view["latest"], view["relation"], view["checked"]), (None, None, None))
 
-    def test_beta_is_masters_head(self):
+    def test_beta_is_the_beta_prerelease_and_names_no_version(self):
         u = self.updater(FakeGitHub(compare={SHA_C: "ahead"}))
         u.save({"channel": "beta"})
-        self.assertEqual(u.check()["latest"], {"sha": SHA_C, "tag": None})
-        self.assertIn((f"{API}/commits/master", "application/vnd.github.sha"), self.github.calls)
+        self.assertEqual(u.check()["latest"], {"sha": SHA_C, "tag": None, "zip": zip_url("beta")})
+        self.assertEqual(self.github.calls[:2], [(f"{API}/releases/tags/beta", "application/vnd.github+json"),
+                                                 (f"{API}/commits/beta", "application/vnd.github.sha")])
 
     def test_check_reads_githubs_compare_status_and_asks_nothing_for_the_installed_commit(self):
         for status, rel in (("ahead", "newer"), ("behind", "older"), ("diverged", "diverged"), ("identical", "same"),
                             ("odd", "diverged")):
             with self.subTest(status=status):
                 self.assertEqual(self.updater(FakeGitHub(compare={SHA_B: status})).check()["relation"], rel)
-        u = self.updater(FakeGitHub(tags=[{"name": "v0.9.0", "commit": {"sha": SHA_A}}]))
+        u = self.updater(FakeGitHub(shas={"v0.10.0": SHA_A}))
         self.assertEqual(u.check()["relation"], "same")
         self.assertFalse(any("/compare/" in url for url, _ in self.github.calls))
 
-    def test_no_tag_means_no_stable_release_and_nothing_to_install(self):
-        u = self.updater(FakeGitHub(tags=[{"name": "nightly", "commit": {"sha": SHA_D}}]))
-        view = u.update(manual=True)
-        self.assertEqual((view["latest"], view["relation"], view["error"], self.spawned), (None, None, None, []))
+    def test_a_channel_without_a_release_that_has_the_zip_has_nothing_to_install(self):
+        cases = {"no release": ("stable", FakeGitHub(stable=None)),
+                 "no beta": ("beta", FakeGitHub(beta=None)),
+                 "made by hand, no zip": ("stable", FakeGitHub(stable=release("v1.0.0", "notes.txt"))),
+                 "a zip by another name": ("beta", FakeGitHub(beta=release("beta", "brewdash-v1.0.0-macos.zip"))),
+                 "a tag that is no version": ("stable", FakeGitHub(stable=release("v0.1"))),
+                 "a tag that is a path": ("stable", FakeGitHub(stable=release("../../compare/x")))}
+        for name, (channel, github) in cases.items():
+            with self.subTest(name):
+                u = self.updater(github)
+                u.save({"channel": channel})
+                view = u.update(manual=True)
+                self.assertEqual((view["latest"], view["relation"], view["error"], self.spawned), (None, None, None, []))
+                self.assertEqual(len(github.calls), 1, github.calls)
 
     def test_a_github_failure_is_reported_not_raised(self):
         for err in (OSError("offline"), ValueError("bad json"), http.client.IncompleteRead(b"x"),
-                    http.client.HTTPException("bad status line")):
+                    http.client.HTTPException("bad status line"),
+                    urllib.error.HTTPError(f"{API}/releases/latest", 403, "rate limit exceeded", {}, None)):
             with self.subTest(err=err):
                 view = self.updater(FakeGitHub(fail=err)).update(manual=False)
                 self.assertEqual((view["error"], view["latest"], self.spawned), (str(err), None, []))
-        u = self.updater(FakeGitHub(master="<html>"))
+        u = self.updater(FakeGitHub(shas={"v0.10.0": SHA_B, "beta": "<html>"}))
         u.save({"channel": "beta"})
-        self.assertEqual(u.check()["error"], "GitHub did not answer with a commit")
-        u = self.updater(FakeGitHub(tags=[{"name": "v1.0.0", "commit": {"sha": "../../evil"}}]))
+        self.assertEqual(u.check()["error"], "GitHub did not answer with a commit for beta")
+        u = self.updater(FakeGitHub(shas={"v0.10.0": "../../evil"}))
         u.save({"channel": "stable"})
-        self.assertEqual(u.check()["error"], "GitHub did not answer with a commit for v1.0.0")
+        self.assertEqual(u.check()["error"], "GitHub did not answer with a commit for v0.10.0")
         self.assertFalse(any("/compare/" in url for url, _ in self.github.calls))
 
     def test_a_failed_installer_is_reported_and_frees_the_update_button(self):
@@ -1450,7 +1491,7 @@ class UpdaterTest(unittest.TestCase):
 
         def spawn(*a):
             self.spawned.append(a)
-            a[3].write_text("==> Downloading x\n\x1b[31mbrewdash: building the app failed.\x1b[0m\n\n")
+            a[2].write_text("==> Downloading x\n\x1b[31mbrewdash: building the app failed.\x1b[0m\n\n")
             procs.append(Proc())
             return procs[-1]
         u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}), spawn=spawn)
@@ -1468,7 +1509,7 @@ class UpdaterTest(unittest.TestCase):
         github = FakeGitHub(compare={SHA_B: "ahead"})
 
         def fetch(url, accept="application/vnd.github+json"):
-            if url.endswith("/tags?per_page=100"):
+            if url.endswith("/releases/latest"):
                 u.save({"channel": "beta"})
             return github(url, accept)
         u = self.updater(fetch)
@@ -1489,37 +1530,32 @@ class UpdaterTest(unittest.TestCase):
                              root=Path("/Applications/Mine.app/Contents/Resources/brewdash"))
             u.run_hourly()
             wait_for(lambda: "install.sh replaces brewdash.app" in (u.view()["error"] or ""))
-            rounds = lambda: sum("/tags" in url for url, _ in self.github.calls)
+            rounds = lambda: sum(url.endswith("/releases/latest") for url, _ in self.github.calls)
             wait_for(lambda: rounds() >= 3)
             self.assertEqual(self.spawned, [])
 
     def test_auto_installs_only_newer_and_a_click_also_goes_back_or_aside(self):
-        log = str(self.state / "update.log")
         for status, auto, manual in (("ahead", True, True), ("behind", False, True), ("diverged", False, True),
                                      ("identical", False, False)):
             for is_manual, want in ((False, auto), (True, manual)):
                 with self.subTest(status=status, manual=is_manual):
                     self.spawned.clear()
                     view = self.updater(FakeGitHub(compare={SHA_B: status})).update(manual=is_manual)
-                    self.assertEqual(self.spawned, [(APP_ROOT / "install.sh", "v0.10.0", Path("/Applications"),
-                                                     Path(log), "browser")] if want else [])
+                    self.assertEqual([a[1]["BREWDASH_REF"] for a in self.spawned], ["v0.10.0"] if want else [])
                     self.assertEqual(view["started"] is not None, want)
 
-    def test_beta_installs_masters_commit_by_sha(self):
-        u = self.updater(FakeGitHub(compare={SHA_C: "ahead"}))
-        u.save({"channel": "beta"})
-        u.update(manual=False)
-        self.assertEqual([a[1] for a in self.spawned], [SHA_C])
-
-    def test_update_refuses_a_checkout_and_an_app_with_another_name(self):
+    def test_update_refuses_a_checkout_an_app_with_another_name_and_an_app_run_where_it_was_downloaded(self):
         with self.assertRaises(ValueError):
             brewdash.Updater(self.state, None).update(manual=True)
         with self.assertRaises(ValueError):
             brewdash.Updater(self.state, None).check()
-        u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}), root=Path("/Applications/Mine.app/Contents/Resources/brewdash"))
-        with self.assertRaises(ValueError):
-            u.update(manual=True)
-        self.assertEqual(self.spawned, [])
+        for root in (Path("/Applications/Mine.app/Contents/Resources/brewdash"),
+                     Path("/private/var/folders/x1/abc/T/AppTranslocation/0A1B-2C3D/d/brewdash.app/Contents/Resources/brewdash")):
+            with self.subTest(root=root):
+                u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}), root=root, mode="app")
+                with self.assertRaises(ValueError):
+                    u.update(manual=True)
+                self.assertEqual(self.spawned, [])
 
     def test_an_installer_that_cannot_start_is_reported(self):
         def boom(*a):
@@ -1540,17 +1576,19 @@ class UpdaterTest(unittest.TestCase):
             self.assertEqual(self.spawned, [])
             off.save({"auto": True})
             wait_for(lambda: self.spawned)
-            self.assertEqual(self.spawned[0][1], "v0.10.0")
+            self.assertEqual(self.spawned[0][1]["BREWDASH_REF"], "v0.10.0")
 
-    def test_spawn_installer_runs_it_detached_with_the_ref_app_dir_and_mode(self):
+    def test_spawn_installer_runs_it_detached_with_the_env_it_is_given(self):
         d = Path(self.tmp.name)
         installer = d / "install.sh"
-        installer.write_text('echo "$BREWDASH_REF $BREWDASH_APP_DIR $BREWDASH_MODE $$ $(ps -o pgid= -p $$ | tr -d " ") stdin:$(cat)"\n')
-        proc = brewdash.spawn_installer(installer, "v1.2.3", "/Apps", d / "update.log", "app")
+        installer.write_text('echo "$BREWDASH_ZIP $BREWDASH_APP_DIR $BREWDASH_MODE $HOME $$ $(ps -o pgid= -p $$ | tr -d " ") stdin:$(cat)"\n')
+        proc = brewdash.spawn_installer(installer, {"BREWDASH_ZIP": "https://x/brewdash-macos.zip", "BREWDASH_APP_DIR": "/Apps",
+                                                    "BREWDASH_MODE": "app"}, d / "update.log")
         self.assertEqual(proc.wait(timeout=10), 0)
         out = wait_for(lambda: (d / "update.log").read_text().strip())
-        ref, app_dir, mode, pid, pgid, stdin = out.split(" ")
-        self.assertEqual((ref, app_dir, mode, stdin), ("v1.2.3", "/Apps", "app", "stdin:"))
+        zip_, app_dir, mode, home, pid, pgid, stdin = out.split(" ")
+        self.assertEqual((zip_, app_dir, mode, home, stdin),
+                         ("https://x/brewdash-macos.zip", "/Apps", "app", os.environ["HOME"], "stdin:"))
         self.assertEqual(pgid, pid)
         self.assertNotEqual(int(pgid), os.getpgrp())
 
@@ -1566,6 +1604,124 @@ class UpdaterTest(unittest.TestCase):
         updater.assert_called_once_with(brewdash.STATE_DIR, {"sha": SHA_A, "tag": None}, mode="app")
         self.assertIs(serve.call_args.kwargs["updater"], updater.return_value)
         updater.return_value.run_hourly.assert_called_once_with()
+
+
+class ReleaseWiringTest(unittest.TestCase):
+    """The ZIP's name and the beta's tag, read independently from each place that names them."""
+    ROOT = Path(brewdash.__file__).resolve().parent
+
+    def test_the_workflow_publishes_the_zip_and_beta_the_updater_and_the_page_ask_for(self):
+        workflow = (self.ROOT / ".github" / "workflows" / "macos-release.yml").read_text()
+        page = (self.ROOT / "docs" / "index.html").read_text()
+        self.assertEqual(re.findall(r'print\("ARTIFACT=([^"]+)"\)', workflow), ["brewdash-macos.zip"])
+        self.assertEqual(set(re.findall(r"gh release (?:view|delete|create) ([a-z]+)\b", workflow)), {"beta"})
+        self.assertEqual((brewdash.RELEASE_ASSET, brewdash.BETA_TAG), ("brewdash-macos.zip", "beta"))
+        links = re.findall(r'https://github\.com/lemiorhan/brewdash/releases/[^"]+', page)
+        self.assertEqual(set(links), {"https://github.com/lemiorhan/brewdash/releases/latest/download/brewdash-macos.zip"})
+        self.assertEqual(len(links), 2, "the hero's link and the one every language's text takes")
+
+
+class PublishStepTest(unittest.TestCase):
+    """The workflow's own bash for naming the build and publishing it, run as the workflow runs it, with gh faked."""
+    WORKFLOW = Path(brewdash.__file__).resolve().parent / ".github" / "workflows" / "macos-release.yml"
+    ZIP = "/runner/dist/brewdash-macos.zip"
+    TAGS_API = "api --paginate repos/lemiorhan/brewdash/tags?per_page=100 --jq .[].name"
+    BETA_REF = "api repos/lemiorhan/brewdash/git/ref/tags/beta"
+    GH = """#!/bin/bash
+printf '%s\\n' "$*" >> "$GH_LOG"
+case "$*" in
+  "release view "*) [ "$3" = "$EXISTING_RELEASE" ] ;;
+  "api --paginate repos/lemiorhan/brewdash/tags?per_page=100 --jq .[].name") printf '%s\\n' $TAGS ;;
+  "api repos/lemiorhan/brewdash/git/ref/tags/beta") [ -n "$BETA_TAG_LEFT" ] ;;
+esac
+"""
+
+    def step(self, name):
+        """The step's lines above its `run: |`, the block under it unindented as YAML reads it, and every key the
+        step has, above the block or below it."""
+        lines = self.WORKFLOW.read_text().splitlines()
+        start = lines.index(f"      - name: {name}")
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("      - ")), len(lines))
+        run = lines.index("        run: |", start, end)
+        body = []
+        for line in lines[run + 1:end]:
+            if line.strip() and not line.startswith(" " * 10):
+                break
+            body.append(line[10:])
+        keys = ["name"] + [m.group(1) for m in (re.match(r"        ([a-z-]+):", line) for line in lines[start:end]) if m]
+        return "\n".join(lines[start:run]), "\n".join(body).strip("\n") + "\n", keys
+
+    def run_step(self, name, **env):
+        shell = re.search(r"(?m)^defaults:\n  run:\n    shell: (.+) \{0\}$", self.WORKFLOW.read_text()).group(1)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = Path(tmp.name)
+        (d / "gh").write_text(self.GH)
+        (d / "gh").chmod(0o755)
+        (d / "step.sh").write_text(self.step(name)[1])
+        for f in ("gh.log", "env", "summary.md"):
+            (d / f).write_text("")
+        r = subprocess.run([*shell.split(), str(d / "step.sh")], capture_output=True, text=True, timeout=60,
+                           env=dict(os.environ, PATH=f"{d}:{os.environ['PATH']}", GH_LOG=str(d / "gh.log"),
+                                    GITHUB_ENV=str(d / "env"), GITHUB_STEP_SUMMARY=str(d / "summary.md"), **env))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return {f: (d / f).read_text() for f in ("gh.log", "env", "summary.md")}
+
+    def publish(self, release_tag, existing="", tags="", beta_tag_left=""):
+        out = self.run_step("Publish the release", RUNNER_TEMP="/runner", ARTIFACT="brewdash-macos.zip",
+                            GH_REPO="lemiorhan/brewdash", GITHUB_SHA=SHA_C, GITHUB_REF_NAME="some-branch",
+                            RELEASE_TAG=release_tag, EXISTING_RELEASE=existing, TAGS=tags, BETA_TAG_LEFT=beta_tag_left)
+        return out["gh.log"].splitlines(), out["summary.md"]
+
+    def test_the_build_is_named_for_a_version_tag_and_for_beta_otherwise(self):
+        for ref_type, ref, tag in (("tag", "v1.2.3", "v1.2.3"), ("tag", "v0.1", None), ("branch", "master", None),
+                                   ("branch", "v1.2.3", None)):
+            with self.subTest(f"{ref_type} {ref}"):
+                env = self.run_step("Name the build", GITHUB_SHA=SHA_A, GITHUB_REF_TYPE=ref_type, GITHUB_REF_NAME=ref)["env"]
+                self.assertEqual(dict(line.split("=", 1) for line in env.splitlines()),
+                                 {"BREWDASH_VERSION": json.dumps({"sha": SHA_A, "tag": tag}),
+                                  "RELEASE_TAG": tag or "", "ARTIFACT": "brewdash-macos.zip"})
+
+    def test_a_new_version_gets_its_release_and_only_the_highest_version_becomes_latest(self):
+        tags = "v0.9.0 v0.10.0 v0.9.1 beta v0.1 v1.0"
+        for tag, latest in (("v0.10.0", "true"), ("v0.9.1", "false")):
+            with self.subTest(tag):
+                calls, summary = self.publish(tag, tags=tags)
+                self.assertEqual(calls, [f"release view {tag}", self.TAGS_API,
+                                         f"release create {tag} {self.ZIP} --verify-tag --title {tag} --generate-notes "
+                                         f"--latest={latest}"])
+                self.assertEqual(summary, f"- release: https://github.com/lemiorhan/brewdash/releases/tag/{tag}\n")
+
+    def test_a_version_whose_release_exists_gets_its_zip_replaced(self):
+        calls, _ = self.publish("v0.10.0", existing="v0.10.0", tags="v0.10.0")
+        self.assertEqual(calls, ["release view v0.10.0", f"release upload v0.10.0 {self.ZIP} --clobber"])
+
+    def test_any_other_ref_replaces_the_one_beta_prerelease_at_its_commit(self):
+        create = (f"release create beta {self.ZIP} --target {SHA_C} --prerelease --latest=false --title beta --notes "
+                  f"A test build of some-branch at {SHA_C}. The next run from anything but a vX.Y.Z tag replaces it.")
+        for name, existing, left, between in (
+                ("beta there", "beta", "", ["release delete beta --cleanup-tag --yes", self.BETA_REF]),
+                ("no beta", "", "", [self.BETA_REF]),
+                ("beta deleted by hand, its tag left", "", "1",
+                 [self.BETA_REF, "api -X DELETE repos/lemiorhan/brewdash/git/refs/tags/beta"])):
+            with self.subTest(name):
+                calls, summary = self.publish("", existing=existing, beta_tag_left=left)
+                self.assertEqual(calls, ["release view beta", *between, create])
+                self.assertEqual(summary, "- release: https://github.com/lemiorhan/brewdash/releases/tag/beta\n")
+
+    def test_the_publish_step_always_runs_after_the_zip_and_fails_the_job_with_a_token_that_may_write_releases(self):
+        workflow = self.WORKFLOW.read_text()
+        self.assertEqual(re.findall(r"(?m)^( *)permissions:", workflow), [""])
+        self.assertRegex(workflow, r"(?m)^permissions:\n  contents: write$")
+        jobs = workflow.split("\njobs:\n", 1)[1]
+        self.assertEqual(re.findall(r"(?m)^  ([a-z-]+):", jobs), ["release"])
+        self.assertEqual(re.findall(r"(?m)^    ([a-z-]+):", jobs), ["runs-on", "timeout-minutes", "env", "steps"])
+        head, _, keys = self.step("Publish the release")
+        self.assertEqual(keys, ["name", "env", "run"])
+        self.assertIn("          GH_TOKEN: ${{ github.token }}\n          GH_REPO: ${{ github.repository }}", head)
+        names = re.findall(r"(?m)^      - name: (.+)$", workflow)
+        self.assertLess(names.index("Name the build"), names.index("Staple the ticket and pack the ZIP"))
+        self.assertLess(names.index("Staple the ticket and pack the ZIP"), names.index("Publish the release"))
 
 
 class ServerWiringTest(unittest.TestCase):

@@ -138,17 +138,6 @@ img { display: block; max-width: 100%; height: auto; }
 
 /* Install box */
 .install { grid-area: install; }
-.install-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
-.install-tabs button {
-  font: 500 14px var(--mono);
-  color: var(--muted);
-  background: none;
-  border: 0;
-  border-radius: 6px;
-  padding: 5px 10px;
-  cursor: pointer;
-}
-.install-tabs button[aria-selected="true"] { color: var(--ink); background: var(--surface); box-shadow: inset 0 0 0 1px var(--rule); }
 .command {
   display: flex;
   align-items: stretch;
@@ -334,15 +323,12 @@ footer a { color: var(--muted); }
     </div>
 
     <div class="install" id="install">
-      <div class="install-tabs install-tool" role="tablist" aria-label="Download with" data-i18n-attr="aria-label:install.tabsAria">
-        <button type="button" role="tab" aria-selected="true" aria-controls="install-command" data-command="curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash">curl</button>
-        <button type="button" role="tab" aria-selected="false" aria-controls="install-command" data-command="wget -qO- https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash">wget</button>
-      </div>
       <div class="command">
-        <pre id="install-command" role="tabpanel" tabindex="0">curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash</pre>
+        <pre id="install-command" tabindex="0">brew install --cask lemiorhan/brewdash/brewdash</pre>
         <button type="button" class="copy" data-copy="install-command" data-i18n="copy.button">Copy</button>
       </div>
-      <p class="install-note" data-i18n-html="install.note">Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a href="https://github.com/lemiorhan/brewdash/blob/master/install.sh">Read the script first</a>.</p>
+      <p class="install-note" data-i18n="install.note">Paste it in Terminal. Homebrew puts brewdash in your Applications folder.</p>
+      <p class="install-note" data-i18n-html="install.download">Or <a class="download" href="https://github.com/lemiorhan/brewdash/releases/latest/download/brewdash-macos.zip">download the app</a>, unzip it and move brewdash.app to your Applications folder.</p>
       <p class="install-note" role="status" aria-live="polite" id="copy-status"></p>
     </div>
 
@@ -412,11 +398,11 @@ footer a { color: var(--muted); }
   <section class="section" id="app" aria-labelledby="app-title">
     <div class="wrap">
       <h2 id="app-title" data-i18n="app.title">Opens like any other Mac app</h2>
-      <p class="intro" data-i18n="app.intro">The install command builds brewdash.app on your Mac. It opens in its own window, with a menu bar and a Dock icon.</p>
+      <p class="intro" data-i18n="app.intro">brewdash.app is signed by its developer and notarized by Apple. It opens in its own window, with a menu bar and a Dock icon.</p>
       <ol class="steps">
         <li>
           <h3 data-i18n="app.install.title">Install</h3>
-          <p data-i18n="app.install.body">Paste the command above in Terminal. To update later, run the same command again.</p>
+          <p data-i18n="app.install.body">Paste the command above in Terminal, or download the app. It updates itself; pick stable or beta in its Settings.</p>
         </li>
         <li>
           <h3 data-i18n="app.open.title">Open</h3>
@@ -440,8 +426,8 @@ footer a { color: var(--muted); }
         </div>
         <div>
           <h3 data-i18n="details.remove.title">Removing it</h3>
-          <p data-i18n-html="details.remove.body">This deletes the app. Your settings and Brewfile snapshots stay in <code>~/.local/state/brewdash</code>.</p>
-          <pre class="snippet">curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall</pre>
+          <p data-i18n-html="details.remove.body">This deletes the app. Your settings and Brewfile snapshots stay in <code>~/.local/state/brewdash</code>; add <code>--zap</code> to delete them too. A downloaded app goes to the Trash like any other.</p>
+          <pre class="snippet">brew uninstall --cask brewdash</pre>
         </div>
         <div>
           <h3 data-i18n="details.demo.title">Try it without your own setup</h3>
@@ -474,7 +460,7 @@ python3 brewdash.py --port 8765    <span class="c"># on a fixed port</span></pre
 
 <script>
 window.brewdashI18n = (() => {
-  const RS = 'href="https://github.com/lemiorhan/brewdash/blob/master/install.sh"';
+  const ZIP = 'class="download" href="https://github.com/lemiorhan/brewdash/releases/latest/download/brewdash-macos.zip"';
   const dict = {
     en: {
       "doc.title": "brewdash: a dashboard for Homebrew on your Mac",
@@ -487,12 +473,12 @@ window.brewdashI18n = (() => {
       "lang.label": "Language",
       "hero.title": "<code>brew list</code>, explained.",
       "hero.lede": "brewdash is a dashboard for Homebrew that runs on your Mac. It shows <strong>why each package is there</strong>, what is out of date or broken, and what needs your attention. Then it fixes it, with every command shown to you before it runs.",
-      "install.tabsAria": "Download with",
       "copy.button": "Copy",
       "copy.done": "Copied",
       "copy.status": "The install command is on your clipboard. Paste it in Terminal.",
       "copy.fallback": "Press ⌘C to copy the selected command.",
-      "install.note": `Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a ${RS}>Read the script first</a>.`,
+      "install.note": "Paste it in Terminal. Homebrew puts brewdash in your Applications folder.",
+      "install.download": `Or <a ${ZIP}>download the app</a>, unzip it and move brewdash.app to your Applications folder.`,
       "terminal.aria": "brew list output with what brewdash tells you about each package",
       "terminal.caption": "Each comment is something brewdash tells you about that package. These come from its demo data.",
       "tour.title": "Everything brew knows, on one page",
@@ -526,9 +512,9 @@ window.brewdashI18n = (() => {
       "safety.undo.title": "A removal can be undone",
       "safety.undo.body": "Before every uninstall brewdash saves a Brewfile snapshot. <code>brew bundle install --file=&lt;snapshot&gt;</code> puts it all back.",
       "app.title": "Opens like any other Mac app",
-      "app.intro": "The install command builds brewdash.app on your Mac. It opens in its own window, with a menu bar and a Dock icon.",
+      "app.intro": "brewdash.app is signed by its developer and notarized by Apple. It opens in its own window, with a menu bar and a Dock icon.",
       "app.install.title": "Install",
-      "app.install.body": "Paste the command above in Terminal. To update later, run the same command again.",
+      "app.install.body": "Paste the command above in Terminal, or download the app. It updates itself; pick stable or beta in its Settings.",
       "app.open.title": "Open",
       "app.open.body": "Start brewdash from Launchpad, Spotlight or the Dock. Click its Dock icon to bring the dashboard back.",
       "app.quit.title": "Quit",
@@ -537,7 +523,7 @@ window.brewdashI18n = (() => {
       "details.needs.title": "What you need",
       "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> and Python 3.9 or newer. The <code>python3</code> that comes with the Xcode Command Line Tools is enough; brewdash needs no other packages.',
       "details.remove.title": "Removing it",
-      "details.remove.body": "This deletes the app. Your settings and Brewfile snapshots stay in <code>~/.local/state/brewdash</code>.",
+      "details.remove.body": "This deletes the app. Your settings and Brewfile snapshots stay in <code>~/.local/state/brewdash</code>; add <code>--zap</code> to delete them too. A downloaded app goes to the Trash like any other.",
       "details.demo.title": "Try it without your own setup",
       "details.demo.body": "The demo serves made-up packages and only prints the commands it would run.",
       "details.source.title": "Run it from the source",
@@ -557,12 +543,12 @@ window.brewdashI18n = (() => {
       "lang.label": "Dil",
       "hero.title": "<code>brew list</code>, açıklamalı.",
       "hero.lede": "brewdash, Mac'inde çalışan bir Homebrew dashboard'u. <strong>Her paketin neden orada olduğunu</strong>, hangilerinin güncel olmadığını ya da bozuk olduğunu ve neyle ilgilenmen gerektiğini gösteriyor. Sonra da düzeltiyor; her komutu çalıştırmadan önce sana gösteriyor.",
-      "install.tabsAria": "İndirme aracı",
       "copy.button": "Kopyala",
       "copy.done": "Kopyalandı",
       "copy.status": "Kurulum komutu panoda. Terminal'e yapıştır.",
       "copy.fallback": "Seçili komutu kopyalamak için ⌘C'ye bas.",
-      "install.note": `Terminal'e yapıştır. brewdash'i Uygulamalar klasörüne koyup açıyor. <a ${RS}>Önce script'i oku</a>.`,
+      "install.note": "Terminal'e yapıştır. Homebrew, brewdash'i Uygulamalar klasörüne koyuyor.",
+      "install.download": `Ya da <a ${ZIP}>uygulamayı indir</a>, ZIP'i aç ve brewdash.app'i Uygulamalar klasörüne taşı.`,
       "terminal.aria": "brewdash'in her paket için söyledikleriyle birlikte brew list çıktısı",
       "terminal.caption": "Her yorum, brewdash'in o paket hakkında sana söylediği bir şey. Bunlar demo verisinden geliyor.",
       "tour.title": "brew'un bildiği her şey, tek sayfada",
@@ -596,9 +582,9 @@ window.brewdashI18n = (() => {
       "safety.undo.title": "Kaldırdığını geri getirebilirsin",
       "safety.undo.body": "brewdash her uninstall'dan önce bir Brewfile snapshot'ı alıyor. <code>brew bundle install --file=&lt;snapshot&gt;</code> hepsini geri kuruyor.",
       "app.title": "Diğer Mac uygulamaları gibi açılır",
-      "app.intro": "Kurulum komutu brewdash.app'i senin Mac'inde build ediyor. Uygulama kendi penceresinde, menü bar'ı ve Dock ikonuyla açılıyor.",
+      "app.intro": "brewdash.app'i geliştiricisi imzaladı, Apple da notarize etti. Uygulama kendi penceresinde, menü bar'ı ve Dock ikonuyla açılıyor.",
       "app.install.title": "Kur",
-      "app.install.body": "Yukarıdaki komutu Terminal'e yapıştır. Sonra güncellemek için aynı komutu tekrar çalıştır.",
+      "app.install.body": "Yukarıdaki komutu Terminal'e yapıştır ya da uygulamayı indir. Uygulama kendini güncelliyor; stable ya da beta'yı Ayarlar'dan seç.",
       "app.open.title": "Aç",
       "app.open.body": "brewdash'i Launchpad'den, Spotlight'tan ya da Dock'tan başlat. Dashboard'u geri getirmek için Dock'taki ikonuna tıkla.",
       "app.quit.title": "Kapat",
@@ -607,7 +593,7 @@ window.brewdashI18n = (() => {
       "details.needs.title": "Gerekenler",
       "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> ve Python 3.9 ya da üstü. Xcode Command Line Tools\'la gelen <code>python3</code> yeterli; brewdash başka paket istemiyor.',
       "details.remove.title": "Kaldırmak için",
-      "details.remove.body": "Bu komut uygulamayı siliyor. Ayarların ve Brewfile snapshot'ların <code>~/.local/state/brewdash</code> içinde kalıyor.",
+      "details.remove.body": "Bu komut uygulamayı siliyor. Ayarların ve Brewfile snapshot'ların <code>~/.local/state/brewdash</code> içinde kalıyor; onları da silmek için <code>--zap</code> ekle. İndirip kurduğun uygulamayı her uygulama gibi Çöp Sepeti'ne taşıman yeterli.",
       "details.demo.title": "Kendi kurulumuna dokunmadan dene",
       "details.demo.body": "Demo uydurma paketlerle çalışıyor ve çalıştıracağı komutları sadece ekrana yazıyor.",
       "details.source.title": "Kaynak koddan çalıştır",
@@ -627,12 +613,12 @@ window.brewdashI18n = (() => {
       "lang.label": "Idioma",
       "hero.title": "<code>brew list</code>, explicado.",
       "hero.lede": "brewdash es un panel para Homebrew que se ejecuta en tu Mac. Te muestra <strong>por qué está ahí cada paquete</strong>, qué está desactualizado o roto y qué requiere tu atención. Y luego lo arregla, enseñándote cada comando antes de ejecutarlo.",
-      "install.tabsAria": "Descargar con",
       "copy.button": "Copiar",
       "copy.done": "Copiado",
       "copy.status": "El comando de instalación está en tu portapapeles. Pégalo en Terminal.",
       "copy.fallback": "Pulsa ⌘C para copiar el comando seleccionado.",
-      "install.note": `Pégalo en Terminal. Instala brewdash en tu carpeta Aplicaciones y lo abre. <a ${RS}>Lee antes el script</a>.`,
+      "install.note": "Pégalo en Terminal. Homebrew instala brewdash en tu carpeta Aplicaciones.",
+      "install.download": `O <a ${ZIP}>descarga la app</a>, descomprímela y mueve brewdash.app a tu carpeta Aplicaciones.`,
       "terminal.aria": "Salida de brew list con lo que brewdash te dice de cada paquete",
       "terminal.caption": "Cada comentario es algo que brewdash te dice sobre ese paquete. Salen de sus datos de demostración.",
       "tour.title": "Todo lo que sabe brew, en una sola página",
@@ -666,9 +652,9 @@ window.brewdashI18n = (() => {
       "safety.undo.title": "Una desinstalación se puede deshacer",
       "safety.undo.body": "Antes de cada desinstalación, brewdash guarda un snapshot del Brewfile. <code>brew bundle install --file=&lt;snapshot&gt;</code> lo deja todo como estaba.",
       "app.title": "Se abre como cualquier otra app del Mac",
-      "app.intro": "El comando de instalación crea brewdash.app en tu Mac. Se abre en su propia ventana, con barra de menús e icono en el Dock.",
+      "app.intro": "brewdash.app está firmada por su desarrollador y notarizada por Apple. Se abre en su propia ventana, con barra de menús e icono en el Dock.",
       "app.install.title": "Instala",
-      "app.install.body": "Pega el comando de arriba en Terminal. Para actualizar más adelante, vuelve a ejecutar el mismo comando.",
+      "app.install.body": "Pega el comando de arriba en Terminal o descarga la app. Se actualiza sola; elige stable o beta en sus Ajustes.",
       "app.open.title": "Abre",
       "app.open.body": "Abre brewdash desde Launchpad, Spotlight o el Dock. Haz clic en su icono del Dock para volver al panel.",
       "app.quit.title": "Cierra",
@@ -677,7 +663,7 @@ window.brewdashI18n = (() => {
       "details.needs.title": "Qué necesitas",
       "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> y Python 3.9 o posterior. Basta con el <code>python3</code> que viene con las Xcode Command Line Tools; brewdash no necesita ningún otro paquete.',
       "details.remove.title": "Desinstalarlo",
-      "details.remove.body": "Esto borra la app. Tu configuración y los snapshots del Brewfile se quedan en <code>~/.local/state/brewdash</code>.",
+      "details.remove.body": "Esto borra la app. Tu configuración y los snapshots del Brewfile se quedan en <code>~/.local/state/brewdash</code>; añade <code>--zap</code> para borrarlos también. Si descargaste la app, llévala a la Papelera como cualquier otra.",
       "details.demo.title": "Pruébalo sin tocar tu instalación",
       "details.demo.body": "La demo sirve paquetes inventados y solo muestra los comandos que ejecutaría.",
       "details.source.title": "Ejecútalo desde el código fuente",
@@ -697,12 +683,12 @@ window.brewdashI18n = (() => {
       "lang.label": "语言",
       "hero.title": "<code>brew list</code>，一目了然。",
       "hero.lede": "brewdash 是一个运行在你 Mac 上的 Homebrew 仪表盘。它会告诉你<strong>每个包为什么会在那里</strong>，哪些已过时或损坏，哪些需要你处理。然后帮你修好，每条命令运行前都会先给你看。",
-      "install.tabsAria": "下载方式",
       "copy.button": "复制",
       "copy.done": "已复制",
       "copy.status": "安装命令已复制到剪贴板，粘贴到“终端”即可。",
       "copy.fallback": "按 ⌘C 复制选中的命令。",
-      "install.note": `粘贴到“终端”中运行。它会把 brewdash 放进“应用程序”文件夹并打开。<a ${RS}>先看看脚本</a>。`,
+      "install.note": "粘贴到“终端”中运行。Homebrew 会把 brewdash 放进“应用程序”文件夹。",
+      "install.download": `也可以<a ${ZIP}>下载应用</a>，解压后把 brewdash.app 移到“应用程序”文件夹。`,
       "terminal.aria": "brew list 的输出，以及 brewdash 对每个包的说明",
       "terminal.caption": "每条注释都是 brewdash 对该包给出的提示，来自它的演示数据。",
       "tour.title": "brew 知道的一切，尽在一页",
@@ -736,9 +722,9 @@ window.brewdashI18n = (() => {
       "safety.undo.title": "移除可以撤销",
       "safety.undo.body": "每次卸载前，brewdash 都会保存一份 Brewfile 快照。运行 <code>brew bundle install --file=&lt;snapshot&gt;</code> 即可全部恢复。",
       "app.title": "和其他 Mac 应用一样打开",
-      "app.intro": "安装命令会在你的 Mac 上生成 brewdash.app。它在自己的窗口中打开，带菜单栏和程序坞图标。",
+      "app.intro": "brewdash.app 由开发者签名，并经过 Apple 公证。它在自己的窗口中打开，带菜单栏和程序坞图标。",
       "app.install.title": "安装",
-      "app.install.body": "把上面的命令粘贴到“终端”运行。以后要更新，再运行一次同一条命令就行。",
+      "app.install.body": "把上面的命令粘贴到“终端”运行，或者下载应用。它会自动更新；在它的“设置”里选择 stable 或 beta。",
       "app.open.title": "打开",
       "app.open.body": "从启动台、Spotlight 或程序坞启动 brewdash。点击程序坞中的图标即可重新调出仪表盘。",
       "app.quit.title": "退出",
@@ -747,7 +733,7 @@ window.brewdashI18n = (() => {
       "details.needs.title": "环境要求",
       "details.needs.body": 'macOS、<a href="https://brew.sh">Homebrew</a> 和 Python 3.9 或更高版本。Xcode Command Line Tools 自带的 <code>python3</code> 就够了，brewdash 不依赖任何其他包。',
       "details.remove.title": "卸载",
-      "details.remove.body": "这条命令会删除应用。你的设置和 Brewfile 快照会保留在 <code>~/.local/state/brewdash</code> 中。",
+      "details.remove.body": "这条命令会删除应用。你的设置和 Brewfile 快照会保留在 <code>~/.local/state/brewdash</code> 中；加上 <code>--zap</code> 会一并删除。下载安装的应用，像其他应用一样移到废纸篓即可。",
       "details.demo.title": "不动自己的环境，先试试看",
       "details.demo.body": "演示模式使用虚构的包，只打印它将要运行的命令，不会真正执行。",
       "details.source.title": "从源码运行",
@@ -825,22 +811,6 @@ window.brewdashI18n = (() => {
 
   function roving(tabs) {
     for (const t of tabs) t.tabIndex = t.getAttribute("aria-selected") === "true" ? 0 : -1;
-  }
-
-  const showCommand = () => {
-    command.textContent = document.querySelector(".install-tool [aria-selected=true]").dataset.command;
-    status.textContent = "";
-  };
-  for (const group of document.querySelectorAll(".install-tabs")) {
-    const tabs = [...group.querySelectorAll("[role=tab]")];
-    const choose = (tab) => {
-      selectTab(tabs, tab);
-      roving(tabs);
-      showCommand();
-    };
-    tabs.forEach((tab) => tab.addEventListener("click", () => choose(tab)));
-    arrowKeys(tabs, choose);
-    roving(tabs);
   }
 
   document.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", async () => {

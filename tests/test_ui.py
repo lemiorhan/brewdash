@@ -923,7 +923,7 @@ class UiSmokeTest(UiFixture):
         self.page.wait_for_selector("#content .info")
         self.assertEqual(self.page.inner_text("#content .info"),
                          f"Installing {SHA_C[:7]}. brewdash quits and opens again when it is done.")
-        self.assertEqual([a[1] for a in self.spawned], [SHA_C])
+        self.assertEqual([a[1]["BREWDASH_REF"] for a in self.spawned], [SHA_C])
         self.assertTrue(self.page.is_disabled('[data-update="now"]'))
         self.page.click('nav button[data-tab="history"]')
         with self.page.expect_request("**/api/settings*", timeout=10000):
@@ -952,6 +952,16 @@ class UiSmokeTest(UiFixture):
         self.page.evaluate("S.settings = { installed: null }; renderView()")
         self.assertIn("Run install.sh once more to get updates.", self.page.inner_text("#content .info"))
         self.assertEqual(self.page.locator("[data-update], [data-channel], [data-auto]").count(), 0)
+
+    def test_a_channel_without_a_release_says_which_one_is_missing(self):
+        self.page.click('nav button[data-tab="settings"]')
+        self.page.wait_for_selector('[data-update="check"]')
+        for channel, says in (("stable", "There is no stable release yet."), ("beta", "There is no beta build right now.")):
+            with self.subTest(channel=channel):
+                self.page.evaluate(f"""S.settings = {{ installed: {{ sha: "{SHA_A}", tag: null }}, channel: "{channel}",
+                    auto: true, checked: 1, latest: null, relation: null, error: null, started: null }}; renderView()""")
+                self.assertEqual(self.page.inner_text("#content p.muted"), says)
+        self.page.evaluate("S.settings = undefined")
 
     def test_settings_page_shows_while_brew_cannot_be_read(self):
         self.page.evaluate("S.snap = { error: 'boom' }; S.tab = 'settings'; renderView()")
@@ -1235,7 +1245,8 @@ class ProjectPageInstallTest(unittest.TestCase):
     """docs/index.html, the page that hands out the install command."""
     FILE = Path(brewdash.__file__).resolve().parent / "docs" / "index.html"
     PAGE = FILE.as_uri()
-    SCRIPT = "https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh"
+    COMMAND = "brew install --cask lemiorhan/brewdash/brewdash"
+    ZIP = "https://github.com/lemiorhan/brewdash/releases/latest/download/brewdash-macos.zip"
 
     @classmethod
     def setUpClass(cls):
@@ -1247,30 +1258,30 @@ class ProjectPageInstallTest(unittest.TestCase):
         cls.browser.close()
         cls.pw.stop()
 
-    def test_the_command_follows_the_download_tool_and_installs_the_mac_app(self):
+    def test_every_language_hands_out_the_cask_and_the_latest_zip_and_no_script(self):
         page = self.browser.new_page(locale="en-US")
         self.addCleanup(page.close)
         page.goto(self.PAGE)
-        command = lambda: page.inner_text("#install-command")
-        self.assertEqual(page.locator("#install [role=tab]").all_inner_texts(), ["curl", "wget"])
-        self.assertEqual(command(), f"curl -fsSL {self.SCRIPT} | bash")
-        page.click(".install-tool button:text-is('wget')")
-        self.assertEqual(command(), f"wget -qO- {self.SCRIPT} | bash")
-        page.click(".install-tool button:text-is('curl')")
-        self.assertEqual(command(), f"curl -fsSL {self.SCRIPT} | bash")
+        for lang in ("en", "tr", "es", "zh-CN"):
+            with self.subTest(lang=lang):
+                page.select_option("select", lang)
+                self.assertEqual(page.inner_text("#install-command"), self.COMMAND)
+                self.assertEqual(page.locator("#install a").evaluate_all("as => as.map((a) => a.href)"), [self.ZIP])
+                self.assertEqual(page.inner_text("#details .snippet >> nth=0"), "brew uninstall --cask brewdash")
+        self.assertEqual(re.findall(r"install\.sh|curl |wget ", self.FILE.read_text()), [])
 
     def test_no_language_talks_about_a_browser_or_a_server_outside_the_developer_snippets(self):
         page = self.browser.new_page(locale="en-US")
         self.addCleanup(page.close)
         page.goto(self.PAGE)
         app = {
-            "en": ("The install command builds brewdash.app on your Mac. It opens in its own window, with a menu bar and a Dock icon.",
+            "en": ("brewdash.app is signed by its developer and notarized by Apple. It opens in its own window, with a menu bar and a Dock icon.",
                    "Press ⌘ Q to quit brewdash."),
-            "tr": ("Kurulum komutu brewdash.app'i senin Mac'inde build ediyor. Uygulama kendi penceresinde, menü bar'ı ve Dock ikonuyla açılıyor.",
+            "tr": ("brewdash.app'i geliştiricisi imzaladı, Apple da notarize etti. Uygulama kendi penceresinde, menü bar'ı ve Dock ikonuyla açılıyor.",
                    "brewdash'ten çıkmak için ⌘ Q'ya bas."),
-            "es": ("El comando de instalación crea brewdash.app en tu Mac. Se abre en su propia ventana, con barra de menús e icono en el Dock.",
+            "es": ("brewdash.app está firmada por su desarrollador y notarizada por Apple. Se abre en su propia ventana, con barra de menús e icono en el Dock.",
                    "Pulsa ⌘ Q para salir de brewdash."),
-            "zh-CN": ("安装命令会在你的 Mac 上生成 brewdash.app。它在自己的窗口中打开，带菜单栏和程序坞图标。",
+            "zh-CN": ("brewdash.app 由开发者签名，并经过 Apple 公证。它在自己的窗口中打开，带菜单栏和程序坞图标。",
                       "按 ⌘ Q 退出 brewdash。"),
         }
         words = re.compile(SERVER_WORDS + r"|--browser|(?<![a-z])browser|(?<!güvenlik )tarayıcı|navegador|浏览器", re.I)

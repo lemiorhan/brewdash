@@ -3,12 +3,30 @@
 [`.github/workflows/macos-release.yml`](.github/workflows/macos-release.yml)
 builds the Mac app kind of `brewdash.app` for Apple silicon and Intel Macs,
 signs it with the Developer ID Application certificate, has Apple notarize it,
-staples the ticket to the app and uploads `brewdash-<tag or commit>-macos.zip`
-to the run. The minimum macOS is `min_macos` in
-[`macos/build-app.sh`](macos/build-app.sh). The workflow does not publish a
-GitHub Release.
+staples the ticket to the app and publishes it as `brewdash-macos.zip`. The
+minimum macOS is `min_macos` in [`macos/build-app.sh`](macos/build-app.sh).
 
-`install.sh` still builds the app on the user's Mac and signs it ad-hoc.
+Where the ZIP goes depends on the ref the run was started on:
+
+- **A `vX.Y.Z` tag**: the release of that tag. The run makes the release if it
+  is not there, with release notes GitHub generates, and marks it *Latest*
+  only when the tag is the highest `vX.Y.Z`. If you made the
+  release by hand first, the run only adds the ZIP to it.
+- **Anything else**, a branch or another tag: the one `beta` prerelease. The
+  run deletes the old one with its `beta` tag and makes it again at the commit
+  it built.
+
+The ZIP has the same name in every release, so this link always downloads the
+latest stable version; the project page and the Homebrew cask in
+[`lemiorhan/homebrew-brewdash`](https://github.com/lemiorhan/homebrew-brewdash)
+use it, and neither changes when you release:
+
+```
+https://github.com/lemiorhan/brewdash/releases/latest/download/brewdash-macos.zip
+```
+
+Run by hand, `install.sh` still builds the app on the user's Mac and signs it
+ad-hoc; the app's own updates install the release's ZIP instead.
 
 ## Secrets
 
@@ -26,12 +44,15 @@ secrets*, or with `gh secret set` from a checkout:
 
 Only the steps that need a secret get it: the keychain step the certificate
 and the team ID, the signature check the team ID, the notarize step the API key.
+The job's `GITHUB_TOKEN` may write the repository's contents, for the release;
+of the `run` steps only *Publish the release* names it.
 
 No push or pull request starts the workflow. Anyone with write access can
 start it by hand, though, on any branch, and it runs that branch's copy of the
-workflow file with these secrets. To allow it only on `master` and release
-tags, move the secrets into an environment (*Settings → Environments*) whose
-deployment rule names those refs, and add `environment: <its name>` to the job.
+workflow file with these secrets, and replaces the `beta` prerelease with what
+it built. To allow it only on `master` and release tags, move the secrets into
+an environment (*Settings → Environments*) whose deployment rule names those
+refs, and add `environment: <its name>` to the job.
 
 ## Running it
 
@@ -39,23 +60,28 @@ The *Run workflow* button appears once the workflow file is on `master`.
 
 1. *Actions* → **macos-release** → **Run workflow**.
 2. Under *Use workflow from*, pick a branch or a tag. A `vX.Y.Z` tag makes the
-   app's version `X.Y.Z`; anything else names the app after its commit.
-3. When the run is green, the ZIP is under *Artifacts* at the bottom of the run
-   page, with its SHA-256 in the run summary. Download it there, in the
-   browser.
+   app's version `X.Y.Z` and publishes a stable release; anything else names
+   the app after its commit and publishes the beta.
+3. When the run is green, the run summary links the release and gives the
+   ZIP's SHA-256. The ZIP is also under *Artifacts* at the bottom of the run
+   page.
 
 To start it from a terminal instead: `gh workflow run macos-release.yml --ref
-v0.1.0`, then `gh run watch`.
+v0.1.0`, then `gh run watch`. Push the tag first: `git tag v0.1.0 && git push
+origin v0.1.0`. A tag like `v0.1` is not `vX.Y.Z`, so it publishes the beta.
 
 Unzip it and move `brewdash.app` to `/Applications` before you open it.
-Opened from Downloads, macOS runs it from a hidden read-only copy, and an
-update has nowhere to put the new app.
+Opened from Downloads, macOS runs it from a hidden read-only copy, and the app
+refuses to update itself from there.
 
-The app carries the same `version.json` an `install.sh` install does, so it
-offers updates the same way: an update runs `install.sh`, which builds the new
-version on the Mac, signs it ad-hoc and replaces the app. That this replacing
-works on a Developer ID signed, notarized app has not been tried yet; try it
-on a test Mac before handing the ZIP out.
+The app updates itself from these releases. *Stable* in its settings is
+GitHub's latest release, *Beta* the `beta` prerelease; a release without
+`brewdash-macos.zip` is not offered. An update downloads the ZIP, has
+`install.sh` check that Gatekeeper accepts the app in it and replaces the app,
+so it stays notarized. The kind of app that opens the browser, which only
+`install.sh --browser` makes, is built on the Mac from the release's commit
+instead. That an update replaces a notarized app this way has not been tried on
+a real release yet; try it on a test Mac before you announce one.
 
 ## When the first run fails
 
@@ -83,6 +109,7 @@ failed, above GitHub's `Process completed with exit code`.
 | 〃 | `notarization ended as 'In_Progress'` | Apple did not finish within the step's `--timeout`. The first submissions of a team can take longer. Look at it later with `xcrun notarytool info <submission> --key AuthKey.p8 --key-id … --issuer …` and run the job again. |
 | Staple the ticket and pack the ZIP | `stapler staple` fails although notarization said `Accepted` | The ticket can take a few minutes to reach Apple's servers after acceptance. Run the job again. |
 | Check the ZIP as a user unpacks it | `Gatekeeper rejects the app` or `does not see a notarized Developer ID app` | The `spctl` output above the error names what Gatekeeper saw. `source=Unnotarized Developer ID` means the ticket is missing. |
+| Publish the release | any `gh` error | Run the job again. An upload that stopped half way is replaced (`--clobber`), and the beta is made again from scratch. |
 
 Every run removes its temporary keychain and key files, whether it succeeded
 or not. The runner is discarded after the job.

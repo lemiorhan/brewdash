@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
@@ -1257,6 +1258,10 @@ GITHUB_API = "https://api.github.com/repos/lemiorhan/brewdash"
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CHANNELS = ("stable", "beta")
+# What .github/workflows/macos-release.yml publishes: the stable channel is GitHub's latest release, the beta
+# channel the one prerelease under this tag.
+RELEASE_ASSET = "brewdash-macos.zip"
+BETA_TAG = "beta"
 DEFAULT_SETTINGS = {"channel": "stable", "auto": True}
 UPDATE_FIRST_CHECK_SECONDS = 60
 UPDATE_CHECK_SECONDS = 3600
@@ -1283,7 +1288,7 @@ def github_fetch(url, accept="application/vnd.github+json"):
 
 
 def read_mode(root=ROOT):
-    """app or browser: the kind of brewdash.app build-app.sh made, so an update builds the same kind."""
+    """app or browser: the kind of brewdash.app build-app.sh made, so an update installs the same kind."""
     try:
         mode = (Path(root) / "mode").read_text().strip()
     except OSError:
@@ -1291,12 +1296,10 @@ def read_mode(root=ROOT):
     return mode if mode in ("app", "browser") else "browser"
 
 
-def spawn_installer(installer, ref, app_dir, log, mode):
+def spawn_installer(installer, env, log):
     # Its own session: install.sh quits the app, and this server with it, before it replaces the app.
     with open(log, "w") as out:
-        return subprocess.Popen(["/bin/bash", str(installer)],
-                                env={**os.environ, "BREWDASH_REF": ref, "BREWDASH_APP_DIR": str(app_dir),
-                                     "BREWDASH_MODE": mode},
+        return subprocess.Popen(["/bin/bash", str(installer)], env={**os.environ, **env},
                                 stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
 
 
@@ -1354,7 +1357,7 @@ class Updater:
 
     def view(self):
         with self.lock:
-            # install.sh quits this server once it has built the new app, so an installer that ended while the
+            # install.sh quits this server once the new app is ready, so an installer that ended while the
             # server still runs has failed.
             if self.installer is not None and self.installer.poll() is not None:
                 code, self.installer = self.installer.returncode, None
@@ -1363,20 +1366,23 @@ class Updater:
             return {**self.settings(), "installed": self.installed, **self.status}
 
     def latest(self, channel):
-        """The commit `channel` is at: master's head for beta, the highest vX.Y.Z tag for stable (None if no tag)."""
-        if channel == "beta":
-            sha = self.fetch(f"{GITHUB_API}/commits/master", "application/vnd.github.sha").strip()
-            if not SHA_RE.match(sha):
-                raise ValueError("GitHub did not answer with a commit")
-            return {"sha": sha, "tag": None}
-        tags = [(tuple(map(int, m.groups())), t) for t in json.loads(self.fetch(f"{GITHUB_API}/tags?per_page=100"))
-                if isinstance(t, dict) and (m := TAG_RE.match(str(t.get("name"))))]
-        if not tags:
+        """The release `channel` is at, with its commit and its ZIP; None while it has no release with the ZIP."""
+        url = f"{GITHUB_API}/releases/tags/{BETA_TAG}" if channel == "beta" else f"{GITHUB_API}/releases/latest"
+        try:
+            release = json.loads(self.fetch(url))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            raise
+        tag = str(release.get("tag_name"))
+        zips = [a.get("browser_download_url") for a in release.get("assets") or [] if a.get("name") == RELEASE_ASSET]
+        # A release made by hand, before the workflow added the ZIP, or one whose tag is no version.
+        if not zips or (channel == "stable" and not TAG_RE.match(tag)):
             return None
-        tag = max(tags, key=lambda vt: vt[0])[1]
-        if not SHA_RE.match(str(tag["commit"]["sha"])):
-            raise ValueError(f"GitHub did not answer with a commit for {tag['name']}")
-        return {"sha": tag["commit"]["sha"], "tag": tag["name"]}
+        sha = self.fetch(f"{GITHUB_API}/commits/{tag}", "application/vnd.github.sha").strip()
+        if not SHA_RE.match(sha):
+            raise ValueError(f"GitHub did not answer with a commit for {tag}")
+        return {"sha": sha, "tag": tag if channel == "stable" else None, "zip": zips[0]}
 
     def check(self):
         if not self.installed:
@@ -1400,7 +1406,7 @@ class Updater:
         return self.view()
 
     def update(self, manual):
-        """Install the channel's latest commit. Only a click goes back to an older or a side commit."""
+        """Install the channel's latest release. Only a click goes back to an older or a side commit."""
         # Two installers at once would both swap brewdash.app; one can land inside the other.
         if not self.installing.acquire(blocking=False):
             return self.view()
@@ -1413,10 +1419,17 @@ class Updater:
                 app = self.root.parents[2]
                 if app.name != "brewdash.app":
                     raise ValueError(f"install.sh replaces brewdash.app, but this copy runs from {app}")
+                # macOS runs an app opened where it was downloaded from a read-only copy under this folder.
+                if "AppTranslocation" in app.parts:
+                    raise ValueError("move brewdash.app to your Applications folder and open it from there to update it")
                 target = view["latest"]
+                # The Mac app takes the release's notarized ZIP; only the browser kind is built from the source.
+                source = {"BREWDASH_ZIP": target["zip"]} if self.mode == "app" else \
+                    {"BREWDASH_REF": target["tag"] or target["sha"]}
                 try:
-                    proc = self.spawn(self.root / "install.sh", target["tag"] or target["sha"], app.parent,
-                                      self.state_dir / "update.log", self.mode)
+                    proc = self.spawn(self.root / "install.sh",
+                                      {**source, "BREWDASH_APP_DIR": str(app.parent), "BREWDASH_MODE": self.mode},
+                                      self.state_dir / "update.log")
                     started, err = time.time(), None
                 except OSError as e:
                     proc, started, err = None, None, f"could not start install.sh: {e}"

@@ -14,6 +14,8 @@
 #                    /Applications:~/Applications
 # BREWDASH_REF       tag, branch or commit to install; default the highest vX.Y.Z tag, or master if there is none
 # BREWDASH_TARBALL   a source archive URL to install from instead (file:// works); that app does not update itself
+# BREWDASH_ZIP       a release's brewdash-macos.zip to install instead of building the app; the Mac app's own updates
+#                    set it. Gatekeeper must accept the app in it.
 # BREWDASH_NO_OPEN   set to install without starting the app
 set -euo pipefail
 
@@ -67,7 +69,6 @@ quit_running() {
   fi
 }
 
-# The stable channel: the highest vX.Y.Z tag, or nothing.
 latest_tag() {
   curl -fsSL "$API/tags?per_page=100" | python3 -c '
 import json, re, sys
@@ -123,13 +124,44 @@ main() {
     || fail "Homebrew is not installed. Install it first: https://brew.sh"
   { command -v python3 >/dev/null && python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; } \
     || fail "brewdash needs Python 3.9 or newer. Install the Command Line Tools: xcode-select --install"
-  [ "$mode" = browser ] || xcrun --find swiftc >/dev/null 2>&1 \
+  [ "$mode" = browser ] || [ -n "${BREWDASH_ZIP:-}" ] || xcrun --find swiftc >/dev/null 2>&1 \
     || fail "the Mac app is built with swiftc. Install the Command Line Tools (xcode-select --install), or install with --browser."
   check_ours "$app"
 
   work="$(mktemp -d)"
   trap 'rm -rf "$work"' EXIT
-  local tarball version=""
+  if [ -n "${BREWDASH_ZIP:-}" ]; then
+    unpack_release
+  else
+    build_from_source "$mode"
+  fi
+
+  quit_running
+  mkdir -p "$(dirname "$app")"
+  rm -rf "$app"
+  mv "$work/brewdash.app" "$app"
+  remove_other_copies "$app"
+  say "Installed $app. Open it from Launchpad, Spotlight or the Dock; quit it to stop brewdash."
+  [ -n "${BREWDASH_NO_OPEN:-}" ] || open "$app"
+}
+
+# The ZIP's app is the one the release workflow signed and Apple notarized; curl sets no quarantine flag, so nothing
+# else checks it before it opens.
+unpack_release() {
+  say "Downloading $BREWDASH_ZIP"
+  curl -fsSL "$BREWDASH_ZIP" -o "$work/brewdash.zip" || fail "could not download $BREWDASH_ZIP."
+  mkdir "$work/zip"
+  ditto -x -k "$work/brewdash.zip" "$work/zip" || fail "$BREWDASH_ZIP is not a ZIP."
+  [ -d "$work/zip/brewdash.app" ] || fail "$BREWDASH_ZIP holds no brewdash.app."
+  check_ours "$work/zip/brewdash.app"
+  codesign --verify --deep --strict "$work/zip/brewdash.app" >/dev/null 2>&1 \
+    && spctl --assess --type execute "$work/zip/brewdash.app" >/dev/null 2>&1 \
+    || fail "Gatekeeper does not accept the brewdash.app in $BREWDASH_ZIP."
+  mv "$work/zip/brewdash.app" "$work/brewdash.app"
+}
+
+build_from_source() {
+  local mode="$1" tarball version=""
   if [ -n "${BREWDASH_TARBALL:-}" ]; then
     tarball="$BREWDASH_TARBALL"
   else
@@ -150,14 +182,6 @@ main() {
     printf '%s\n' "$log" >&2
     fail "building the app failed."
   fi
-
-  quit_running
-  mkdir -p "$(dirname "$app")"
-  rm -rf "$app"
-  mv "$work/brewdash.app" "$app"
-  remove_other_copies "$app"
-  say "Installed $app. Open it from Launchpad, Spotlight or the Dock; quit it to stop brewdash."
-  [ -n "${BREWDASH_NO_OPEN:-}" ] || open "$app"
 }
 
 # Tests read the functions above without installing anything.

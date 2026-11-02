@@ -424,7 +424,7 @@ function updatesCard(u) {
   const status = u.error ? `<div class="warn">${esc(u.error)}</div>`
     : u.started ? `<div class="info">${t("settings.started", { version: esc(latest) })}</div>`
     : !u.checked ? ""
-    : !u.latest ? `<p class="muted">${t("settings.no_stable")}</p>`
+    : !u.latest ? `<p class="muted">${u.channel === "beta" ? t("settings.no_beta") : t("settings.no_stable")}</p>`
     : !RELATIONS.includes(u.relation) ? ""
     : `<p>${t("settings.rel." + u.relation, { version: `<b class="mono">${esc(latest)}</b>` })}</p>`;
   const canUpdate = !u.started && ["newer", "older", "diverged"].includes(u.relation);
@@ -490,7 +490,7 @@ function renderHealth() {
 const SIGNATURE = {
   apple: "ok", appstore: "ok", developer_id: "ok", other: "muted", adhoc: "bad", unsigned: "bad", unknown: "muted",
 };
-// macos/build-app.sh sets this id and signs ad-hoc: brewdash.app is built on the Mac it runs on.
+// The brewdash.app install.sh builds from source carries this id and an ad-hoc signature (macos/build-app.sh).
 const BREWDASH_ID = "io.github.lemiorhan.brewdash";
 const builtHere = (a) => a.bundle_id === BREWDASH_ID && a.signature?.kind === "adhoc";
 const weakSignature = (a) => ["adhoc", "unsigned"].includes(a.signature?.kind) && !builtHere(a);

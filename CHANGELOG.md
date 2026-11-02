@@ -11,6 +11,15 @@ numbered releases yet; changes are listed by date.
   keyboard shortcuts and a save dialog for the Brewfile. `install.sh` builds
   it by default; `--browser` installs the app that opens the browser instead.
   Only one kind is installed at a time, and an update keeps the kind.
+- The Mac app signed with a Developer ID and notarized by Apple, published on
+  GitHub Releases as `brewdash-macos.zip`: a `vX.Y.Z` tag gets its own
+  release, any other ref replaces the one `beta` prerelease. Install it with
+  `brew install --cask lemiorhan/brewdash/brewdash`, or download it from the
+  latest release.
+- The app updates itself from those releases. Stable is the latest release
+  and beta the `beta` prerelease, no longer every commit on master. The Mac
+  app installs the release's ZIP once Gatekeeper accepts it, instead of being
+  built on the Mac.
 - **Security** tab with the findings of
   [secure-it](https://github.com/lemiorhan/secure-it), read from
   `~/secure-it/report.json`. Findings appear in *Needs attention*, in the
@@ -31,6 +40,8 @@ numbered releases yet; changes are listed by date.
 
 ### Changed
 - *Needs attention* is ordered worst first across all sources.
+- The project page hands out the Homebrew cask and a download link instead of
+  the install script.
 
 ## 2026-11-01
 

@@ -444,6 +444,7 @@ class InstallFromGitHubTest(unittest.TestCase):
     """install.sh's main with GitHub answered by a shell function and a source archive whose build-app.sh only
     records the version it was handed."""
     SHA = "b" * 40
+    ZIP_URL = "https://github.com/lemiorhan/brewdash/releases/download/v1.2.3/brewdash-macos.zip"
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -458,21 +459,73 @@ class InstallFromGitHubTest(unittest.TestCase):
         self.tarball = self.root / "src.tar.gz"
         subprocess.run(["tar", "-czf", str(self.tarball), "-C", str(self.root), "brewdash-src"], check=True)
         self.calls = self.root / "curl.log"
+        self.zip = self.release_zip(BUNDLE_ID)
+
+    def release_zip(self, bundle_id):
+        app = self.fake_app(Path(tempfile.mkdtemp(dir=self.root)), bundle_id)
+        (app / "Contents" / "released").write_text(bundle_id)
+        out = app.parent / "brewdash-macos.zip"
+        subprocess.run(["ditto", "-c", "-k", "--keepParent", str(app), str(out)], check=True)
+        return out
+
+    # codesign and spctl answer for the unsigned fake app; xcrun fails, so a check for swiftc would stop the install.
+    GATEKEEPER = 'codesign() {{ return {codesign}; }}\nspctl() {{ return {spctl}; }}\nxcrun() {{ return 1; }}\n'
+
+    def install_zip(self, codesign=0, spctl=0, url=ZIP_URL):
+        return self.run_main("[]", "--app", shell=self.GATEKEEPER.format(codesign=codesign, spctl=spctl),
+                             BREWDASH_ZIP=url)
+
+    def test_a_release_zip_is_installed_as_it_is_without_building_or_asking_github(self):
+        r = self.install_zip()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.apps / "brewdash.app" / "Contents" / "released").read_text(), BUNDLE_ID)
+        self.assertFalse((self.apps / "brewdash.app" / "version").exists())
+        calls = self.calls.read_text().splitlines()
+        self.assertEqual(len(calls), 1, calls)
+        self.assertTrue(calls[0].startswith(f"-fsSL {self.ZIP_URL} -o "), calls)
+
+    def test_a_release_zip_that_fails_any_check_replaces_nothing_and_says_which(self):
+        not_a_zip = self.root / "not-a-zip"
+        not_a_zip.write_text("<html>")
+        other = Path(tempfile.mkdtemp(dir=self.root)) / "other.app"
+        other.mkdir()
+        no_app = other.parent / "brewdash-macos.zip"
+        subprocess.run(["ditto", "-c", "-k", "--keepParent", str(other), str(no_app)], check=True)
+        missing = self.ZIP_URL.replace("v1.2.3", "v9.9.9")
+        gatekeeper = f"Gatekeeper does not accept the brewdash.app in {self.ZIP_URL}."
+        for name, zip_file, args, says in (
+                ("download", self.zip, {"url": missing}, f"could not download {missing}."),
+                ("not a ZIP", not_a_zip, {}, f"{self.ZIP_URL} is not a ZIP."),
+                ("no app", no_app, {}, f"{self.ZIP_URL} holds no brewdash.app."),
+                ("bundle id", self.release_zip("com.example.other"), {},
+                 "is not brewdash's app (its bundle id is 'com.example.other')"),
+                ("codesign", self.zip, {"codesign": 1}, gatekeeper),
+                ("spctl", self.zip, {"spctl": 3}, gatekeeper)):
+            with self.subTest(name):
+                shutil.rmtree(self.apps, ignore_errors=True)
+                ours = self.fake_app(self.apps)
+                self.zip = zip_file
+                r = self.install_zip(**args)
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(says, r.stderr)
+                self.assertTrue(ours.exists())
+                self.assertFalse((ours / "Contents" / "released").exists())
 
     def install(self, tags, *args, **env):
         r = self.run_main(tags, *args, **env)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads((self.apps / "brewdash.app" / "version").read_text()), self.calls.read_text().splitlines()
 
-    def run_main(self, tags, *args, **env):
+    def run_main(self, tags, *args, shell="", **env):
         fake = f"""curl() {{ printf '%s\\n' "$*" >> "{self.calls}"; case "$*" in
   *"/tags?per_page=100") printf '%s' '{tags}' ;;
   *"vnd.github.sha"*"/commits/"*) printf '%s' '{self.SHA}' ;;
   *"https://github.com/lemiorhan/brewdash/archive/{self.SHA}.tar.gz") cat "{self.tarball}" ;;
+  *"{self.ZIP_URL} -o "*) cp "{self.zip}" "${{@: -1}}" ;;
   *) return 22 ;;
 esac; }}
 quit_running() {{ :; }}
-"""
+{shell}"""
         script = f'source "{ROOT / "install.sh"}"\n{fake}main "$@"\n'
         base = {k: v for k, v in os.environ.items() if k != "BREWDASH_MODE"}
         base.update(BREWDASH_SOURCE_ONLY="1", BREWDASH_NO_OPEN="1", BREWDASH_APP_DIR=str(self.apps),
