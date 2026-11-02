@@ -72,9 +72,12 @@ jobs:
           security import "$p12" -k "$keychain" -f pkcs12 -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           # Certificates from Apple's G2 Developer ID intermediate do not chain without it: macOS ships only the first.
           ca="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          ca_sha256=f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a
           curl -fsSL -o "$ca" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
-          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $ca" | shasum -a 256 -c -
-          security import "$ca" -k "$keychain"
+          echo "$ca_sha256  $ca" | shasum -a 256 -c -
+          # A .p12 exported with its chain already holds it, and a second import of a certificate fails.
+          held="$(security find-certificate -a -Z "$keychain")"
+          grep -qix "SHA-256 hash: $ca_sha256" <<<"$held" || security import "$ca" -k "$keychain"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
           # codesign finds identities through the user's keychain search list.
           security list-keychains -d user | xargs security list-keychains -d user -s "$keychain"
