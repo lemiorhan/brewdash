@@ -209,7 +209,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           zip="$RUNNER_TEMP/dist/$ARTIFACT"
-          if [ -n "$RELEASE_TAG" ]; then
+          if [ -n "${RELEASE_TAG:-}" ]; then
             if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
               gh release upload "$RELEASE_TAG" "$zip" --clobber
             else

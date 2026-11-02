@@ -1661,16 +1661,19 @@ esac
         (d / "step.sh").write_text(self.step(name)[1])
         for f in ("gh.log", "env", "summary.md"):
             (d / f).write_text("")
+        inherited = {k: v for k, v in os.environ.items() if k != "RELEASE_TAG"}
         r = subprocess.run([*shell.split(), str(d / "step.sh")], capture_output=True, text=True, timeout=60,
-                           env=dict(os.environ, PATH=f"{d}:{os.environ['PATH']}", GH_LOG=str(d / "gh.log"),
+                           env=dict(inherited, PATH=f"{d}:{os.environ['PATH']}", GH_LOG=str(d / "gh.log"),
                                     GITHUB_ENV=str(d / "env"), GITHUB_STEP_SUMMARY=str(d / "summary.md"), **env))
         self.assertEqual(r.returncode, 0, r.stderr)
         return {f: (d / f).read_text() for f in ("gh.log", "env", "summary.md")}
 
     def publish(self, release_tag, existing="", tags="", beta_tag_left=""):
+        """`release_tag` None leaves RELEASE_TAG unset, as a runner may when "Name the build" wrote it empty."""
+        tag = {} if release_tag is None else {"RELEASE_TAG": release_tag}
         out = self.run_step("Publish the release", RUNNER_TEMP="/runner", ARTIFACT="brewdash-macos.zip",
                             GH_REPO="lemiorhan/brewdash", GITHUB_SHA=SHA_C, GITHUB_REF_NAME="some-branch",
-                            RELEASE_TAG=release_tag, EXISTING_RELEASE=existing, TAGS=tags, BETA_TAG_LEFT=beta_tag_left)
+                            EXISTING_RELEASE=existing, TAGS=tags, BETA_TAG_LEFT=beta_tag_left, **tag)
         return out["gh.log"].splitlines(), out["summary.md"]
 
     def test_the_build_is_named_for_a_version_tag_and_for_beta_otherwise(self):
@@ -1699,13 +1702,14 @@ esac
     def test_any_other_ref_replaces_the_one_beta_prerelease_at_its_commit(self):
         create = (f"release create beta {self.ZIP} --target {SHA_C} --prerelease --latest=false --title beta --notes "
                   f"A test build of some-branch at {SHA_C}. The next run from anything but a vX.Y.Z tag replaces it.")
-        for name, existing, left, between in (
-                ("beta there", "beta", "", ["release delete beta --cleanup-tag --yes", self.BETA_REF]),
-                ("no beta", "", "", [self.BETA_REF]),
-                ("beta deleted by hand, its tag left", "", "1",
-                 [self.BETA_REF, "api -X DELETE repos/lemiorhan/brewdash/git/refs/tags/beta"])):
+        for name, release_tag, existing, left, between in (
+                ("beta there", "", "beta", "", ["release delete beta --cleanup-tag --yes", self.BETA_REF]),
+                ("no beta", "", "", "", [self.BETA_REF]),
+                ("beta deleted by hand, its tag left", "", "", "1",
+                 [self.BETA_REF, "api -X DELETE repos/lemiorhan/brewdash/git/refs/tags/beta"]),
+                ("RELEASE_TAG unset", None, "", "", [self.BETA_REF])):
             with self.subTest(name):
-                calls, summary = self.publish("", existing=existing, beta_tag_left=left)
+                calls, summary = self.publish(release_tag, existing=existing, beta_tag_left=left)
                 self.assertEqual(calls, ["release view beta", *between, create])
                 self.assertEqual(summary, "- release: https://github.com/lemiorhan/brewdash/releases/tag/beta\n")
 
