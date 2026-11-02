@@ -51,6 +51,16 @@ check(retry.failed(refused) == .reconnect, "a page that loaded earns a new retry
 var fresh = RetryLimit()
 check(fresh.failed(otherCancelled) == .reconnect, "only NSURLErrorDomain's cancel is a cancel")
 
+check(dragsWindow(pressedButtons: 1), "the left button held drags")
+check(dragsWindow(pressedButtons: 3), "the left button held with the right one drags")
+check(!dragsWindow(pressedButtons: 0), "a click already let go of does not drag")
+check(!dragsWindow(pressedButtons: 2), "the right button alone does not drag")
+
+check(titleBarAction(nil) == .zoom, "with the setting never changed, a double-click zooms")
+check(titleBarAction("Maximize") == .zoom, "Maximize zooms")
+check(titleBarAction("Minimize") == .minimize, "Minimize minimizes")
+check(titleBarAction("None") == .ignore, "None does nothing")
+
 func rgb(_ css: String) -> [Int]? {
     guard let c = cssColor(css)?.usingColorSpace(.sRGB) else { return nil }
     return [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 255).rounded()) }

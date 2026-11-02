@@ -974,17 +974,168 @@ class UiSmokeTest(UiFixture):
         self.page.click("#btn-theme")
         self.assertEqual((theme(), bg()), ("auto", "rgb(245, 246, 248)"))
 
-    def mac_app_page(self):
+    def mac_app_page(self, viewport=None):
         """The page as macos/brewdash.swift's window shows it, with the window's message handler recorded."""
-        page = self.browser.new_page(color_scheme="dark")
+        setup = re.search(r'let pageSetup = """\n(.*?)\n"""', (WEB.parent / "macos" / "brewdash.swift").read_text(), re.S)
+        page = self.browser.new_page(color_scheme="dark", viewport=viewport or {"width": 1280, "height": 720})
         self.addCleanup(page.close)
         page.add_init_script("window.sent = []; window.webkit = { messageHandlers: { brewdash: "
                              "{ postMessage: (m) => window.sent.push(m) } } };")
+        # Chromium runs this before <html> exists; the window runs pageSetup once it does.
+        page.add_init_script("new MutationObserver((_, o) => { if (document.documentElement) { o.disconnect(); "
+                             + setup.group(1) + " } }).observe(document, { childList: true });")
         page.goto(self.url)
         page.wait_for_selector(".ov .att")
         return page
 
-    def test_the_mac_app_window_hears_every_theme_and_its_header_colour(self):
+    @staticmethod
+    def box(page, selector):
+        b = page.locator(selector).bounding_box()
+        return {**b, "right": b["x"] + b["width"], "bottom": b["y"] + b["height"],
+                "middle": (b["x"] + b["width"] / 2, b["y"] + b["height"] / 2)}
+
+    @staticmethod
+    def window_asks(page, x, y, double=False, button="left"):
+        page.evaluate("window.sent = []")
+        (page.mouse.dblclick if double else page.mouse.click)(x, y, button=button)
+        return [k for m in page.evaluate("window.sent") for k in ("drag", "zoom") if k in m]
+
+    def test_the_mac_app_window_moves_and_zooms_from_its_title_bar_band_only(self):
+        page = self.mac_app_page()
+        # Its click would refresh the server every test in this class shares.
+        page.evaluate("$('#btn-refresh').onclick = null")
+        box = lambda s: self.box(page, s)
+        bar, side = box("header")["height"], box("nav")["width"]
+        asks = {
+            "page title": self.window_asks(page, *box("#page-title")["middle"]),
+            "right-click on the page title": self.window_asks(page, *box("#page-title")["middle"], button="right"),
+            "band over the sidebar": self.window_asks(page, side / 2, bar / 2),
+            "toolbar button": self.window_asks(page, *box("#btn-refresh")["middle"]),
+            "app name under the band": self.window_asks(page, side / 2, bar + 18),
+            "sidebar tab": self.window_asks(page, *box('nav [data-tab="casks"]')["middle"]),
+            "page content": self.window_asks(page, *box("#content")["middle"]),
+            "double-click on the page title": self.window_asks(page, *box("#page-title")["middle"], double=True),
+        }
+        self.assertEqual(asks, {"page title": ["drag"], "right-click on the page title": [],
+                                "band over the sidebar": ["drag"], "toolbar button": [],
+                                "app name under the band": [], "sidebar tab": [], "page content": [],
+                                "double-click on the page title": ["drag", "zoom"]})
+
+    def test_in_the_mac_app_the_band_moves_the_window_over_an_open_dialog_and_leaves_it_open(self):
+        page = self.mac_app_page()
+        bar = self.box(page, "header")["height"]
+
+        def press(x, y, double=False):
+            page.evaluate("alertBox('x')")
+            return self.window_asks(page, x, y, double), page.is_visible("#modal")
+        self.assertEqual({"band": press(640, bar / 2), "double-click in the band": press(640, bar / 2, double=True),
+                          "below the band": press(20, 700)},
+                         {"band": (["drag"], True), "double-click in the band": (["drag", "zoom"], True),
+                          "below the band": ([], False)})
+
+    def test_in_a_browser_a_click_anywhere_on_the_dialog_shade_closes_it(self):
+        for x, y in ((640, 10), (20, 700)):
+            self.page.evaluate("alertBox('x')")
+            self.page.mouse.click(x, y)
+            self.assertFalse(self.page.is_visible("#modal"), (x, y))
+
+    def test_the_mac_app_toolbar_names_the_open_page_in_the_chosen_language(self):
+        page = self.mac_app_page()
+        title = lambda: page.inner_text("#page-title")
+        self.assertEqual(title(), "Overview")
+        tabs = page.eval_on_selector_all("nav [data-tab]", "bs => bs.map((b) => [b.dataset.tab, b.firstChild.textContent])")
+        self.assertGreater(len(tabs), 10)
+        for tab, label in tabs:
+            page.click(f'nav [data-tab="{tab}"]')
+            self.assertEqual(title(), label, tab)
+        page.click('nav [data-tab="casks"]')
+        self.assertEqual(title(), "Casks")
+        page.select_option("#lang", "tr")
+        self.assertEqual(title(), "Cask'ler")
+
+    def test_the_mac_app_puts_the_tabs_in_a_sidebar_and_the_toolbar_on_the_title_bar_band(self):
+        page = self.mac_app_page()
+        box = lambda s: self.box(page, s)
+        page.click('nav [data-tab="casks"]')
+        header, nav, brand, theme = box("header"), box("nav"), box(".brand"), box("#btn-theme")
+        tabs = [box(f'nav [data-tab="{k}"]') for k in page.eval_on_selector_all("nav [data-tab]", "bs => bs.map((b) => b.dataset.tab)")]
+        self.assertGreater(len(tabs), 10)
+        self.assertEqual((nav["x"], nav["y"], nav["bottom"]), (0, 0, 720))
+        self.assertEqual((header["x"], header["y"], header["height"]), (nav["width"], 0, 52))
+        self.assertEqual((brand["x"], brand["y"], brand["bottom"]), (0, 0, header["bottom"] + 36))
+        self.assertLessEqual(brand["right"], nav["right"])
+        self.assertEqual(len({t["x"] for t in tabs}), 1, "the tabs are one column")
+        self.assertEqual([t["y"] for t in tabs], sorted(t["y"] for t in tabs))
+        self.assertGreaterEqual(tabs[0]["y"], brand["bottom"])
+        self.assertLessEqual(tabs[-1]["bottom"], theme["y"])
+        for prefs in (theme, box("#lang")):
+            self.assertLessEqual(prefs["right"], nav["right"])
+            self.assertGreater(prefs["y"], 720 - 60)
+        self.assertEqual(box("main")["x"], nav["width"])
+        self.assertTrue(page.is_visible("#page-title"))
+        self.assertFalse(page.is_visible("#intro h2"))
+        page.evaluate("S.pkgs.get('f:py').missing_deps = ['gone']; renderHeader()")
+        self.assertEqual(page.eval_on_selector(".stat.bad", "s => getComputedStyle(s).color"), "rgb(230, 106, 90)")
+
+    def test_the_mac_app_sidebar_puts_every_tab_in_its_group(self):
+        page = self.mac_app_page()
+        tabs = page.eval_on_selector_all("nav [data-tab]", """bs => bs.map((b) => {
+          const r = b.getBoundingClientRect();
+          return [b.dataset.tab, r.top, r.bottom];
+        })""")
+        gaps = [b[1] - a[2] for a, b in zip(tabs, tabs[1:])]
+        groups = [[tabs[0][0]]]
+        for (key, _, _), gap in zip(tabs[1:], gaps):
+            if gap > min(gaps) + 5:
+                groups.append([key])
+            else:
+                groups[-1].append(key)
+        self.assertEqual(groups, [["overview"], ["requested", "deps", "casks", "services", "taps"],
+                                  ["health", "security", "apps", "shell"], ["history", "install", "export"], ["settings"]])
+
+    def test_the_mac_app_smallest_window_shows_every_tab_without_scrolling(self):
+        swift = (WEB.parent / "macos" / "brewdash.swift").read_text()
+        width, height = map(int, re.search(r"window\.minSize = NSSize\(width: (\d+), height: (\d+)\)", swift).groups())
+        page = self.mac_app_page({"width": width, "height": height})
+        self.assertEqual(page.eval_on_selector("nav", "n => n.scrollHeight - n.clientHeight"), 0)
+        last = page.eval_on_selector_all("nav [data-tab]", "bs => bs.at(-1).getBoundingClientRect().bottom")
+        self.assertLessEqual(last, self.box(page, "#btn-theme")["y"], "the last tab is under the theme button")
+
+    def test_the_mac_app_band_follows_the_height_the_window_gives_it(self):
+        page = self.mac_app_page({"width": 1280, "height": 400})
+        page.evaluate("document.documentElement.style.setProperty('--bar', '104px')")
+        box = lambda s: self.box(page, s)
+        self.assertEqual((box("header")["height"], box(".brand")["bottom"]), (104, 140))
+        self.assertEqual(self.window_asks(page, 640, 90), ["drag"])
+        page.eval_on_selector("nav", "n => n.scrollTop = n.scrollHeight")
+        self.assertTrue(page.eval_on_selector("nav", "n => n.scrollTop > 0"), "the sidebar does not scroll at this height")
+        hits = page.evaluate("[...Array(400).keys()].filter((y) => document.elementFromPoint(98, y)?.closest('nav button'))")
+        self.assertTrue(any(y >= 140 for y in hits), "the scan line crosses no tab at all")
+        self.assertEqual([y for y in hits if y < 140], [], "a scrolled tab shows in the band or over the app name")
+        page.evaluate("document.documentElement.style.setProperty('--bar', '20px')")
+        self.assertLessEqual(box(".heading")["bottom"], box("header")["bottom"], "a band too short for the toolbar cuts it off")
+
+    def test_in_a_browser_the_header_is_one_row_with_the_tabs_in_a_row_under_it(self):
+        box = lambda s: self.box(self.page, s)
+        self.tab("casks")
+        header, nav = box("header"), box("nav")
+        self.assertEqual((header["x"], header["y"], header["width"]), (0, 0, 1280))
+        self.assertEqual(nav["y"], header["bottom"])
+        tabs = [box(f'nav [data-tab="{k}"]') for k in self.page.eval_on_selector_all("nav [data-tab]", "bs => bs.map((b) => b.dataset.tab)")]
+        self.assertGreater(len(tabs), 10)
+        self.assertEqual(len({t["y"] for t in tabs}), 1, "the tabs are one row")
+        self.assertEqual([t["x"] for t in tabs], sorted(t["x"] for t in tabs))
+        for part in (".brand", "#stats", "#btn-refresh", "#btn-theme", "#lang"):
+            self.assertAlmostEqual(box(part)["middle"][1], header["middle"][1], delta=1.5, msg=part)
+        refresh, update, theme, lang = box("#btn-refresh"), box("#btn-update"), box("#btn-theme"), box("#lang")
+        self.assertEqual(lang["x"] - theme["right"], update["x"] - refresh["right"], "theme and language sit apart like the other buttons")
+        self.assertGreater(box("#stats")["x"], box(".brand")["right"])
+        self.assertFalse(self.page.is_visible("#page-title"))
+        self.assertTrue(self.page.is_visible("#intro h2"))
+        self.page.evaluate("S.pkgs.get('f:py').missing_deps = ['gone']; renderHeader()")
+        self.assertEqual(self.page.eval_on_selector(".stat.bad", "s => getComputedStyle(s).borderTopColor"), "rgb(192, 57, 43)")
+
+    def test_the_mac_app_window_hears_every_theme_and_its_panel_colour(self):
         page = self.mac_app_page()
         sent = lambda: [(m["theme"], m["panel"].strip()) for m in page.evaluate("window.sent") if "theme" in m]
         page.click("#btn-theme")

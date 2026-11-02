@@ -41,14 +41,18 @@ input[type=search], input[type=text], select { background: var(--panel2); color:
 /* The Mac app (macos/brewdash.swift sets .app): controls behave like a native window's, not like a web page's. */
 html.app header, html.app nav, html.app button, html.app label, html.app th, html.app .jobs-head { -webkit-user-select: none; user-select: none; }
 html.app button, html.app label, html.app tr.row, html.app .chip, html.app .att, html.app .rec, html.app .jobs-head, html.app .job-head { cursor: default; }
-html.app header { padding-top: 4px; }
 
 header { display: flex; align-items: center; gap: 18px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
 .brand { font: 700 18px var(--mono); white-space: nowrap; }
 .brand img { width: 26px; height: 26px; vertical-align: -7px; margin-right: 8px; }
 .brand span { color: var(--accent); }
+/* The Mac app moves .prefs to its sidebar and shows #page-title in its toolbar (the end of this file); in a browser
+   .prefs sit with the other buttons, and the tab row names the page. */
+.prefs { display: contents; }
+#page-title { display: none; }
 .stats { display: flex; gap: 8px; flex-wrap: wrap; }
 .stat { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+.stat.bad { border-color: var(--red); }
 .stat b { font-family: var(--mono); }
 .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 
@@ -208,3 +212,38 @@ pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 
 .hero-hide { float: right; }
 @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } .hero-side { border-left: none; padding-left: 0; } }
 #btn-theme { min-width: 64px; }
+
+/* The Mac app's window: the tabs in a sidebar and a toolbar on the title bar band, whose window buttons sit on the
+   sidebar. brewdash.swift sets --bar so the buttons are in the band's middle; the brand covers the band over the
+   sidebar so the tabs scroll under it, not under the buttons. */
+html.app { --side: 196px; --bar: 52px; }
+html.app body { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); grid-template-rows: minmax(var(--bar), auto) auto minmax(0, 1fr); height: 100vh; overflow: hidden; }
+html.app header { grid-column: 2; grid-row: 1; position: static; gap: 14px; padding: 0 14px 0 20px; background: var(--bg); }
+html.app .brand { position: fixed; top: 0; left: 0; width: calc(var(--side) - 1px); height: calc(var(--bar) + 36px); display: flex; align-items: center; padding: var(--bar) 20px 0; font-size: 15px; background: var(--panel2); z-index: 6; }
+html.app .brand img { width: 20px; height: 20px; margin-right: 7px; }
+html.app .intro h2 { display: none; }
+html.app .heading { flex: 1; min-width: 0; }
+html.app #page-title { display: block; margin: 0; font-size: 15px; line-height: 20px; }
+html.app #page-title, html.app .stats { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.app .stats { display: block; font-size: 11px; line-height: 15px; color: var(--muted); }
+html.app .stat { background: none; border: none; border-radius: 0; padding: 0; font-size: inherit; }
+html.app .stat + .stat::before { content: "·"; margin: 0 6px; }
+html.app .stat b { font-family: inherit; font-weight: 600; }
+html.app .stat.bad { color: var(--red); }
+html.app .actions { gap: 6px; }
+html.app .actions button { white-space: nowrap; padding: 4px 10px; }
+html.app #last-update { font-size: 11px; white-space: nowrap; margin-right: 4px; }
+@media (max-width: 1180px) { html.app #last-update { display: none; } }
+
+html.app nav { grid-column: 1; grid-row: 1 / -1; flex-direction: column; gap: 1px; padding: calc(var(--bar) + 40px) 10px 60px; overflow-y: auto; border-bottom: none; border-right: 1px solid var(--line); background: var(--panel2); }
+html.app nav button { display: flex; align-items: center; flex-shrink: 0; padding: 4px 10px; border: none; border-radius: 6px; color: var(--text); text-align: left; }
+html.app nav button.active { background: color-mix(in srgb, var(--text) 12%, transparent); }
+html.app nav .count { margin-left: auto; padding-left: 8px; }
+html.app nav [data-tab="requested"], html.app nav [data-tab="health"], html.app nav [data-tab="history"], html.app nav [data-tab="settings"] { margin-top: 10px; }
+html.app .prefs { position: fixed; left: 0; bottom: 0; width: calc(var(--side) - 1px); display: flex; gap: 6px; padding: 12px; background: var(--panel2); z-index: 6; }
+html.app .prefs select { flex: 1; min-width: 0; }
+
+html.app #error { grid-column: 2; grid-row: 2; }
+html.app main { grid-column: 2; grid-row: 3; height: auto; min-height: 0; }
+html.app .jobs { left: var(--side); }
+html.app .tiles { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }

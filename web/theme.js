@@ -18,7 +18,7 @@ function applyTheme(theme) {
   return theme;
 }
 
-// In the Mac app the title bar takes the theme and the header's colour; a browser has no such handler.
+// In the Mac app the window takes the theme and the panel colour; a browser has no such handler.
 function tellWindow(theme) {
   const handler = window.webkit?.messageHandlers?.brewdash;
   if (handler) handler.postMessage({ theme, panel: getComputedStyle(document.documentElement).getPropertyValue("--panel") });

@@ -57,6 +57,25 @@ struct RetryLimit {
     }
 }
 
+// The page asks for a window drag on mousedown, and the message can arrive after a quick click has already ended:
+// only a left button still held drags.
+func dragsWindow(pressedButtons: Int) -> Bool {
+    pressedButtons & 1 == 1
+}
+
+enum TitleBarAction: Equatable {
+    case zoom, minimize, ignore
+}
+
+// A double-click on the title bar, as the AppleActionOnDoubleClick default asks for it.
+func titleBarAction(_ setting: String?) -> TitleBarAction {
+    switch setting {
+    case "Minimize": return .minimize
+    case "None": return .ignore
+    default: return .zoom
+    }
+}
+
 // "#161a21" or "rgb(22, 26, 33)", as getComputedStyle may give either.
 func cssColor(_ css: String) -> NSColor? {
     let s = css.trimmingCharacters(in: .whitespaces)

@@ -127,12 +127,12 @@ function counts() {
 function renderHeader() {
   const c = counts();
   const total = Object.values(S.snap?.sizes || {}).reduce((a, b) => a + b, 0);
-  const stat = (key, n, style = "") => `<span class="stat"${style}>${t(key, { n, v: `<b>${n}</b>` })}</span>`;
+  const stat = (key, n, cls = "") => `<span class="stat${cls}">${t(key, { n, v: `<b>${n}</b>` })}</span>`;
   $("#stats").innerHTML = [
     stat("stat.packages", S.pkgs.size),
     stat("stat.outdated", c.outdated),
     stat("stat.orphans", c.orphans),
-    c.missing ? stat("stat.missing", c.missing, ` style="border-color:var(--red)"`) : "",
+    c.missing ? stat("stat.missing", c.missing, " bad") : "",
     stat("stat.disk", total ? fmtSize(total) : "…"),
     S.snap?.refreshing ? `<span class="stat">${t("stat.refreshing")}</span>` : "",
   ].join("");
@@ -145,6 +145,7 @@ function renderHeader() {
 
 function renderTabs() {
   const c = counts();
+  $("#page-title").textContent = tabLabel(S.tab);
   $("#tabs").innerHTML = TABS.map((k) =>
     `<button data-tab="${k}" class="${S.tab === k ? "active" : ""}">${tabLabel(k)}${c[k] != null ? `<span class="count">${c[k]}</span>` : ""}</button>`
   ).join("");
@@ -1149,7 +1150,7 @@ const copiedLabel = () => t("btn.copied");
 document.addEventListener("click", (e) => {
   const t = e.target;
   const d = (k) => t.closest(`[data-${k}]`)?.dataset[k.replace(/-(\w)/g, (_, c) => c.toUpperCase())];
-  if (t.closest("#modal") && t.id === "modal") return closeModal();
+  if (t.id === "modal") { if (!onTitleBar(e)) closeModal(); return; }
   if (d("tab")) { S.tab = d("tab"); $("#view").scrollTop = 0; renderTabs(); renderView(); renderDetail(); return; }
   if (t.matches("[data-sel]")) { t.checked ? S.selected.add(t.dataset.sel) : S.selected.delete(t.dataset.sel); renderBulk(); return; }
   if (t.id === "sel-all") { visiblePackages().forEach((p) => t.checked ? S.selected.add(p.id) : S.selected.delete(p.id)); renderPackages(); renderBulk(); return; }
@@ -1199,6 +1200,15 @@ document.addEventListener("click", (e) => {
   if (row && !t.matches("input")) select(row.dataset.id);
 });
 document.addEventListener("click", syncUrl);
+
+// The Mac app lays the page under its title bar, so the band the toolbar spans moves and zooms the window as a title
+// bar would, also through the shade of an open dialog, which a press there does not close.
+const macWindow = window.webkit?.messageHandlers?.brewdash;
+const onTitleBar = (e) => macWindow && e.clientY < $("header").offsetHeight
+  && (e.target.id === "modal" || (e.target.closest("header, nav") && !e.target.closest("button, select, input, a")));
+if (macWindow) document.addEventListener("mousedown", (e) => {
+  if (e.button === 0 && onTitleBar(e)) macWindow.postMessage(e.detail === 2 ? { zoom: true } : { drag: true });
+});
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.id === "search-q") doSearch();

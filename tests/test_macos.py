@@ -171,7 +171,7 @@ class LaunchScriptWithTheRealServerTest(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "darwin" and shutil.which("swiftc"), "the Mac app is built with swiftc")
 class MacAppPolicyTest(unittest.TestCase):
-    def test_navigation_connect_gate_retry_limit_and_header_colour(self):
+    def test_navigation_connect_gate_retry_limit_and_window_colour(self):
         with tempfile.TemporaryDirectory() as tmp:
             main = Path(tmp) / "main.swift"
             shutil.copy(ROOT / "tests" / "policy_check.swift", main)
@@ -181,6 +181,20 @@ class MacAppPolicyTest(unittest.TestCase):
             self.assertEqual(build.returncode, 0, build.stderr)
             r = subprocess.run([str(exe)], capture_output=True, text=True, timeout=30)
             self.assertEqual((r.returncode, r.stdout), (0, "ok\n"), r.stdout)
+
+    def test_the_window_lays_the_page_under_its_title_bar_with_the_band_following_the_zoom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "window_check"
+            build = subprocess.run(["swiftc", "-swift-version", "5", "-parse-as-library", "-D", "BREWDASH_CHECK",
+                                    "-o", str(exe), str(ROOT / "tests" / "window_check.swift"),
+                                    str(ROOT / "macos" / "brewdash.swift"), str(ROOT / "macos" / "policy.swift")],
+                                   capture_output=True, text=True, timeout=300)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            for setting in ("Minimize", "None"):
+                with self.subTest(setting=setting):
+                    r = subprocess.run([str(exe), "-AppleActionOnDoubleClick", setting], capture_output=True,
+                                       text=True, timeout=60, cwd=tmp)
+                    self.assertEqual((r.returncode, r.stdout), (0, "ok\n"), r.stdout)
 
 
 # Asks one app, by pid, to quit as ⌘Q does; osascript would pick the user's own brewdash, which has the same bundle id.

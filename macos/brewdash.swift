@@ -39,6 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var window: NSWindow!
     var webView: WKWebView!
     var dashboard: URL?
+    // Measured once, on the window as built, so the band depends on the zoom alone (see fitTitleBar).
+    var titleBarDepth: CGFloat?
+    // The mouseDown that started a drag, which performDrag(with:) wants (NSWindow.h): the page's message asking for the
+    // drag comes later, when NSApp.currentEvent may already be another event.
+    var titleBarPress: NSEvent?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.mainMenu = makeMenu()
@@ -108,27 +113,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
     func makeWindow() {
         let config = WKWebViewConfiguration()
-        let content = config.userContentController
-        content.addUserScript(WKUserScript(source: pageSetup, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        content.add(self, name: "brewdash")
+        config.userContentController.add(self, name: "brewdash")
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                          backing: .buffered, defer: false)
         window.title = "brewdash"
-        // The title bar takes the colour of the page header below it (see theme.js), so the two read as one bar.
+        // The page lies under the title bar and draws its sidebar and toolbar there (html.app in web/style.css). An
+        // empty toolbar makes the bar tall enough for the page's toolbar line, centred on the window buttons (see
+        // fitTitleBar); clicks in the bar still reach the page, so the page asks for the window drag (see "drag").
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.toolbar = NSToolbar(identifier: "brewdash")
+        window.toolbarStyle = .unified
         window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 900, height: 560)
+        window.minSize = NSSize(width: 900, height: 600)
         window.isReleasedWhenClosed = false
         window.contentView = webView
         window.delegate = self
         window.center()
         window.setFrameAutosaveName("brewdash")
+        titleBarDepth = window.standardWindowButton(.closeButton).map { window.frame.height - $0.convert($0.bounds, to: nil).midY }
+        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: recordPress)
+        fitTitleBar()
+    }
+
+    func recordPress(_ event: NSEvent) -> NSEvent? {
+        titleBarPress = event
+        return event
+    }
+
+    // --bar in web/style.css: twice the window buttons' depth, so the page's toolbar line has them in its middle. It
+    // is in CSS px, which the page zoom scales.
+    func fitTitleBar() {
+        guard let depth = titleBarDepth else { return }
+        let bar = "document.documentElement.style.setProperty('--bar', '\(2 * depth / webView.pageZoom)px');"
+        let content = webView.configuration.userContentController
+        content.removeAllUserScripts()
+        content.addUserScript(WKUserScript(source: pageSetup + bar, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        webView.evaluateJavaScript(bar)
     }
 
     // MARK: messages from the page
@@ -144,6 +171,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
         if let name = body["save"] as? String, let text = body["text"] as? String {
             save(text, as: name)
+        }
+        titleBar(body, pressedButtons: NSEvent.pressedMouseButtons,
+                 doubleClick: UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick"))
+    }
+
+    func titleBar(_ body: [String: Any], pressedButtons: Int, doubleClick: String?) {
+        if body["drag"] != nil, dragsWindow(pressedButtons: pressedButtons), let press = titleBarPress {
+            window.performDrag(with: press)
+        }
+        if body["zoom"] != nil {
+            switch titleBarAction(doubleClick) {
+            case .zoom: window.zoom(nil)
+            case .minimize: window.miniaturize(nil)
+            case .ignore: break
+            }
         }
     }
 
@@ -205,9 +247,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         webView.evaluateJavaScript("document.querySelector('#tabs [data-tab=\"settings\"]')?.click()")
     }
 
-    @objc func zoomIn(_ sender: Any?) { webView.pageZoom = min(webView.pageZoom + 0.1, 3) }
-    @objc func zoomOut(_ sender: Any?) { webView.pageZoom = max(webView.pageZoom - 0.1, 0.5) }
-    @objc func actualSize(_ sender: Any?) { webView.pageZoom = 1 }
+    @objc func zoomIn(_ sender: Any?) { zoom(to: webView.pageZoom + 0.1) }
+    @objc func zoomOut(_ sender: Any?) { zoom(to: webView.pageZoom - 0.1) }
+    @objc func actualSize(_ sender: Any?) { zoom(to: 1) }
+
+    func zoom(to scale: CGFloat) {
+        webView.pageZoom = min(max(scale, 0.5), 3)
+        fitTitleBar()
+    }
     @objc func back(_ sender: Any?) { webView.goBack() }
     @objc func forward(_ sender: Any?) { webView.goForward() }
     @objc func openRepo(_ sender: Any?) { NSWorkspace.shared.open(repoURL) }
@@ -275,6 +322,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 }
 
+// tests/window_check.swift brings its own main.
+#if !BREWDASH_CHECK
 @main
 enum Main {
     static func main() {
@@ -285,3 +334,4 @@ enum Main {
         app.run()
     }
 }
+#endif
