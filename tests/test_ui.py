@@ -1093,6 +1093,28 @@ class UiSmokeTest(UiFixture):
         self.assertEqual(groups, [["overview"], ["requested", "deps", "casks", "services", "taps"],
                                   ["health", "security", "apps", "shell"], ["history", "install", "export"], ["settings"]])
 
+    def test_the_mac_app_sidebar_draws_a_line_between_groups_and_spaces_tabs_evenly(self):
+        page = self.mac_app_page()
+        items = page.eval_on_selector_all("nav > *", """es => es.map((e) => {
+          const r = e.getBoundingClientRect();
+          return { key: e.dataset.tab || e.tagName, left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+                   colour: getComputedStyle(e).borderTopColor };
+        })""")
+        lines = [i for i, e in enumerate(items) if e["key"] == "HR"]
+        self.assertEqual([items[i + 1]["key"] for i in lines], ["requested", "health", "history", "settings"])
+        for i in lines:
+            above, line, below = items[i - 1], items[i], items[i + 1]
+            self.assertEqual(line["bottom"] - line["top"], 1, below["key"])
+            self.assertNotEqual(line["colour"], "rgba(0, 0, 0, 0)", below["key"])
+            self.assertTrue(below["left"] < line["left"] < line["right"] < below["right"], f"the line before {below['key']} is not inset")
+            self.assertGreater(line["top"] - above["bottom"], 0, f"the line before {below['key']} touches the tab above")
+            self.assertAlmostEqual(line["top"] - above["bottom"], below["top"] - line["bottom"], delta=0.5,
+                                   msg=f"the line before {below['key']} is off the middle of its gap")
+        tabs = [e for e in items if e["key"] != "HR"]
+        inside = {round(b["top"] - a["bottom"], 1) for a, b in zip(tabs, tabs[1:]) if b["key"] not in ("requested", "health", "history", "settings")}
+        across = {round(items[i + 1]["top"] - items[i - 1]["bottom"], 1) for i in lines}
+        self.assertEqual((len(inside), len(across)), (1, 1), f"uneven gaps: {inside} within groups, {across} between them")
+
     def test_the_mac_app_smallest_window_shows_every_tab_without_scrolling(self):
         swift = (WEB.parent / "macos" / "brewdash.swift").read_text()
         width, height = map(int, re.search(r"window\.minSize = NSSize\(width: (\d+), height: (\d+)\)", swift).groups())
@@ -1115,6 +1137,48 @@ class UiSmokeTest(UiFixture):
         page.evaluate("document.documentElement.style.setProperty('--bar', '20px')")
         self.assertLessEqual(box(".heading")["bottom"], box("header")["bottom"], "a band too short for the toolbar cuts it off")
 
+    def test_the_mac_app_sidebar_fades_a_light_in_under_the_mouse(self):
+        page = self.mac_app_page()
+        bg = lambda tab: page.eval_on_selector(f'nav [data-tab="{tab}"]', "b => getComputedStyle(b).backgroundColor")
+        rest, active = bg("deps"), bg("overview")
+        page.hover('nav [data-tab="deps"]')
+        page.wait_for_timeout(300)
+        self.assertNotIn(bg("deps"), (rest, active), "a tab under the mouse does not light up, or lights up as the open one")
+        page.hover('nav [data-tab="overview"]')
+        page.wait_for_timeout(300)
+        self.assertEqual((bg("deps"), bg("overview")), (rest, active), "the light stays behind, or the open tab loses its own")
+        prop, dur = page.eval_on_selector('nav [data-tab="deps"]', "b => [getComputedStyle(b).transitionProperty, getComputedStyle(b).transitionDuration]")
+        self.assertEqual(prop, "background-color")
+        self.assertGreater(float(dur.rstrip("s")), 0, "the light snaps on instead of fading in")
+
+    def test_the_mac_app_keeps_the_page_intro_shut_to_one_line_until_it_is_opened(self):
+        page = self.mac_app_page({"width": 900, "height": 600})
+        page.click('nav [data-tab="requested"]')
+        what, todo = "#intro summary p", "#intro .intro > p"
+        turn = lambda: page.eval_on_selector("#intro summary", "s => getComputedStyle(s, '::before').transform")
+        self.assertFalse(page.is_visible(todo), "the intro opens by itself")
+        self.assertTrue(page.eval_on_selector(what, "p => p.scrollWidth > p.clientWidth"), "the text is not cut to one line")
+        line, shut = self.box(page, what), self.box(page, "#intro .intro")
+        self.assertAlmostEqual(line["y"] - shut["y"], shut["bottom"] - line["bottom"], delta=1, msg="the shut intro's line is off its middle")
+        one, closed = line["height"], turn()
+        page.click("#intro summary")
+        page.wait_for_timeout(300)
+        self.assertTrue(page.is_visible(todo))
+        self.assertGreater(self.box(page, what)["height"], one, "the opened intro still cuts its text to one line")
+        self.assertEqual(closed, "none")
+        self.assertRegex(turn(), r"^matrix\([-0-9.e]+, 1, -1, ", "the arrow does not turn down when the intro opens")
+        arrow, text = page.eval_on_selector("#intro summary", "s => [getComputedStyle(s, '::before').height, "
+                                            "getComputedStyle(s.querySelector('p')).lineHeight].map(parseFloat)")
+        self.assertAlmostEqual(arrow, text, delta=1, msg="the arrow stretches with the text and turns off its line")
+        self.assertAlmostEqual(self.box(page, todo)["x"], self.box(page, what)["x"], delta=0.5,
+                               msg="what to do does not line up with the text above it")
+        page.click('nav [data-tab="health"]')
+        page.evaluate("renderAll()")
+        self.assertTrue(page.is_visible(todo), "the intro shuts again on another page")
+        page.click("#intro summary")
+        page.click('nav [data-tab="shell"]')
+        self.assertFalse(page.is_visible(todo), "the intro opens again on another page")
+
     def test_in_a_browser_the_header_is_one_row_with_the_tabs_in_a_row_under_it(self):
         box = lambda s: self.box(self.page, s)
         self.tab("casks")
@@ -1124,6 +1188,8 @@ class UiSmokeTest(UiFixture):
         tabs = [box(f'nav [data-tab="{k}"]') for k in self.page.eval_on_selector_all("nav [data-tab]", "bs => bs.map((b) => b.dataset.tab)")]
         self.assertGreater(len(tabs), 10)
         self.assertEqual(len({t["y"] for t in tabs}), 1, "the tabs are one row")
+        self.assertEqual(self.page.eval_on_selector_all("nav hr", "hs => hs.map((h) => h.getClientRects().length)"), [0, 0, 0, 0],
+                         "the Mac app's group lines show in the browser's tab row")
         self.assertEqual([t["x"] for t in tabs], sorted(t["x"] for t in tabs))
         for part in (".brand", "#stats", "#btn-refresh", "#btn-theme", "#lang"):
             self.assertAlmostEqual(box(part)["middle"][1], header["middle"][1], delta=1.5, msg=part)

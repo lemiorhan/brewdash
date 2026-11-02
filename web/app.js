@@ -18,13 +18,14 @@ const S = {
   snap: null, version: -1, pkgs: new Map(),
   tab: "overview", q: "", flags: new Set(), sort: { key: "name", dir: 1 },
   selected: new Set(), current: null, depth: 1,
-  jobs: [], openJobs: new Set(), history: [],
+  jobs: [], openJobs: new Set(), history: [], introOpen: false,
   search: { q: "", results: null, preview: null, busy: false },
   list: { items: [], brewfile: "" },
 };
 
 const TABS = ["overview", "requested", "deps", "casks", "services", "taps", "health", "security", "apps", "shell", "history",
   "install", "export", "settings"];
+const GROUP_STARTS = new Set(["requested", "health", "history", "settings"]);
 const tabLabel = (k) => t("tab." + k);
 
 // ---------- formatting ----------
@@ -146,7 +147,7 @@ function renderHeader() {
 function renderTabs() {
   const c = counts();
   $("#page-title").textContent = tabLabel(S.tab);
-  $("#tabs").innerHTML = TABS.map((k) =>
+  $("#tabs").innerHTML = TABS.map((k) => (GROUP_STARTS.has(k) ? "<hr>" : "") +
     `<button data-tab="${k}" class="${S.tab === k ? "active" : ""}">${tabLabel(k)}${c[k] != null ? `<span class="count">${c[k]}</span>` : ""}</button>`
   ).join("");
 }
@@ -1112,7 +1113,10 @@ function renderJobs() {
 
 function renderIntro() {
   if (S.tab === "overview") { $("#intro").innerHTML = hero(); return; }
-  $("#intro").innerHTML = `<div class="intro"><h2>${tabLabel(S.tab)}</h2><p>${t(`intro.${S.tab}.what`)}</p><p><b>${t("intro.what_to_do")}</b> ${t(`intro.${S.tab}.todo`)}</p></div>`;
+  const what = `<p>${t(`intro.${S.tab}.what`)}</p>`, todo = `<p><b>${t("intro.what_to_do")}</b> ${t(`intro.${S.tab}.todo`)}</p>`;
+  $("#intro").innerHTML = macWindow
+    ? `<details class="intro"${S.introOpen ? " open" : ""}><summary>${what}</summary>${todo}</details>`
+    : `<div class="intro"><h2>${tabLabel(S.tab)}</h2>${what}${todo}</div>`;
 }
 
 function hero() {
@@ -1209,6 +1213,8 @@ const onTitleBar = (e) => macWindow && e.clientY < $("header").offsetHeight
 if (macWindow) document.addEventListener("mousedown", (e) => {
   if (e.button === 0 && onTitleBar(e)) macWindow.postMessage(e.detail === 2 ? { zoom: true } : { drag: true });
 });
+// toggle does not bubble, so only a capturing listener hears it.
+document.addEventListener("toggle", (e) => { if (e.target.matches(".intro")) S.introOpen = e.target.open; }, true);
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.id === "search-q") doSearch();

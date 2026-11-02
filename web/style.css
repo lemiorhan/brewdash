@@ -59,6 +59,7 @@ header { display: flex; align-items: center; gap: 18px; padding: 10px 16px; bord
 nav { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 nav button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 9px 12px; color: var(--muted); }
 nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+nav hr { display: none; }
 nav .count { font-family: var(--mono); font-size: 11px; margin-left: 4px; color: var(--muted); }
 
 .banner { margin: 10px 16px; padding: 8px 12px; border: 1px solid var(--red); border-radius: 6px; color: var(--red); }
@@ -221,7 +222,13 @@ html.app body { display: grid; grid-template-columns: var(--side) minmax(0, 1fr)
 html.app header { grid-column: 2; grid-row: 1; position: static; gap: 14px; padding: 0 14px 0 20px; background: var(--bg); }
 html.app .brand { position: fixed; top: 0; left: 0; width: calc(var(--side) - 1px); height: calc(var(--bar) + 36px); display: flex; align-items: center; padding: var(--bar) 20px 0; font-size: 15px; background: var(--panel2); z-index: 6; }
 html.app .brand img { width: 20px; height: 20px; margin-right: 7px; }
-html.app .intro h2 { display: none; }
+html.app .intro summary { display: flex; gap: 8px; list-style: none; cursor: pointer; }
+html.app .intro summary::-webkit-details-marker { display: none; }
+html.app .intro summary::before { content: "›"; flex: 0 0 8px; align-self: flex-start; text-align: center; color: var(--muted); transition: transform .15s ease; }
+html.app .intro[open] summary::before { transform: rotate(90deg); }
+html.app .intro summary p { margin: 0; }
+html.app .intro:not([open]) summary p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.app .intro > p { margin-left: 16px; }
 html.app .heading { flex: 1; min-width: 0; }
 html.app #page-title { display: block; margin: 0; font-size: 15px; line-height: 20px; }
 html.app #page-title, html.app .stats { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -236,10 +243,11 @@ html.app #last-update { font-size: 11px; white-space: nowrap; margin-right: 4px;
 @media (max-width: 1180px) { html.app #last-update { display: none; } }
 
 html.app nav { grid-column: 1; grid-row: 1 / -1; flex-direction: column; gap: 1px; padding: calc(var(--bar) + 40px) 10px 60px; overflow-y: auto; border-bottom: none; border-right: 1px solid var(--line); background: var(--panel2); }
-html.app nav button { display: flex; align-items: center; flex-shrink: 0; padding: 4px 10px; border: none; border-radius: 6px; color: var(--text); text-align: left; }
+html.app nav button { display: flex; align-items: center; flex-shrink: 0; padding: 4px 10px; border: none; border-radius: 6px; color: var(--text); text-align: left; transition: background-color .15s ease; }
+html.app nav button:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
 html.app nav button.active { background: color-mix(in srgb, var(--text) 12%, transparent); }
 html.app nav .count { margin-left: auto; padding-left: 8px; }
-html.app nav [data-tab="requested"], html.app nav [data-tab="health"], html.app nav [data-tab="history"], html.app nav [data-tab="settings"] { margin-top: 10px; }
+html.app nav hr { display: block; margin: 5px 10px; border: none; border-top: 1px solid var(--line); }
 html.app .prefs { position: fixed; left: 0; bottom: 0; width: calc(var(--side) - 1px); display: flex; gap: 6px; padding: 12px; background: var(--panel2); z-index: 6; }
 html.app .prefs select { flex: 1; min-width: 0; }
 
