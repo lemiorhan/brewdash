@@ -9,7 +9,7 @@ I18N.zh = {
   "badge.outdated": "过时", "badge.pinned": "已固定", "badge.orphan": "孤立", "badge.missing": "缺少依赖",
   "badge.deprecated": "已弃用", "badge.disabled": "已停用", "badge.service": "服务",
 
-  "error.brew": "brew 错误：{error}", "error.server": "无法连接 brewdash 服务器：{error}",
+  "error.brew": "brew 错误：{error}", "error.server": "brewdash 没有响应：{error}",
 
   "stat.packages": "{v} 个软件包", "stat.outdated": "{v} 个过时", "stat.orphans": "{v} 个孤立", "stat.missing": "缺少 {v} 个依赖",
   "stat.disk": "占用磁盘 {v}", "stat.refreshing": "正在刷新…",
@@ -262,7 +262,7 @@ I18N.zh = {
   "hero.safe": "<b>保持安全</b>：你的服务向网络开放的端口、未签名的应用程序、有风险的 PATH 条目，配合 {link} 还可进行完整的安全扫描。",
   "hero.move": "<b>迁移</b>到新 Mac，只需导出的 Brewfile。",
   "hero.how": "工作原理",
-  "hero.how_text": "brewdash 只在 127.0.0.1 上运行，每个请求都携带一次性令牌。它读取 brew 自己的 JSON 输出和你的文件，在你按下按钮并确认它将运行的确切命令之前，不会做任何更改。",
+  "hero.how_text": "brewdash 读取 brew 自己的 JSON 输出和你的文件，在你按下按钮并确认它将运行的确切命令之前，不会做任何更改。",
   "hero.start": "从下方的<b>需要关注</b>开始；每一行都会打开可以处理该问题的页面。",
 
   "srv.reason.versioned_formula": "它是旧的带版本号 formula",

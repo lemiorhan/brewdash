@@ -235,7 +235,7 @@ declares it. brewdash does not verify the signature and does not check
 notarization (`spctl --assess` does both, but takes minutes for a full
 Applications folder). Apps that are not signed at all, or signed ad-hoc with
 no identity behind them, are listed under *Needs attention*. brewdash.app
-itself is signed ad-hoc too, because `install.sh` builds it on your Mac; it
+is signed ad-hoc too when `install.sh` builds it on your Mac; it
 shows as *built on this Mac (ad-hoc)* and is left out of that list.
 
 ### Listening ports
@@ -294,6 +294,8 @@ python3 -m venv .venv && .venv/bin/pip install playwright
 ```
 
 The project page is `docs/index.html`, served by GitHub Pages from `docs/`.
+A signed and notarized `brewdash.app` comes from the `macos-release` workflow;
+[RELEASING.md](RELEASING.md) says how to run it.
 
 `tests/test_ui.py` drives `web/app.js` in headless Chromium against a fake
 brew. No test calls the real `brew`, `lsof` or `codesign`. See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.

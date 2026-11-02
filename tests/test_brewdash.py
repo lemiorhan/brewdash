@@ -1629,6 +1629,9 @@ class ServerWiringTest(unittest.TestCase):
         self.assertIn("no version.json from install.sh", json.loads(self.request("POST", "/api/update", {"op": "now"})[1])["error"])
         self.assertEqual(self.request("GET", "/api/settings", token=False)[0], 403)
 
+    def test_it_listens_on_the_loopback_interface_only(self):
+        self.assertEqual(self.server.server_address[0], "127.0.0.1")
+
     def test_api_rejects_missing_token_and_foreign_host(self):
         self.assertEqual(self.request("GET", "/api/state", token=False)[0], 403)
         self.assertEqual(self.request("GET", "/api/state", host=f"evil.test:{self.port}")[0], 403)

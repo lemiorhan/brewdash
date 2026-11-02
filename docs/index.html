@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title data-i18n="doc.title">brewdash: a dashboard for Homebrew on your Mac</title>
-<meta name="description" data-i18n-attr="content:doc.description" content="See why every Homebrew package on your Mac is there, what is out of date or broken, and what needs your attention. Fix it from the browser, with every command shown before it runs.">
+<meta name="description" data-i18n-attr="content:doc.description" content="See why every Homebrew package on your Mac is there, what is out of date or broken, and what needs your attention. Fix it in the app, with every command shown before it runs.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f4f6f9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#151a22" media="(prefers-color-scheme: dark)">
@@ -334,10 +334,6 @@ footer a { color: var(--muted); }
     </div>
 
     <div class="install" id="install">
-      <div class="install-tabs install-kind" role="tablist" aria-label="How it opens" data-i18n-attr="aria-label:install.kindAria">
-        <button type="button" role="tab" aria-selected="true" aria-controls="install-command" data-kind="app" data-flag="" data-i18n="install.kind.app">Mac app</button>
-        <button type="button" role="tab" aria-selected="false" aria-controls="install-command" data-kind="browser" data-flag=" -s -- --browser" data-i18n="install.kind.browser">In your browser</button>
-      </div>
       <div class="install-tabs install-tool" role="tablist" aria-label="Download with" data-i18n-attr="aria-label:install.tabsAria">
         <button type="button" role="tab" aria-selected="true" aria-controls="install-command" data-command="curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash">curl</button>
         <button type="button" role="tab" aria-selected="false" aria-controls="install-command" data-command="wget -qO- https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash">wget</button>
@@ -347,7 +343,6 @@ footer a { color: var(--muted); }
         <button type="button" class="copy" data-copy="install-command" data-i18n="copy.button">Copy</button>
       </div>
       <p class="install-note" data-i18n-html="install.note">Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a href="https://github.com/lemiorhan/brewdash/blob/master/install.sh">Read the script first</a>.</p>
-      <p class="install-note" id="install-kind-note" data-i18n-html="install.kind.app_note">brewdash opens in its own window, with a menu bar and a Dock icon. Only one kind is installed at a time: installing the other replaces it.</p>
       <p class="install-note" role="status" aria-live="polite" id="copy-status"></p>
     </div>
 
@@ -400,7 +395,7 @@ footer a { color: var(--muted); }
       <ul class="facts">
         <li>
           <h3 data-i18n="safety.local.title">Only your Mac can reach it</h3>
-          <p data-i18n-html="safety.local.body">The server listens on <code>127.0.0.1</code>, and each start makes a new token that every API call has to carry.</p>
+          <p data-i18n="safety.local.body">Other computers cannot connect to brewdash, and the web pages you visit cannot send it commands.</p>
         </li>
         <li>
           <h3 data-i18n="safety.preview.title">You see every command first</h3>
@@ -417,7 +412,7 @@ footer a { color: var(--muted); }
   <section class="section" id="app" aria-labelledby="app-title">
     <div class="wrap">
       <h2 id="app-title" data-i18n="app.title">Opens like any other Mac app</h2>
-      <p class="intro" data-i18n="app.intro">The install command builds brewdash.app on your Mac. The dashboard itself opens in your browser.</p>
+      <p class="intro" data-i18n="app.intro">The install command builds brewdash.app on your Mac. It opens in its own window, with a menu bar and a Dock icon.</p>
       <ol class="steps">
         <li>
           <h3 data-i18n="app.install.title">Install</h3>
@@ -429,7 +424,7 @@ footer a { color: var(--muted); }
         </li>
         <li>
           <h3 data-i18n="app.quit.title">Quit</h3>
-          <p data-i18n-html="app.quit.body">Press <kbd>⌘</kbd> <kbd>Q</kbd> to quit brewdash. Its server stops with it.</p>
+          <p data-i18n-html="app.quit.body">Press <kbd>⌘</kbd> <kbd>Q</kbd> to quit brewdash.</p>
         </li>
       </ol>
     </div>
@@ -483,7 +478,7 @@ window.brewdashI18n = (() => {
   const dict = {
     en: {
       "doc.title": "brewdash: a dashboard for Homebrew on your Mac",
-      "doc.description": "See why every Homebrew package on your Mac is there, what is out of date or broken, and what needs your attention. Fix it from the browser, with every command shown before it runs.",
+      "doc.description": "See why every Homebrew package on your Mac is there, what is out of date or broken, and what needs your attention. Fix it in the app, with every command shown before it runs.",
       "home.aria": "brewdash home",
       "nav.aria": "Page",
       "nav.tour": "Tour",
@@ -498,11 +493,6 @@ window.brewdashI18n = (() => {
       "copy.status": "The install command is on your clipboard. Paste it in Terminal.",
       "copy.fallback": "Press ⌘C to copy the selected command.",
       "install.note": `Paste it in Terminal. It puts brewdash in your Applications folder and opens it. <a ${RS}>Read the script first</a>.`,
-      "install.kindAria": "How it opens",
-      "install.kind.app": "Mac app",
-      "install.kind.browser": "In your browser",
-      "install.kind.app_note": "brewdash opens in its own window, with a menu bar and a Dock icon. Only one kind is installed at a time: installing the other replaces it.",
-      "install.kind.browser_note": "brewdash opens in your default browser; its Dock icon brings the tab back. Only one kind is installed at a time: installing the other replaces it.",
       "terminal.aria": "brew list output with what brewdash tells you about each package",
       "terminal.caption": "Each comment is something brewdash tells you about that package. These come from its demo data.",
       "tour.title": "Everything brew knows, on one page",
@@ -530,19 +520,19 @@ window.brewdashI18n = (() => {
       "safety.title": "Nothing changes until you confirm it",
       "safety.intro": "Looking around is free. brewdash runs a brew command only when you press a button and agree to what it shows you.",
       "safety.local.title": "Only your Mac can reach it",
-      "safety.local.body": "The server listens on <code>127.0.0.1</code>, and each start makes a new token that every API call has to carry.",
+      "safety.local.body": "Other computers cannot connect to brewdash, and the web pages you visit cannot send it commands.",
       "safety.preview.title": "You see every command first",
       "safety.preview.body": "Each action opens a dialog with the exact brew commands it will run. If a removal would break other packages, the dialog names them.",
       "safety.undo.title": "A removal can be undone",
       "safety.undo.body": "Before every uninstall brewdash saves a Brewfile snapshot. <code>brew bundle install --file=&lt;snapshot&gt;</code> puts it all back.",
       "app.title": "Opens like any other Mac app",
-      "app.intro": "The install command builds brewdash.app on your Mac. The dashboard itself opens in your browser.",
+      "app.intro": "The install command builds brewdash.app on your Mac. It opens in its own window, with a menu bar and a Dock icon.",
       "app.install.title": "Install",
       "app.install.body": "Paste the command above in Terminal. To update later, run the same command again.",
       "app.open.title": "Open",
       "app.open.body": "Start brewdash from Launchpad, Spotlight or the Dock. Click its Dock icon to bring the dashboard back.",
       "app.quit.title": "Quit",
-      "app.quit.body": "Press <kbd>⌘</kbd> <kbd>Q</kbd> to quit brewdash. Its server stops with it.",
+      "app.quit.body": "Press <kbd>⌘</kbd> <kbd>Q</kbd> to quit brewdash.",
       "details.title": "The details",
       "details.needs.title": "What you need",
       "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> and Python 3.9 or newer. The <code>python3</code> that comes with the Xcode Command Line Tools is enough; brewdash needs no other packages.',
@@ -558,7 +548,7 @@ window.brewdashI18n = (() => {
     },
     tr: {
       "doc.title": "brewdash: Mac'indeki Homebrew için bir dashboard",
-      "doc.description": "Mac'indeki her Homebrew paketinin neden orada olduğunu, hangilerinin güncel olmadığını ya da bozuk olduğunu ve neyle ilgilenmen gerektiğini gör. Sorunları tarayıcıdan düzelt; her komut çalışmadan önce önüne gelir.",
+      "doc.description": "Mac'indeki her Homebrew paketinin neden orada olduğunu, hangilerinin güncel olmadığını ya da bozuk olduğunu ve neyle ilgilenmen gerektiğini gör. Sorunları uygulamanın içinden düzelt; her komut çalışmadan önce önüne gelir.",
       "home.aria": "brewdash ana sayfa",
       "nav.aria": "Sayfa",
       "nav.tour": "Ekranlar",
@@ -573,11 +563,6 @@ window.brewdashI18n = (() => {
       "copy.status": "Kurulum komutu panoda. Terminal'e yapıştır.",
       "copy.fallback": "Seçili komutu kopyalamak için ⌘C'ye bas.",
       "install.note": `Terminal'e yapıştır. brewdash'i Uygulamalar klasörüne koyup açıyor. <a ${RS}>Önce script'i oku</a>.`,
-      "install.kindAria": "Nasıl açılır",
-      "install.kind.app": "Mac app",
-      "install.kind.browser": "Browser'da",
-      "install.kind.app_note": "brewdash kendi penceresinde, menü bar'ı ve Dock ikonuyla açılır. Aynı anda tek tip kurulu olur: diğerini kurmak bunun yerini alır.",
-      "install.kind.browser_note": "brewdash default browser'ında açılır; Dock ikonu sekmeyi geri getirir. Aynı anda tek tip kurulu olur: diğerini kurmak bunun yerini alır.",
       "terminal.aria": "brewdash'in her paket için söyledikleriyle birlikte brew list çıktısı",
       "terminal.caption": "Her yorum, brewdash'in o paket hakkında sana söylediği bir şey. Bunlar demo verisinden geliyor.",
       "tour.title": "brew'un bildiği her şey, tek sayfada",
@@ -605,19 +590,19 @@ window.brewdashI18n = (() => {
       "safety.title": "Sen onaylamadan hiçbir şey değişmez",
       "safety.intro": "Etrafa bakmak serbest. brewdash bir brew komutunu ancak sen bir butona basıp gösterdiğini onaylarsan çalıştırıyor.",
       "safety.local.title": "Sadece senin Mac'in erişebilir",
-      "safety.local.body": "Server <code>127.0.0.1</code> üzerinde dinliyor. Her açılışta yeni bir token üretiyor ve her API çağrısı bu token'ı taşımak zorunda.",
+      "safety.local.body": "Başka bilgisayarlar brewdash'e bağlanamaz. Gezdiğin web sayfaları da ona komut gönderemez.",
       "safety.preview.title": "Her komutu önce sen görürsün",
       "safety.preview.body": "Her işlem, çalıştıracağı brew komutlarını birebir gösteren bir dialog açıyor. Bir paketi kaldırmak başka paketleri bozacaksa dialog onları tek tek yazıyor.",
       "safety.undo.title": "Kaldırdığını geri getirebilirsin",
       "safety.undo.body": "brewdash her uninstall'dan önce bir Brewfile snapshot'ı alıyor. <code>brew bundle install --file=&lt;snapshot&gt;</code> hepsini geri kuruyor.",
       "app.title": "Diğer Mac uygulamaları gibi açılır",
-      "app.intro": "Kurulum komutu brewdash.app'i senin Mac'inde build ediyor. Dashboard'un kendisi tarayıcında açılıyor.",
+      "app.intro": "Kurulum komutu brewdash.app'i senin Mac'inde build ediyor. Uygulama kendi penceresinde, menü bar'ı ve Dock ikonuyla açılıyor.",
       "app.install.title": "Kur",
       "app.install.body": "Yukarıdaki komutu Terminal'e yapıştır. Sonra güncellemek için aynı komutu tekrar çalıştır.",
       "app.open.title": "Aç",
       "app.open.body": "brewdash'i Launchpad'den, Spotlight'tan ya da Dock'tan başlat. Dashboard'u geri getirmek için Dock'taki ikonuna tıkla.",
       "app.quit.title": "Kapat",
-      "app.quit.body": "brewdash'ten çıkmak için <kbd>⌘</kbd> <kbd>Q</kbd>'ya bas. Server'ı da onunla birlikte duruyor.",
+      "app.quit.body": "brewdash'ten çıkmak için <kbd>⌘</kbd> <kbd>Q</kbd>'ya bas.",
       "details.title": "Detaylar",
       "details.needs.title": "Gerekenler",
       "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> ve Python 3.9 ya da üstü. Xcode Command Line Tools\'la gelen <code>python3</code> yeterli; brewdash başka paket istemiyor.',
@@ -633,7 +618,7 @@ window.brewdashI18n = (() => {
     },
     es: {
       "doc.title": "brewdash: un panel para Homebrew en tu Mac",
-      "doc.description": "Descubre por qué está cada paquete de Homebrew en tu Mac, cuáles están desactualizados o rotos y qué requiere tu atención. Arréglalo desde el navegador, viendo cada comando antes de que se ejecute.",
+      "doc.description": "Descubre por qué está cada paquete de Homebrew en tu Mac, cuáles están desactualizados o rotos y qué requiere tu atención. Arréglalo desde la app, viendo cada comando antes de que se ejecute.",
       "home.aria": "Inicio de brewdash",
       "nav.aria": "Página",
       "nav.tour": "Recorrido",
@@ -648,11 +633,6 @@ window.brewdashI18n = (() => {
       "copy.status": "El comando de instalación está en tu portapapeles. Pégalo en Terminal.",
       "copy.fallback": "Pulsa ⌘C para copiar el comando seleccionado.",
       "install.note": `Pégalo en Terminal. Instala brewdash en tu carpeta Aplicaciones y lo abre. <a ${RS}>Lee antes el script</a>.`,
-      "install.kindAria": "Cómo se abre",
-      "install.kind.app": "App de Mac",
-      "install.kind.browser": "En tu navegador",
-      "install.kind.app_note": "brewdash se abre en su propia ventana, con barra de menús e icono en el Dock. Solo se instala un tipo a la vez: instalar el otro lo sustituye.",
-      "install.kind.browser_note": "brewdash se abre en tu navegador predeterminado; su icono del Dock vuelve a mostrar la pestaña. Solo se instala un tipo a la vez: instalar el otro lo sustituye.",
       "terminal.aria": "Salida de brew list con lo que brewdash te dice de cada paquete",
       "terminal.caption": "Cada comentario es algo que brewdash te dice sobre ese paquete. Salen de sus datos de demostración.",
       "tour.title": "Todo lo que sabe brew, en una sola página",
@@ -680,19 +660,19 @@ window.brewdashI18n = (() => {
       "safety.title": "Nada cambia hasta que tú lo confirmas",
       "safety.intro": "Mirar no cuesta nada. brewdash solo ejecuta un comando de brew cuando pulsas un botón y aceptas lo que te muestra.",
       "safety.local.title": "Solo tu Mac puede acceder",
-      "safety.local.body": "El servidor escucha en <code>127.0.0.1</code> y en cada arranque genera un token nuevo que toda llamada a la API tiene que llevar.",
+      "safety.local.body": "Otros ordenadores no pueden conectarse a brewdash, y las páginas web que visitas no pueden enviarle comandos.",
       "safety.preview.title": "Ves cada comando antes",
       "safety.preview.body": "Cada acción abre un diálogo con los comandos de brew exactos que va a ejecutar. Si desinstalar algo rompería otros paquetes, el diálogo te dice cuáles.",
       "safety.undo.title": "Una desinstalación se puede deshacer",
       "safety.undo.body": "Antes de cada desinstalación, brewdash guarda un snapshot del Brewfile. <code>brew bundle install --file=&lt;snapshot&gt;</code> lo deja todo como estaba.",
       "app.title": "Se abre como cualquier otra app del Mac",
-      "app.intro": "El comando de instalación crea brewdash.app en tu Mac. El panel en sí se abre en tu navegador.",
+      "app.intro": "El comando de instalación crea brewdash.app en tu Mac. Se abre en su propia ventana, con barra de menús e icono en el Dock.",
       "app.install.title": "Instala",
       "app.install.body": "Pega el comando de arriba en Terminal. Para actualizar más adelante, vuelve a ejecutar el mismo comando.",
       "app.open.title": "Abre",
       "app.open.body": "Abre brewdash desde Launchpad, Spotlight o el Dock. Haz clic en su icono del Dock para volver al panel.",
       "app.quit.title": "Cierra",
-      "app.quit.body": "Pulsa <kbd>⌘</kbd> <kbd>Q</kbd> para salir de brewdash. Su servidor se detiene con él.",
+      "app.quit.body": "Pulsa <kbd>⌘</kbd> <kbd>Q</kbd> para salir de brewdash.",
       "details.title": "Los detalles",
       "details.needs.title": "Qué necesitas",
       "details.needs.body": 'macOS, <a href="https://brew.sh">Homebrew</a> y Python 3.9 o posterior. Basta con el <code>python3</code> que viene con las Xcode Command Line Tools; brewdash no necesita ningún otro paquete.',
@@ -708,7 +688,7 @@ window.brewdashI18n = (() => {
     },
     "zh-CN": {
       "doc.title": "brewdash：Mac 上的 Homebrew 仪表盘",
-      "doc.description": "看清 Mac 上每个 Homebrew 包为什么会在那里，哪些已过时或损坏，哪些需要你处理。直接在浏览器里修复，每条命令运行前都会先展示给你。",
+      "doc.description": "看清 Mac 上每个 Homebrew 包为什么会在那里，哪些已过时或损坏，哪些需要你处理。直接在应用里修复，每条命令运行前都会先展示给你。",
       "home.aria": "brewdash 首页",
       "nav.aria": "页面",
       "nav.tour": "功能一览",
@@ -723,11 +703,6 @@ window.brewdashI18n = (() => {
       "copy.status": "安装命令已复制到剪贴板，粘贴到“终端”即可。",
       "copy.fallback": "按 ⌘C 复制选中的命令。",
       "install.note": `粘贴到“终端”中运行。它会把 brewdash 放进“应用程序”文件夹并打开。<a ${RS}>先看看脚本</a>。`,
-      "install.kindAria": "打开方式",
-      "install.kind.app": "Mac 应用",
-      "install.kind.browser": "在浏览器中",
-      "install.kind.app_note": "brewdash 在自己的窗口中打开，带菜单栏和程序坞图标。同一时间只安装一种：安装另一种会替换它。",
-      "install.kind.browser_note": "brewdash 在默认浏览器中打开；点按程序坞图标会重新显示该标签页。同一时间只安装一种：安装另一种会替换它。",
       "terminal.aria": "brew list 的输出，以及 brewdash 对每个包的说明",
       "terminal.caption": "每条注释都是 brewdash 对该包给出的提示，来自它的演示数据。",
       "tour.title": "brew 知道的一切，尽在一页",
@@ -755,19 +730,19 @@ window.brewdashI18n = (() => {
       "safety.title": "你不确认，什么都不会改",
       "safety.intro": "随便看，不会动任何东西。只有你点了按钮、并同意它展示的内容后，brewdash 才会运行 brew 命令。",
       "safety.local.title": "只有你的 Mac 能访问",
-      "safety.local.body": "服务器只监听 <code>127.0.0.1</code>，每次启动都会生成一个新 token，所有 API 调用都必须带上它。",
+      "safety.local.body": "其他电脑无法连接 brewdash，你访问的网页也无法向它发送命令。",
       "safety.preview.title": "每条命令你都先过目",
       "safety.preview.body": "每个操作都会弹出对话框，列出将要运行的确切 brew 命令。如果移除某个包会影响其他包，对话框会把它们列出来。",
       "safety.undo.title": "移除可以撤销",
       "safety.undo.body": "每次卸载前，brewdash 都会保存一份 Brewfile 快照。运行 <code>brew bundle install --file=&lt;snapshot&gt;</code> 即可全部恢复。",
       "app.title": "和其他 Mac 应用一样打开",
-      "app.intro": "安装命令会在你的 Mac 上生成 brewdash.app，仪表盘本身在浏览器中打开。",
+      "app.intro": "安装命令会在你的 Mac 上生成 brewdash.app。它在自己的窗口中打开，带菜单栏和程序坞图标。",
       "app.install.title": "安装",
       "app.install.body": "把上面的命令粘贴到“终端”运行。以后要更新，再运行一次同一条命令就行。",
       "app.open.title": "打开",
       "app.open.body": "从启动台、Spotlight 或程序坞启动 brewdash。点击程序坞中的图标即可重新调出仪表盘。",
       "app.quit.title": "退出",
-      "app.quit.body": "按 <kbd>⌘</kbd> <kbd>Q</kbd> 退出 brewdash，它的服务器也会随之停止。",
+      "app.quit.body": "按 <kbd>⌘</kbd> <kbd>Q</kbd> 退出 brewdash。",
       "details.title": "细节",
       "details.needs.title": "环境要求",
       "details.needs.body": 'macOS、<a href="https://brew.sh">Homebrew</a> 和 Python 3.9 或更高版本。Xcode Command Line Tools 自带的 <code>python3</code> 就够了，brewdash 不依赖任何其他包。',
@@ -852,13 +827,8 @@ window.brewdashI18n = (() => {
     for (const t of tabs) t.tabIndex = t.getAttribute("aria-selected") === "true" ? 0 : -1;
   }
 
-  const kindNote = document.getElementById("install-kind-note");
   const showCommand = () => {
-    const tool = document.querySelector(".install-tool [aria-selected=true]");
-    const kind = document.querySelector(".install-kind [aria-selected=true]");
-    command.textContent = tool.dataset.command + kind.dataset.flag;
-    kindNote.dataset.i18nHtml = "install.kind." + kind.dataset.kind + "_note";
-    kindNote.innerHTML = t(kindNote.dataset.i18nHtml);
+    command.textContent = document.querySelector(".install-tool [aria-selected=true]").dataset.command;
     status.textContent = "";
   };
   for (const group of document.querySelectorAll(".install-tabs")) {

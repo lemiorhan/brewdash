@@ -12,7 +12,7 @@ I18N.en = {
   "badge.outdated": "outdated", "badge.pinned": "pinned", "badge.orphan": "orphan", "badge.missing": "missing dep",
   "badge.deprecated": "deprecated", "badge.disabled": "disabled", "badge.service": "service",
 
-  "error.brew": "brew error: {error}", "error.server": "Cannot reach brewdash server: {error}",
+  "error.brew": "brew error: {error}", "error.server": "brewdash is not responding: {error}",
 
   "stat.packages": "{v} packages", "stat.outdated": "{v} outdated", "stat.orphans": "{v} orphans", "stat.missing": "{v} missing deps",
   "stat.disk": "{v} on disk", "stat.refreshing": "refreshing…",
@@ -265,6 +265,6 @@ I18N.en = {
   "hero.safe": "<b>Stay safe</b>: ports your services open to the network, unsigned apps, risky PATH entries and, with {link}, a full security scan.",
   "hero.move": "<b>Move</b> to a new Mac with an exported Brewfile.",
   "hero.how": "How it works",
-  "hero.how_text": "brewdash runs on 127.0.0.1 only and every request carries a one-time token. It reads brew's own JSON output and your files, and changes nothing until you press a button and confirm the exact commands it will run.",
+  "hero.how_text": "brewdash reads brew's own JSON output and your files, and changes nothing until you press a button and confirm the exact commands it will run.",
   "hero.start": "Start below with <b>Needs attention</b>; each line opens the page where you can act on it.",
 };

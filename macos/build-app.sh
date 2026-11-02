@@ -2,14 +2,21 @@
 # Builds brewdash.app from a brewdash source folder, with tools every Mac with the Command Line Tools has.
 #   bash macos/build-app.sh [source folder] [output .app]     defaults: this checkout, build/brewdash.app
 #
-# BREWDASH_MODE   app: the dashboard in its own window (needs swiftc); browser: an applet that opens it in the
-#                 default browser. Unset means browser, because the install.sh inside apps built before the app
-#                 mode existed updates them without saying which.
+# BREWDASH_MODE           app: the dashboard in its own window (needs swiftc); browser: an applet that opens it in
+#                         the default browser. Unset means browser, because the install.sh inside apps built before
+#                         the app mode existed updates them without saying which.
+# BREWDASH_UNIVERSAL      app mode only. Set: the app runs on Apple silicon and Intel from macOS $min_macos on.
+#                         Unset: only on Macs like this one, with its architecture and macOS version.
+# BREWDASH_SIGN_IDENTITY  a Developer ID Application identity: signed with it as notarization needs (hardened
+#                         runtime, secure timestamp, macos/brewdash.entitlements). Unset: an ad-hoc signature.
 set -euo pipefail
 
+# The oldest macOS the Swift sources compile for: NSWindow.toolbarStyle and WKWebView.pageZoom are macOS 11.
+min_macos=11.0
 src="$(cd "${1:-$(dirname "$0")/..}" && pwd)"
 out="${2:-$src/build/brewdash.app}"
 mode="${BREWDASH_MODE:-browser}"
+identity="${BREWDASH_SIGN_IDENTITY:--}"
 case "$out" in
   *.app) ;;
   *) echo "the output must be a .app path: $out" >&2; exit 2 ;;
@@ -26,7 +33,18 @@ plist="$out/Contents/Info.plist"
 
 if [ "$mode" = app ]; then
   mkdir -p "$out/Contents/MacOS" "$res"
-  swiftc -O -swift-version 5 -parse-as-library -o "$out/Contents/MacOS/brewdash" "$src/macos/brewdash.swift" "$src/macos/policy.swift"
+  exe="$out/Contents/MacOS/brewdash"
+  swift=(swiftc -O -swift-version 5 -parse-as-library "$src/macos/brewdash.swift" "$src/macos/policy.swift")
+  if [ -n "${BREWDASH_UNIVERSAL:-}" ]; then
+    slices="$(mktemp -d)"
+    trap 'rm -rf "$slices"' EXIT
+    for arch in arm64 x86_64; do
+      "${swift[@]}" -target "$arch-apple-macos$min_macos" -o "$slices/$arch"
+    done
+    lipo -create -output "$exe" "$slices/arm64" "$slices/x86_64"
+  else
+    "${swift[@]}" -o "$exe"
+  fi
   cp "$src/macos/brewdash.icns" "$res/brewdash.icns"
   cat >"$plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -44,9 +62,11 @@ if [ "$mode" = app ]; then
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>NSAppleEventsUsageDescription</key><string>brewdash asks Finder to move the apps you choose to the Trash.</string>
 </dict>
 </plist>
 PLIST
+  [ -z "${BREWDASH_UNIVERSAL:-}" ] || /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $min_macos" "$plist"
   version="$(printf '%s' "${BREWDASH_VERSION:-}" | python3 -c 'import json, sys
 try: v = json.load(sys.stdin)
 except ValueError: v = {}
@@ -74,6 +94,11 @@ cp -R "$src/web" "$res/brewdash/web"
 find "$res/brewdash/web" -name '.*' -type f -delete
 
 # Changing the bundle broke osacompile's signature; Apple silicon runs nothing unsigned.
-codesign --force --sign - "$out"
+if [ "$identity" = - ]; then
+  codesign --force --sign - "$out"
+else
+  codesign --force --sign "$identity" --options runtime --timestamp --entitlements "$src/macos/brewdash.entitlements" \
+    "$out"
+fi
 touch "$out"
 echo "$out"

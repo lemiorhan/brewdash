@@ -1,0 +1,199 @@
+name: macos-release
+
+# Started only by hand, from the Actions tab or `gh workflow run`, on the branch or tag picked there. It runs that
+# ref's copy of this file with the signing secrets; RELEASING.md says how to limit that, and what to do when a step
+# fails.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      KEYCHAIN: brewdash-signing.keychain-db
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show the toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swiftc --version
+
+      # The UI tests skip without Playwright; everything else runs on the Python macOS ships with.
+      - name: Run the tests
+        run: /usr/bin/python3 -m unittest discover -s tests
+
+      # The same version.json install.sh writes, so the app updates itself like one install.sh built.
+      - name: Name the build
+        run: |
+          tag=""
+          [ "$GITHUB_REF_TYPE" != tag ] || tag="$GITHUB_REF_NAME"
+          python3 - "$GITHUB_SHA" "$tag" >>"$GITHUB_ENV" <<'PY'
+          import json, re, sys
+          sha, ref = sys.argv[1], sys.argv[2]
+          tag = ref if re.match(r"^v[0-9]+[.][0-9]+[.][0-9]+$", ref) else None
+          print("BREWDASH_VERSION=" + json.dumps({"sha": sha, "tag": tag}))
+          print(f"ARTIFACT=brewdash-{tag or sha[:7]}-macos.zip")
+          PY
+
+      - name: Put the Developer ID certificate in a temporary keychain
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!name:-}" ] || { echo "::error::the $name secret is not set"; exit 1; }
+          done
+          keychain="$RUNNER_TEMP/$KEYCHAIN"
+          p12="$RUNNER_TEMP/developer-id.p12"
+          trap 'rm -f "$p12"' EXIT
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          (umask 077 && printf '%s' "$APPLE_CERTIFICATE_BASE64" | base64 --decode >"$p12")
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$p12" -k "$keychain" -f pkcs12 -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # Certificates from Apple's G2 Developer ID intermediate do not chain without it: macOS ships only the first.
+          ca="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl -fsSL -o "$ca" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $ca" | shasum -a 256 -c -
+          security import "$ca" -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          # codesign finds identities through the user's keychain search list.
+          security list-keychains -d user | xargs security list-keychains -d user -s "$keychain"
+          identities="$(security find-identity -v -p codesigning "$keychain")"
+          hash="$(awk -v team="($APPLE_TEAM_ID)\"" \
+            'index($0, "\"Developer ID Application: ") && index($0, team) { print $2 }' <<<"$identities")"
+          if [ -z "$hash" ] || [ "$(wc -l <<<"$hash")" -ne 1 ]; then
+            printf '%s\n' "$identities"
+            echo "::error::the certificate holds no single valid Developer ID Application identity of APPLE_TEAM_ID"
+            exit 1
+          fi
+          echo "BREWDASH_SIGN_IDENTITY=$hash" >>"$GITHUB_ENV"
+
+      - name: Build and sign brewdash.app
+        run: BREWDASH_MODE=app BREWDASH_UNIVERSAL=1 bash macos/build-app.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release/brewdash.app"
+
+      - name: Check the signature
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          app="$RUNNER_TEMP/release/brewdash.app"
+          fail() { echo "::error::$*"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$app"
+          for arch in arm64 x86_64; do
+            info="$(codesign --display --verbose=4 --arch "$arch" "$app" 2>&1)" || fail "$arch: there is no $arch slice"
+            printf '%s\n' "$info"
+            grep -qE "^Authority=Developer ID Application: .+ \($APPLE_TEAM_ID\)$" <<<"$info" \
+              || fail "$arch: not signed with the Developer ID Application certificate of APPLE_TEAM_ID"
+            grep -qx "TeamIdentifier=$APPLE_TEAM_ID" <<<"$info" || fail "$arch: the team is not APPLE_TEAM_ID"
+            grep -qE '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime' <<<"$info" || fail "$arch: the hardened runtime is off"
+            grep -q '^Timestamp=' <<<"$info" || fail "$arch: the signature has no secure timestamp"
+          done
+          codesign --display --entitlements - --xml "$app" >"$RUNNER_TEMP/signed.entitlements"
+          python3 - "$RUNNER_TEMP/signed.entitlements" macos/brewdash.entitlements <<'PY'
+          import plistlib, sys
+          # codesign prints nothing for a signature without entitlements.
+          signed, wanted = (plistlib.loads(data) if data.strip() else {}
+                            for data in (open(p, "rb").read() for p in sys.argv[1:]))
+          print("signed entitlements:", signed)
+          error = ("the signature does not carry macos/brewdash.entitlements" if signed != wanted else
+                   "the get-task-allow entitlement is set, and notarization rejects it"
+                   if "com.apple.security.get-task-allow" in signed else None)
+          if error:
+              print("::error::" + error)
+              sys.exit(1)
+          PY
+
+      - name: Notarize
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          for name in APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER_ID; do
+            [ -n "${!name:-}" ] || { echo "::error::the $name secret is not set"; exit 1; }
+          done
+          work="$RUNNER_TEMP/notary"
+          mkdir -p -m 700 "$work"
+          key="$work/AuthKey.p8"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$APPLE_API_KEY_P8" >"$key")
+          auth=(--key "$key" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID")
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/release/brewdash.app" "$work/brewdash.zip"
+          xcrun notarytool submit "$work/brewdash.zip" "${auth[@]}" --wait --timeout 1h --output-format json \
+            >"$work/submit.json" || true
+          cat "$work/submit.json"
+          read -r id status < <(python3 -c 'import json, sys
+          try: r = json.load(open(sys.argv[1]))
+          except ValueError: r = {}
+          print(r.get("id") or "-", (r.get("status") or "-").replace(" ", "_"))' "$work/submit.json")
+          if [ "$status" != Accepted ]; then
+            echo "::error::notarization ended as '$status' (submission $id), not Accepted"
+            [ "$id" = - ] || xcrun notarytool log "$id" "${auth[@]}" || true
+            exit 1
+          fi
+
+      # stapler cannot staple a ZIP, so the ticket goes on the app and the ZIP is made again around it.
+      - name: Staple the ticket and pack the ZIP
+        run: |
+          app="$RUNNER_TEMP/release/brewdash.app"
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          mkdir -p "$RUNNER_TEMP/dist"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$RUNNER_TEMP/dist/$ARTIFACT"
+
+      - name: Check the ZIP as a user unpacks it
+        run: |
+          fail() { echo "::error::$*"; exit 1; }
+          zip="$RUNNER_TEMP/dist/$ARTIFACT"
+          check="$RUNNER_TEMP/check"
+          rm -rf "$check"
+          mkdir "$check"
+          ditto -x -k "$zip" "$check"
+          app="$check/brewdash.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          verdict="$(spctl --assess --type execute --verbose=4 "$app" 2>&1)" || true
+          printf '%s\n' "$verdict"
+          grep -q ': accepted$' <<<"$verdict" || fail "Gatekeeper rejects the app"
+          grep -qx 'source=Notarized Developer ID' <<<"$verdict" || fail "Gatekeeper does not see a notarized Developer ID app"
+          {
+            echo "### $ARTIFACT"
+            echo
+            echo "- version.json: \`$BREWDASH_VERSION\`"
+            echo "- architectures: $(lipo -archs "$app/Contents/MacOS/brewdash")"
+            echo "- macOS $(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist") or newer"
+            echo "- SHA-256: \`$(shasum -a 256 "$zip" | cut -d' ' -f1)\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the notarized ZIP
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: ${{ runner.temp }}/dist/${{ env.ARTIFACT }}
+          archive: false
+          if-no-files-found: error
+
+      - name: Remove the keychain and the keys
+        if: always()
+        run: |
+          keychain="$RUNNER_TEMP/$KEYCHAIN"
+          [ ! -e "$keychain" ] || security delete-keychain "$keychain"
+          rm -rf "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary"

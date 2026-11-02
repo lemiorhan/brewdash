@@ -15,7 +15,29 @@ final class TitleBarWindow: NSWindow {
 
 @main
 enum WindowCheck {
+    // With --failed-page: a page that fails again after its one reconnect, on a window that has shown a dashboard,
+    // so the alert is a sheet and does not block. Prints the alert's texts, one per line.
+    static func failedPage() {
+        _ = NSApplication.shared
+        let app = AppDelegate()
+        app.makeWindow()
+        app.dashboard = URL(string: "http://127.0.0.1:1/")
+        let refused = NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost,
+                              userInfo: [NSLocalizedDescriptionKey: "Could not connect to the server."])
+        _ = app.retry.failed(refused)
+        app.webView(app.webView, didFailProvisionalNavigation: nil, withError: refused)
+        func texts(_ view: NSView) -> [String] {
+            ((view as? NSTextField).map { [$0.stringValue] } ?? []) + view.subviews.flatMap(texts)
+        }
+        guard let sheet = app.window.attachedSheet?.contentView else {
+            print("FAIL: no alert on the window")
+            exit(1)
+        }
+        print(texts(sheet).filter { !$0.isEmpty }.joined(separator: "\n"))
+    }
+
     static func main() {
+        if CommandLine.arguments.contains("--failed-page") { return failedPage() }
         var failures = 0
         func check(_ ok: Bool, _ what: String) {
             if !ok { failures += 1; print("FAIL: \(what)") }

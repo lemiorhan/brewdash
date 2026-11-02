@@ -7,7 +7,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/brewdash"
 current="$state/app-server"  # "<server pid> <app pid> <url>"
-log="$state/server.log"
+log="$state/brewdash.log"
 
 # The file outlives a server that crashed or was stopped with its app, and its pid may belong to another
 # process by now; only this app's own server counts.
@@ -60,7 +60,7 @@ start() {
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.1
   done
-  echo "The brewdash server did not start. Its log, $log, ends with:" >&2
+  echo "Its log, $log, ends with:" >&2
   tail -n 15 "$log" >&2
   return 1
 }

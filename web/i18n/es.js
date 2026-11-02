@@ -9,7 +9,7 @@ I18N.es = {
   "badge.outdated": "desactualizado", "badge.pinned": "fijado", "badge.orphan": "huérfano", "badge.missing": "falta dependencia",
   "badge.deprecated": "obsoleto", "badge.disabled": "deshabilitado", "badge.service": "servicio",
 
-  "error.brew": "error de brew: {error}", "error.server": "No se puede conectar con el servidor de brewdash: {error}",
+  "error.brew": "error de brew: {error}", "error.server": "brewdash no responde: {error}",
 
   "stat.packages": "{v} paquetes", "stat.outdated": "{v} desactualizados", "stat.orphans": "{v} huérfanos", "stat.missing": "{v} dependencias faltantes",
   "stat.disk": "{v} en disco", "stat.refreshing": "recargando…",
@@ -269,7 +269,7 @@ I18N.es = {
   "hero.safe": "<b>Mantente seguro</b>: puertos que tus servicios abren a la red, apps sin firmar, entradas de PATH riesgosas y, con {link}, un escaneo de seguridad completo.",
   "hero.move": "<b>Muda</b> todo a un Mac nuevo con un Brewfile exportado.",
   "hero.how": "Cómo funciona",
-  "hero.how_text": "brewdash solo escucha en 127.0.0.1 y cada petición lleva un token de un solo uso. Lee la salida JSON del propio brew y tus archivos, y no cambia nada hasta que pulsas un botón y confirmas los comandos exactos que va a ejecutar.",
+  "hero.how_text": "brewdash lee la salida JSON del propio brew y tus archivos, y no cambia nada hasta que pulsas un botón y confirmas los comandos exactos que va a ejecutar.",
   "hero.start": "Empieza abajo con <b>Requiere atención</b>; cada línea abre la página donde puedes actuar.",
 
   "srv.reason.versioned_formula": "es una fórmula con versión antigua",

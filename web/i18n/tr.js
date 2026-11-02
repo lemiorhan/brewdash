@@ -9,7 +9,7 @@ I18N.tr = {
   "badge.outdated": "güncel değil", "badge.pinned": "sabitlendi", "badge.orphan": "sahipsiz", "badge.missing": "eksik bağımlılık",
   "badge.deprecated": "deprecated", "badge.disabled": "devre dışı", "badge.service": "servis",
 
-  "error.brew": "brew hatası: {error}", "error.server": "brewdash sunucusuna ulaşılamıyor: {error}",
+  "error.brew": "brew hatası: {error}", "error.server": "brewdash yanıt vermiyor: {error}",
 
   "stat.packages": "{v} paket", "stat.outdated": "{v} güncel değil", "stat.orphans": "{v} sahipsiz", "stat.missing": "{v} eksik bağımlılık",
   "stat.disk": "diskte {v}", "stat.refreshing": "yenileniyor…",
@@ -262,7 +262,7 @@ I18N.tr = {
   "hero.safe": "<b>Güvende kal</b>: servislerinin ağa açtığı port'lar, imzasız uygulamalar, riskli PATH satırları ve {link} ile tam bir güvenlik taraması.",
   "hero.move": "<b>Taşın</b>: dışa aktardığın Brewfile ile yeni bir Mac'e geç.",
   "hero.how": "Nasıl çalışır",
-  "hero.how_text": "brewdash sadece 127.0.0.1 üzerinde çalışır ve her istek tek kullanımlık bir token taşır. brew'un kendi JSON çıktısını ve dosyalarını okur. Sen bir butona basıp çalıştıracağı komutları onaylamadan hiçbir şeyi değiştirmez.",
+  "hero.how_text": "brewdash, brew'un kendi JSON çıktısını ve senin dosyalarını okur. Sen bir butona basıp çalıştıracağı komutları onaylamadan hiçbir şeyi değiştirmez.",
   "hero.start": "<b>Bakılması gerekenler</b> ile başla; her satır, o konuda işlem yapabileceğin sayfayı açar.",
 
   "srv.reason.versioned_formula": "eski bir sürümlü formula",

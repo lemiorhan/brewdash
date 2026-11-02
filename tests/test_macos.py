@@ -4,6 +4,7 @@ Nothing here touches /Applications, ~/.local/state or a running brewdash.app.
 """
 import json
 import os
+import platform
 import plistlib
 import shutil
 import signal
@@ -118,13 +119,20 @@ class LaunchScriptTest(unittest.TestCase):
 
     def test_the_token_files_are_owner_only_and_the_server_keeps_the_users_umask_and_path(self):
         self.state.mkdir(parents=True, mode=0o755)
-        (self.state / "server.log").write_text("old\n")
-        (self.state / "server.log").chmod(0o644)
+        (self.state / "brewdash.log").write_text("old\n")
+        (self.state / "brewdash.log").chmod(0o644)
         self.open(111)
         mode = lambda p: p.stat().st_mode & 0o777  # noqa: E731
-        self.assertEqual((mode(self.state), mode(self.state / "server.log"), mode(self.state / "app-server")),
+        self.assertEqual((mode(self.state), mode(self.state / "brewdash.log"), mode(self.state / "app-server")),
                          (0o700, 0o600, 0o600))
         self.assertEqual(self.report.read_text(), f"22 {self.login_path}")
+
+    def test_when_brewdash_dies_at_start_the_message_names_its_log_and_quotes_its_end(self):
+        self.fake.write_text("print('Traceback: boom', flush=True)\nraise SystemExit(1)\n")
+        r = self.run_script("open", "111")
+        log = self.state / "brewdash.log"
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (1, "", f"Its log, {log}, ends with:\nTraceback: boom\n"))
+        self.assertFalse((self.state / "app-server").exists())
 
 
 @unittest.skipUnless(sys.platform == "darwin", "brewdash.app is macOS only")
@@ -182,19 +190,30 @@ class MacAppPolicyTest(unittest.TestCase):
             r = subprocess.run([str(exe)], capture_output=True, text=True, timeout=30)
             self.assertEqual((r.returncode, r.stdout), (0, "ok\n"), r.stdout)
 
+    @classmethod
+    def setUpClass(cls):
+        tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(tmp.cleanup)
+        cls.tmp = tmp.name
+        cls.window_check = Path(tmp.name) / "window_check"
+        cls.window_build = subprocess.run(["swiftc", "-swift-version", "5", "-parse-as-library", "-D", "BREWDASH_CHECK",
+                                           "-o", str(cls.window_check), str(ROOT / "tests" / "window_check.swift"),
+                                           str(ROOT / "macos" / "brewdash.swift"), str(ROOT / "macos" / "policy.swift")],
+                                          capture_output=True, text=True, timeout=300)
+
+    def run_window_check(self, *args):
+        self.assertEqual(self.window_build.returncode, 0, self.window_build.stderr)
+        return subprocess.run([str(self.window_check), *args], capture_output=True, text=True, timeout=60, cwd=self.tmp)
+
     def test_the_window_lays_the_page_under_its_title_bar_with_the_band_following_the_zoom(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            exe = Path(tmp) / "window_check"
-            build = subprocess.run(["swiftc", "-swift-version", "5", "-parse-as-library", "-D", "BREWDASH_CHECK",
-                                    "-o", str(exe), str(ROOT / "tests" / "window_check.swift"),
-                                    str(ROOT / "macos" / "brewdash.swift"), str(ROOT / "macos" / "policy.swift")],
-                                   capture_output=True, text=True, timeout=300)
-            self.assertEqual(build.returncode, 0, build.stderr)
-            for setting in ("Minimize", "None"):
-                with self.subTest(setting=setting):
-                    r = subprocess.run([str(exe), "-AppleActionOnDoubleClick", setting], capture_output=True,
-                                       text=True, timeout=60, cwd=tmp)
-                    self.assertEqual((r.returncode, r.stdout), (0, "ok\n"), r.stdout)
+        for setting in ("Minimize", "None"):
+            with self.subTest(setting=setting):
+                r = self.run_window_check("-AppleActionOnDoubleClick", setting)
+                self.assertEqual((r.returncode, r.stdout), (0, "ok\n"), r.stdout)
+
+    def test_a_page_that_still_fails_after_its_reconnect_says_so_in_brewdashs_own_words(self):
+        r = self.run_window_check("--failed-page")
+        self.assertEqual((r.returncode, r.stdout), (0, "brewdash is not responding\nPress ⌘R to try again.\n"))
 
 
 # Asks one app, by pid, to quit as ⌘Q does; osascript would pick the user's own brewdash, which has the same bundle id.
@@ -328,6 +347,7 @@ class BuildAppTest(unittest.TestCase):
         info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
         self.assertEqual((info["CFBundleExecutable"], info["CFBundleIdentifier"], info["CFBundleShortVersionString"],
                           info["CFBundleVersion"]), ("brewdash", BUNDLE_ID, "1.2.3", "1.2.3"))
+        self.assertTrue(info.get("NSAppleEventsUsageDescription"))
         kind = subprocess.run(["file", str(app / "Contents" / "MacOS" / "brewdash")], capture_output=True, text=True)
         self.assertIn("Mach-O", kind.stdout)
         for name in ("brewdash.py", "launch.sh", "install.sh", "version.json", "web/app.js"):
@@ -335,6 +355,50 @@ class BuildAppTest(unittest.TestCase):
         self.assertTrue((app / "Contents" / "Resources" / "brewdash.icns").exists())
         verify = subprocess.run(["codesign", "--verify", "--strict", str(app)], capture_output=True, text=True)
         self.assertEqual(verify.returncode, 0, verify.stderr)
+
+    @unittest.skipUnless(shutil.which("swiftc"), "the Mac app is built with swiftc")
+    def test_a_universal_app_runs_on_both_architectures_from_macos_11(self):
+        app, _ = self.build(BREWDASH_MODE="app", BREWDASH_UNIVERSAL="1")
+        exe = str(app / "Contents" / "MacOS" / "brewdash")
+        archs = subprocess.run(["lipo", "-archs", exe], capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(sorted(archs), ["arm64", "x86_64"])
+        for arch in archs:
+            build = subprocess.run(["vtool", "-arch", arch, "-show-build", exe], capture_output=True, text=True,
+                                   check=True).stdout.split()
+            self.assertEqual(build[build.index("minos") + 1], "11.0", arch)
+        info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+        self.assertEqual(info["LSMinimumSystemVersion"], "11.0")
+        verify = subprocess.run(["codesign", "--verify", "--strict", str(app)], capture_output=True, text=True)
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+
+    @unittest.skipUnless(shutil.which("swiftc"), "the Mac app is built with swiftc")
+    def test_without_universal_the_app_is_built_for_this_macs_architecture_only(self):
+        app, _ = self.build(BREWDASH_MODE="app", BREWDASH_UNIVERSAL=None)
+        exe = str(app / "Contents" / "MacOS" / "brewdash")
+        archs = subprocess.run(["lipo", "-archs", exe], capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(archs, [platform.machine()])
+        self.assertNotIn("LSMinimumSystemVersion", plistlib.loads((app / "Contents" / "Info.plist").read_bytes()))
+
+    def codesign_calls(self, **env):
+        """The app build-app.sh made and every codesign call it made, each as its arguments; nothing is signed."""
+        bin_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, bin_dir)
+        log = bin_dir / "codesign.log"
+        shell_script(bin_dir / "codesign", f'printf "%s\\n" "$@" "" >> "{log}"')
+        app, _ = self.build(PATH=f"{bin_dir}:{os.environ['PATH']}", **env)
+        return app, [call.splitlines() for call in log.read_text().split("\n\n") if call]
+
+    def test_without_an_identity_the_signature_is_ad_hoc_with_no_runtime_or_entitlements(self):
+        app, calls = self.codesign_calls(BREWDASH_SIGN_IDENTITY=None)
+        self.assertEqual(calls, [["--force", "--sign", "-", str(app)]])
+
+    def test_a_signing_identity_signs_as_notarization_needs(self):
+        identity = "Developer ID Application: Someone (ABCDE12345)"
+        app, calls = self.codesign_calls(BREWDASH_SIGN_IDENTITY=identity)
+        entitlements = ROOT / "macos" / "brewdash.entitlements"
+        self.assertEqual(calls, [["--force", "--sign", identity, "--options", "runtime", "--timestamp", "--entitlements",
+                                  str(entitlements), str(app)]])
+        self.assertEqual(plistlib.loads(entitlements.read_bytes()), {"com.apple.security.automation.apple-events": True})
 
     def test_an_unknown_mode_builds_nothing(self):
         out = Path(tempfile.mkdtemp()) / "brewdash.app"

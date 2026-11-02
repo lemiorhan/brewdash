@@ -1225,10 +1225,16 @@ class UiSmokeTest(UiFixture):
         self.assertEqual(downloads, [])
 
 
+# How brewdash's own server could come back into a text. Chinese writes a Latin word with no space around it
+# ("新token"), so a word's edge is "no Latin letter next to it", not \b.
+SERVER_WORDS = r"127\.0\.0\.1|localhost|(?<![a-z])(?:server|sunucu|servidor|token|api(?![a-z]))|服务器|令牌"
+
+
 @unittest.skipUnless(sync_playwright, "Playwright for Python is not installed")
 class ProjectPageInstallTest(unittest.TestCase):
     """docs/index.html, the page that hands out the install command."""
-    PAGE = (Path(brewdash.__file__).resolve().parent / "docs" / "index.html").as_uri()
+    FILE = Path(brewdash.__file__).resolve().parent / "docs" / "index.html"
+    PAGE = FILE.as_uri()
     SCRIPT = "https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh"
 
     @classmethod
@@ -1241,25 +1247,42 @@ class ProjectPageInstallTest(unittest.TestCase):
         cls.browser.close()
         cls.pw.stop()
 
-    def test_the_command_follows_both_choices_and_the_note_follows_the_kind_in_every_language(self):
+    def test_the_command_follows_the_download_tool_and_installs_the_mac_app(self):
         page = self.browser.new_page(locale="en-US")
         self.addCleanup(page.close)
         page.goto(self.PAGE)
-        seen = lambda: (page.inner_text("#install-command"), page.inner_text("#install-kind-note"))
-        app_note = "brewdash opens in its own window, with a menu bar and a Dock icon. Only one kind is installed at a time: installing the other replaces it."
-        browser_note = "brewdash opens in your default browser; its Dock icon brings the tab back. Only one kind is installed at a time: installing the other replaces it."
-        self.assertEqual(seen(), (f"curl -fsSL {self.SCRIPT} | bash", app_note))
-        page.click(".install-kind [data-kind=browser]")
-        self.assertEqual(seen(), (f"curl -fsSL {self.SCRIPT} | bash -s -- --browser", browser_note))
+        command = lambda: page.inner_text("#install-command")
+        self.assertEqual(page.locator("#install [role=tab]").all_inner_texts(), ["curl", "wget"])
+        self.assertEqual(command(), f"curl -fsSL {self.SCRIPT} | bash")
         page.click(".install-tool button:text-is('wget')")
-        self.assertEqual(seen()[0], f"wget -qO- {self.SCRIPT} | bash -s -- --browser")
-        page.select_option("select", "tr")
-        self.assertEqual(seen()[1], "brewdash default browser'ında açılır; Dock ikonu sekmeyi geri getirir. "
-                                    "Aynı anda tek tip kurulu olur: diğerini kurmak bunun yerini alır.")
-        page.click(".install-kind [data-kind=app]")
-        self.assertEqual(seen(), (f"wget -qO- {self.SCRIPT} | bash",
-                                  "brewdash kendi penceresinde, menü bar'ı ve Dock ikonuyla açılır. "
-                                  "Aynı anda tek tip kurulu olur: diğerini kurmak bunun yerini alır."))
+        self.assertEqual(command(), f"wget -qO- {self.SCRIPT} | bash")
+        page.click(".install-tool button:text-is('curl')")
+        self.assertEqual(command(), f"curl -fsSL {self.SCRIPT} | bash")
+
+    def test_no_language_talks_about_a_browser_or_a_server_outside_the_developer_snippets(self):
+        page = self.browser.new_page(locale="en-US")
+        self.addCleanup(page.close)
+        page.goto(self.PAGE)
+        app = {
+            "en": ("The install command builds brewdash.app on your Mac. It opens in its own window, with a menu bar and a Dock icon.",
+                   "Press ⌘ Q to quit brewdash."),
+            "tr": ("Kurulum komutu brewdash.app'i senin Mac'inde build ediyor. Uygulama kendi penceresinde, menü bar'ı ve Dock ikonuyla açılıyor.",
+                   "brewdash'ten çıkmak için ⌘ Q'ya bas."),
+            "es": ("El comando de instalación crea brewdash.app en tu Mac. Se abre en su propia ventana, con barra de menús e icono en el Dock.",
+                   "Pulsa ⌘ Q para salir de brewdash."),
+            "zh-CN": ("安装命令会在你的 Mac 上生成 brewdash.app。它在自己的窗口中打开，带菜单栏和程序坞图标。",
+                      "按 ⌘ Q 退出 brewdash。"),
+        }
+        words = re.compile(SERVER_WORDS + r"|--browser|(?<![a-z])browser|(?<!güvenlik )tarayıcı|navegador|浏览器", re.I)
+        for lang, texts in app.items():
+            with self.subTest(lang=lang):
+                page.select_option("select", lang)
+                self.assertEqual((page.inner_text("[data-i18n='app.intro']"), page.inner_text("[data-i18n-html='app.quit.body']")),
+                                 texts)
+        # The file, not the rendered page: crawlers and link previews read the head as written, before any language applies.
+        source = re.sub(r'<pre class="snippet">.*?</pre>', "", self.FILE.read_text(), flags=re.S)
+        self.assertEqual([intro in source for intro, _ in app.values()], [True] * len(app))
+        self.assertEqual(words.findall(source), [])
 
 
 LANGS = ["en", "tr", "es", "zh"]
@@ -1285,6 +1308,18 @@ class I18nTest(UiFixture):
                 empty = self.page.evaluate(f"""Object.entries(I18N.{lang}).filter(([, v]) =>
                     typeof v === "string" ? !v.trim() : !v.other?.trim()).map(([k]) => k)""")
                 self.assertEqual(empty, [])
+
+    def test_no_text_tells_the_user_about_brewdashs_own_server(self):
+        # The Services tab is about the user's brew services, which do run servers and can be bound to 127.0.0.1.
+        about_brew_services = {"intro.services.what", "intro.services.todo"}
+        words = re.compile(SERVER_WORDS, re.I)
+        for lang in LANGS:
+            with self.subTest(lang=lang):
+                texts = dict(self.page.evaluate(f"""Object.entries(I18N.{lang}).map(([k, v]) =>
+                    [k, typeof v === "string" ? v : Object.values(v).join("\\n")])"""))
+                self.assertLessEqual(about_brew_services | {"error.server", "hero.how_text"}, set(texts))
+                self.assertEqual({k: words.findall(v) for k, v in texts.items()
+                                  if k not in about_brew_services and words.search(v)}, {})
 
     def test_every_placeholder_survives_translation(self):
         bad = self.page.evaluate("""() => {

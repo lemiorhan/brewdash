@@ -52,7 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // The server stops itself when this process is gone, so a crash leaves nothing behind; a quit stops it now.
+    // The server stops itself when this process is gone; a quit stops it now. A brew job it started runs in its own
+    // session (Brew.popen) and is not stopped.
     func applicationWillTerminate(_ note: Notification) {
         _ = try? launcher(["stop"])
     }
@@ -101,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     func fail(_ message: String) {
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = dashboard == nil ? "brewdash could not start" : "brewdash could not reach its server"
+        alert.messageText = dashboard == nil ? "brewdash could not start" : "brewdash is not responding"
         alert.informativeText = message
         if dashboard == nil {
             alert.runModal()
@@ -228,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         switch retry.failed(error as NSError) {
         case .ignore: break
         case .reconnect: connect(show: false, reload: true)
-        case .report: fail(error.localizedDescription)
+        case .report: fail("Press ⌘R to try again.")
         }
     }
 
