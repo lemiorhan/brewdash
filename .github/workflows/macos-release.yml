@@ -81,11 +81,15 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
           # codesign finds identities through the user's keychain search list.
           security list-keychains -d user | xargs security list-keychains -d user -s "$keychain"
-          identities="$(security find-identity -v -p codesigning "$keychain")"
-          hash="$(awk -v team="($APPLE_TEAM_ID)\"" \
-            'index($0, "\"Developer ID Application: ") && index($0, team) { print $2 }' <<<"$identities")"
+          # Without -v it also lists the identities that are not valid, each with the reason, so the hash is taken
+          # from its valid section only.
+          identities="$(security find-identity -p codesigning "$keychain")"
+          printf '%s\n' "$identities"
+          hash="$(sed -n '/Valid identities only/,$p' <<<"$identities" | awk -v team="($APPLE_TEAM_ID)\"" \
+            'index($0, "\"Developer ID Application: ") && index($0, team) { print $2 }')"
           if [ -z "$hash" ] || [ "$(wc -l <<<"$hash")" -ne 1 ]; then
-            printf '%s\n' "$identities"
+            grep -q '^ *[0-9][0-9]*) ' <<<"$identities" \
+              || { echo "::error::APPLE_CERTIFICATE_BASE64 holds no code signing certificate with its private key"; exit 1; }
             echo "::error::the certificate holds no single valid Developer ID Application identity of APPLE_TEAM_ID"
             exit 1
           fi
