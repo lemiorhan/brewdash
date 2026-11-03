@@ -1,7 +1,7 @@
 # Releasing the Mac app
 
 [`.github/workflows/macos-release.yml`](.github/workflows/macos-release.yml)
-builds the Mac app kind of `brewdash.app` for Apple silicon and Intel Macs,
+builds `brewdash.app` for Apple silicon and Intel Macs,
 signs it with the Developer ID Application certificate, has Apple notarize it,
 staples the ticket to the app and publishes it as `brewdash-macos.zip`. The
 minimum macOS is `min_macos` in [`macos/build-app.sh`](macos/build-app.sh).
@@ -78,9 +78,7 @@ The app updates itself from these releases. *Stable* in its settings is
 GitHub's latest release, *Beta* the `beta` prerelease; a release without
 `brewdash-macos.zip` is not offered. An update downloads the ZIP, has
 `install.sh` check that Gatekeeper accepts the app in it and replaces the app,
-so it stays notarized. The kind of app that opens the browser, which only
-`install.sh --browser` makes, is built on the Mac from the release's commit
-instead. That an update replaces a notarized app this way has not been tried on
+so it stays notarized. That an update replaces a notarized app this way has not been tried on
 a real release yet; try it on a test Mac before you announce one.
 
 ## When the first run fails
@@ -98,7 +96,7 @@ failed, above GitHub's `Process completed with exit code`.
 | 〃 | `APPLE_CERTIFICATE_BASE64 holds no code signing certificate with its private key` | The `.p12` holds certificates without the private key. In Keychain Access, under *My Certificates*, export the *Developer ID Application* row with the private key under it, on the Mac that holds that key. |
 | 〃 | `no single valid Developer ID Application identity of APPLE_TEAM_ID` | The identities found are printed above it, and one that is not valid has the reason after it, such as `CSSMERR_TP_NOT_TRUSTED`. They may be *Apple Development* or *Developer ID Installer* certificates, they may belong to another team than `APPLE_TEAM_ID`, or the certificate may have expired or been revoked. Export the *Developer ID Application* certificate together with its private key. |
 | 〃 | `shasum: WARNING: 1 computed checksum did NOT match` | Apple's `DeveloperIDG2CA.cer` changed. Check that the new file chains to Apple Root CA: `openssl x509 -inform DER -in DeveloperIDG2CA.cer -out g2.pem`, then `security find-certificate -a -c "Apple Root CA" -p /System/Library/Keychains/SystemRootCertificates.keychain > roots.pem` and `openssl verify -CAfile roots.pem g2.pem`. If it does, put its `shasum -a 256` in the step. |
-| Build and sign brewdash.app | a `swiftc` error | *Show the toolchain* prints the runner's Xcode. On a Mac with the same Xcode, run `BREWDASH_MODE=app BREWDASH_UNIVERSAL=1 bash macos/build-app.sh`. |
+| Build and sign brewdash.app | a `swiftc` error | *Show the toolchain* prints the runner's Xcode. On a Mac with the same Xcode, run `BREWDASH_UNIVERSAL=1 bash macos/build-app.sh`. |
 | 〃 | `The timestamp service is not available` | Apple's timestamp server did not answer. Run the job again. |
 | Check the signature | `there is no … slice` | The app was not built for both architectures. The build step sets `BREWDASH_UNIVERSAL=1`; check that it still does. |
 | 〃 | `not signed with the Developer ID Application certificate`, `the team is not APPLE_TEAM_ID`, `the hardened runtime is off`, `no secure timestamp` | The `codesign --display` output above the error shows what the app was signed with. If it looks right and the step still fails, the step's patterns no longer match how `codesign` prints. |

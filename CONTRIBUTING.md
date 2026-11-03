@@ -6,7 +6,7 @@ welcome. By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## Reporting a bug or asking for a feature
 
 Open an issue with the template that fits. For a bug, include your macOS
-version, `brew --version`, the browser, and what you saw. A screenshot helps.
+version, `brew --version`, the brewdash version, and what you saw. A screenshot helps.
 Security problems go through [SECURITY.md](SECURITY.md), not public issues.
 
 ## Setting up

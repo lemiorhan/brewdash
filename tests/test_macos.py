@@ -233,7 +233,7 @@ class MacAppTest(unittest.TestCase):
         root = Path(cls.tmp.name)
         cls.app = root / "brewdash.app"
         subprocess.run(["/bin/bash", str(ROOT / "macos" / "build-app.sh"), str(ROOT), str(cls.app)],
-                       env=dict(os.environ, BREWDASH_MODE="app"), check=True, capture_output=True, timeout=300)
+                       check=True, capture_output=True, timeout=300)
         cls.server = cls.app / "Contents" / "Resources" / "brewdash" / "brewdash.py"
         (root / "quit.swift").write_text(QUIT_SWIFT)
         cls.quit = root / "quit"
@@ -308,7 +308,7 @@ class InstallScriptTest(unittest.TestCase):
         self.assert_refused()
 
 
-@unittest.skipUnless(sys.platform == "darwin", "build-app.sh is macOS only")
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("swiftc"), "the Mac app is built with swiftc")
 class BuildAppTest(unittest.TestCase):
     def build(self, **env):
         tmp = tempfile.TemporaryDirectory()
@@ -333,17 +333,17 @@ class BuildAppTest(unittest.TestCase):
         self.assertFalse((res / "version.json").exists())
         self.assertTrue((res / "install.sh").exists())
 
-    def test_without_a_mode_it_builds_the_browser_applet_as_apps_from_before_the_mode_expect(self):
-        app, res = self.build(BREWDASH_MODE=None)
-        self.assertEqual((res / "mode").read_text(), "browser\n")
-        info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
-        self.assertEqual((info["CFBundleExecutable"], info["CFBundleIdentifier"]), ("applet", BUNDLE_ID))
+    def test_the_browser_kind_an_older_install_sh_asks_for_gets_the_mac_app(self):
+        for mode in ("browser", None):
+            with self.subTest(mode=mode):
+                app, res = self.build(BREWDASH_MODE=mode)
+                info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
+                self.assertEqual((info["CFBundleExecutable"], info["CFBundleIdentifier"]), ("brewdash", BUNDLE_ID))
+                self.assertFalse((res / "mode").exists())
 
-    @unittest.skipUnless(shutil.which("swiftc"), "the Mac app is built with swiftc")
-    def test_the_app_mode_is_a_signed_native_app_with_the_same_bundle_id_and_resources(self):
+    def test_the_app_is_a_signed_native_app_with_brewdashs_bundle_id_and_resources(self):
         version = '{"sha": "' + "a" * 40 + '", "tag": "v1.2.3"}'
-        app, res = self.build(BREWDASH_MODE="app", BREWDASH_VERSION=version)
-        self.assertEqual((res / "mode").read_text(), "app\n")
+        app, res = self.build(BREWDASH_VERSION=version)
         info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
         self.assertEqual((info["CFBundleExecutable"], info["CFBundleIdentifier"], info["CFBundleShortVersionString"],
                           info["CFBundleVersion"]), ("brewdash", BUNDLE_ID, "1.2.3", "1.2.3"))
@@ -356,9 +356,8 @@ class BuildAppTest(unittest.TestCase):
         verify = subprocess.run(["codesign", "--verify", "--strict", str(app)], capture_output=True, text=True)
         self.assertEqual(verify.returncode, 0, verify.stderr)
 
-    @unittest.skipUnless(shutil.which("swiftc"), "the Mac app is built with swiftc")
     def test_a_universal_app_runs_on_both_architectures_from_macos_11(self):
-        app, _ = self.build(BREWDASH_MODE="app", BREWDASH_UNIVERSAL="1")
+        app, _ = self.build(BREWDASH_UNIVERSAL="1")
         exe = str(app / "Contents" / "MacOS" / "brewdash")
         archs = subprocess.run(["lipo", "-archs", exe], capture_output=True, text=True, check=True).stdout.split()
         self.assertEqual(sorted(archs), ["arm64", "x86_64"])
@@ -371,9 +370,8 @@ class BuildAppTest(unittest.TestCase):
         verify = subprocess.run(["codesign", "--verify", "--strict", str(app)], capture_output=True, text=True)
         self.assertEqual(verify.returncode, 0, verify.stderr)
 
-    @unittest.skipUnless(shutil.which("swiftc"), "the Mac app is built with swiftc")
     def test_without_universal_the_app_is_built_for_this_macs_architecture_only(self):
-        app, _ = self.build(BREWDASH_MODE="app", BREWDASH_UNIVERSAL=None)
+        app, _ = self.build(BREWDASH_UNIVERSAL=None)
         exe = str(app / "Contents" / "MacOS" / "brewdash")
         archs = subprocess.run(["lipo", "-archs", exe], capture_output=True, text=True, check=True).stdout.split()
         self.assertEqual(archs, [platform.machine()])
@@ -399,14 +397,6 @@ class BuildAppTest(unittest.TestCase):
         self.assertEqual(calls, [["--force", "--sign", identity, "--options", "runtime", "--timestamp", "--entitlements",
                                   str(entitlements), str(app)]])
         self.assertEqual(plistlib.loads(entitlements.read_bytes()), {"com.apple.security.automation.apple-events": True})
-
-    def test_an_unknown_mode_builds_nothing(self):
-        out = Path(tempfile.mkdtemp()) / "brewdash.app"
-        self.addCleanup(shutil.rmtree, out.parent)
-        r = subprocess.run(["/bin/bash", str(ROOT / "macos" / "build-app.sh"), str(ROOT), str(out)],
-                           env=dict(os.environ, BREWDASH_MODE="window"), capture_output=True, text=True, timeout=60)
-        self.assertEqual(r.returncode, 2)
-        self.assertFalse(out.exists())
 
 
 @unittest.skipUnless(sys.platform == "darwin", "install.sh is macOS only")
@@ -442,7 +432,7 @@ esac; }}
 @unittest.skipUnless(sys.platform == "darwin" and has_brew(), "install.sh is macOS only and checks for Homebrew")
 class InstallFromGitHubTest(unittest.TestCase):
     """install.sh's main with GitHub answered by a shell function and a source archive whose build-app.sh only
-    records the version it was handed."""
+    records the version and the mode it was handed."""
     SHA = "b" * 40
     ZIP_URL = "https://github.com/lemiorhan/brewdash/releases/download/v1.2.3/brewdash-macos.zip"
 
@@ -472,8 +462,7 @@ class InstallFromGitHubTest(unittest.TestCase):
     GATEKEEPER = 'codesign() {{ return {codesign}; }}\nspctl() {{ return {spctl}; }}\nxcrun() {{ return 1; }}\n'
 
     def install_zip(self, codesign=0, spctl=0, url=ZIP_URL):
-        return self.run_main("[]", "--app", shell=self.GATEKEEPER.format(codesign=codesign, spctl=spctl),
-                             BREWDASH_ZIP=url)
+        return self.run_main("[]", shell=self.GATEKEEPER.format(codesign=codesign, spctl=spctl), BREWDASH_ZIP=url)
 
     def test_a_release_zip_is_installed_as_it_is_without_building_or_asking_github(self):
         r = self.install_zip()
@@ -551,31 +540,27 @@ quit_running() {{ :; }}
         plist.write_bytes(plistlib.dumps({"CFBundleIdentifier": bundle_id}))
         return plist.parent.parent
 
-    def test_without_a_choice_it_builds_the_mac_app(self):
-        self.install("[]")
-        self.assertEqual(self.mode(), "app")
+    # The source of v0.1.0, the highest tag when the browser kind went, builds that kind unless it is asked for the app.
+    def test_it_asks_build_app_sh_for_the_mac_app_whatever_its_own_env_says(self):
+        for env in ({}, {"BREWDASH_MODE": "browser"}):
+            with self.subTest(env=env):
+                self.install("[]", **env)
+                self.assertEqual(self.mode(), "app")
 
-    def test_browser_and_app_flags_and_the_env_choose_the_kind(self):
-        for args, env, want in ((["--browser"], {}, "browser"), (["--app"], {}, "app"),
-                                ([], {"BREWDASH_MODE": "browser"}, "browser"),
-                                (["--app"], {"BREWDASH_MODE": "browser"}, "app")):
-            with self.subTest(args=args, env=env):
-                self.install("[]", *args, **env)
-                self.assertEqual(self.mode(), want)
-
-    def test_an_unknown_option_or_mode_installs_nothing(self):
-        for args, env in ((["--window"], {}), ([], {"BREWDASH_MODE": "window"})):
-            with self.subTest(args=args, env=env):
-                r = self.run_main("[]", *args, **env)
+    def test_an_unknown_option_installs_nothing(self):
+        for arg in ("--window", "--browser", "--app"):
+            with self.subTest(arg=arg):
+                r = self.run_main("[]", arg)
                 self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertIn(f"unknown option {arg}", r.stderr)
                 self.assertFalse((self.apps / "brewdash.app").exists())
 
     def test_installing_removes_brewdash_from_the_other_folder_but_not_someone_elses_app(self):
         ours = self.fake_app(self.home_apps)
-        self.install("[]", "--browser")
+        self.install("[]")
         self.assertFalse(ours.exists())
         theirs = self.fake_app(self.home_apps, "com.example.other")
-        self.install("[]", "--app")
+        self.install("[]")
         self.assertTrue(theirs.exists())
         self.assertEqual(self.mode(), "app")
 

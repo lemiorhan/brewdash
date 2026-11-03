@@ -16,8 +16,7 @@ labels: bug
 - macOS version:
 - `brew --version`:
 - `python3 --version`:
-- Browser:
-- brewdash commit (`git rev-parse --short HEAD`):
+- brewdash version (brewdash menu > About brewdash; from a checkout, `git rev-parse --short HEAD`):
 
 **Screenshot or output**
 <!-- The Jobs panel output, or the terminal where brewdash runs. Remove anything private. -->

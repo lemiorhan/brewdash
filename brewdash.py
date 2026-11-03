@@ -1287,15 +1287,6 @@ def github_fetch(url, accept="application/vnd.github+json"):
         return r.read().decode()
 
 
-def read_mode(root=ROOT):
-    """app or browser: the kind of brewdash.app build-app.sh made, so an update installs the same kind."""
-    try:
-        mode = (Path(root) / "mode").read_text().strip()
-    except OSError:
-        return "browser"
-    return mode if mode in ("app", "browser") else "browser"
-
-
 def spawn_installer(installer, env, log):
     # Its own session: install.sh quits the app, and this server with it, before it replaces the app.
     with open(log, "w") as out:
@@ -1312,9 +1303,8 @@ def last_line(path):
 
 
 class Updater:
-    def __init__(self, state_dir, installed, root=ROOT, fetch=github_fetch, spawn=spawn_installer, mode="browser"):
+    def __init__(self, state_dir, installed, root=ROOT, fetch=github_fetch, spawn=spawn_installer):
         self.state_dir = Path(state_dir)
-        self.mode = mode
         self.path = self.state_dir / "settings.json"
         self.installed = installed
         self.root = Path(root)
@@ -1422,13 +1412,9 @@ class Updater:
                 # macOS runs an app opened where it was downloaded from a read-only copy under this folder.
                 if "AppTranslocation" in app.parts:
                     raise ValueError("move brewdash.app to your Applications folder and open it from there to update it")
-                target = view["latest"]
-                # The Mac app takes the release's notarized ZIP; only the browser kind is built from the source.
-                source = {"BREWDASH_ZIP": target["zip"]} if self.mode == "app" else \
-                    {"BREWDASH_REF": target["tag"] or target["sha"]}
                 try:
                     proc = self.spawn(self.root / "install.sh",
-                                      {**source, "BREWDASH_APP_DIR": str(app.parent), "BREWDASH_MODE": self.mode},
+                                      {"BREWDASH_ZIP": view["latest"]["zip"], "BREWDASH_APP_DIR": str(app.parent)},
                                       self.state_dir / "update.log")
                     started, err = time.time(), None
                 except OSError as e:
@@ -1613,7 +1599,7 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--parent", type=int, metavar="PID", help="stop when the process with this PID exits")
     args = ap.parse_args()
-    updater = Updater(STATE_DIR, read_installed(), mode=read_mode())
+    updater = Updater(STATE_DIR, read_installed())
     server, url, _ = serve(args.port, updater=updater)
     updater.run_hourly()
     if args.parent:

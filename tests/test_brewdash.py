@@ -1365,30 +1365,21 @@ class UpdaterTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def updater(self, github=None, installed=None, root=APP_ROOT, spawn=None, mode="browser"):
+    def updater(self, github=None, installed=None, root=APP_ROOT, spawn=None):
         self.github = github or FakeGitHub()
         return brewdash.Updater(self.state, installed or {"sha": SHA_A, "tag": "v0.9.0"}, root=root, fetch=self.github,
-                                spawn=spawn or (lambda *a: self.spawned.append(a)), mode=mode)
+                                spawn=spawn or (lambda *a: self.spawned.append(a)))
 
-    def test_read_mode_takes_app_or_browser_and_falls_back_to_browser(self):
-        d = Path(self.tmp.name)
-        self.assertEqual(brewdash.read_mode(d), "browser")
-        for written, want in (("app\n", "app"), ("browser\n", "browser"), ("window\n", "browser")):
-            (d / "mode").write_text(written)
-            self.assertEqual(brewdash.read_mode(d), want, written)
-
-    def test_the_mac_app_installs_the_release_zip_and_the_browser_kind_builds_the_releases_commit(self):
+    def test_an_update_installs_the_channels_release_zip_into_the_apps_own_folder(self):
         log = self.state / "update.log"
-        for channel, target, zip_, ref in (("stable", SHA_B, zip_url("v0.10.0"), "v0.10.0"),
-                                           ("beta", SHA_C, zip_url("beta"), SHA_C)):
-            for mode, source in (("app", {"BREWDASH_ZIP": zip_}), ("browser", {"BREWDASH_REF": ref})):
-                with self.subTest(channel=channel, mode=mode):
-                    self.spawned.clear()
-                    u = self.updater(FakeGitHub(compare={target: "ahead"}), mode=mode)
-                    u.save({"channel": channel})
-                    u.update(manual=False)
-                    self.assertEqual(self.spawned, [(APP_ROOT / "install.sh", {**source, "BREWDASH_APP_DIR": "/Applications",
-                                                                              "BREWDASH_MODE": mode}, log)])
+        for channel, target, zip_ in (("stable", SHA_B, zip_url("v0.10.0")), ("beta", SHA_C, zip_url("beta"))):
+            with self.subTest(channel=channel):
+                self.spawned.clear()
+                u = self.updater(FakeGitHub(compare={target: "ahead"}))
+                u.save({"channel": channel})
+                u.update(manual=False)
+                self.assertEqual(self.spawned, [(APP_ROOT / "install.sh", {"BREWDASH_ZIP": zip_,
+                                                                          "BREWDASH_APP_DIR": "/Applications"}, log)])
 
     def test_read_installed_takes_only_a_full_sha_and_a_vxyz_tag(self):
         root = Path(self.tmp.name)
@@ -1541,7 +1532,7 @@ class UpdaterTest(unittest.TestCase):
                 with self.subTest(status=status, manual=is_manual):
                     self.spawned.clear()
                     view = self.updater(FakeGitHub(compare={SHA_B: status})).update(manual=is_manual)
-                    self.assertEqual([a[1]["BREWDASH_REF"] for a in self.spawned], ["v0.10.0"] if want else [])
+                    self.assertEqual([a[1]["BREWDASH_ZIP"] for a in self.spawned], [zip_url("v0.10.0")] if want else [])
                     self.assertEqual(view["started"] is not None, want)
 
     def test_update_refuses_a_checkout_an_app_with_another_name_and_an_app_run_where_it_was_downloaded(self):
@@ -1552,7 +1543,7 @@ class UpdaterTest(unittest.TestCase):
         for root in (Path("/Applications/Mine.app/Contents/Resources/brewdash"),
                      Path("/private/var/folders/x1/abc/T/AppTranslocation/0A1B-2C3D/d/brewdash.app/Contents/Resources/brewdash")):
             with self.subTest(root=root):
-                u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}), root=root, mode="app")
+                u = self.updater(FakeGitHub(compare={SHA_B: "ahead"}), root=root)
                 with self.assertRaises(ValueError):
                     u.update(manual=True)
                 self.assertEqual(self.spawned, [])
@@ -1576,19 +1567,19 @@ class UpdaterTest(unittest.TestCase):
             self.assertEqual(self.spawned, [])
             off.save({"auto": True})
             wait_for(lambda: self.spawned)
-            self.assertEqual(self.spawned[0][1]["BREWDASH_REF"], "v0.10.0")
+            self.assertEqual(self.spawned[0][1]["BREWDASH_ZIP"], zip_url("v0.10.0"))
 
     def test_spawn_installer_runs_it_detached_with_the_env_it_is_given(self):
         d = Path(self.tmp.name)
         installer = d / "install.sh"
-        installer.write_text('echo "$BREWDASH_ZIP $BREWDASH_APP_DIR $BREWDASH_MODE $HOME $$ $(ps -o pgid= -p $$ | tr -d " ") stdin:$(cat)"\n')
-        proc = brewdash.spawn_installer(installer, {"BREWDASH_ZIP": "https://x/brewdash-macos.zip", "BREWDASH_APP_DIR": "/Apps",
-                                                    "BREWDASH_MODE": "app"}, d / "update.log")
+        installer.write_text('echo "$BREWDASH_ZIP $BREWDASH_APP_DIR $HOME $$ $(ps -o pgid= -p $$ | tr -d " ") stdin:$(cat)"\n')
+        proc = brewdash.spawn_installer(installer, {"BREWDASH_ZIP": "https://x/brewdash-macos.zip", "BREWDASH_APP_DIR": "/Apps"},
+                                        d / "update.log")
         self.assertEqual(proc.wait(timeout=10), 0)
         out = wait_for(lambda: (d / "update.log").read_text().strip())
-        zip_, app_dir, mode, home, pid, pgid, stdin = out.split(" ")
-        self.assertEqual((zip_, app_dir, mode, home, stdin),
-                         ("https://x/brewdash-macos.zip", "/Apps", "app", os.environ["HOME"], "stdin:"))
+        zip_, app_dir, home, pid, pgid, stdin = out.split(" ")
+        self.assertEqual((zip_, app_dir, home, stdin),
+                         ("https://x/brewdash-macos.zip", "/Apps", os.environ["HOME"], "stdin:"))
         self.assertEqual(pgid, pid)
         self.assertNotEqual(int(pgid), os.getpgrp())
 
@@ -1597,11 +1588,10 @@ class UpdaterTest(unittest.TestCase):
         with mock.patch.object(brewdash, "serve", return_value=(server, "http://x", "t")) as serve, \
                 mock.patch.object(brewdash, "Updater") as updater, \
                 mock.patch.object(brewdash, "read_installed", return_value={"sha": SHA_A, "tag": None}), \
-                mock.patch.object(brewdash, "read_mode", return_value="app"), \
                 mock.patch.object(sys, "argv", ["brewdash", "--no-browser"]), \
                 contextlib.redirect_stdout(io.StringIO()):
             brewdash.main()
-        updater.assert_called_once_with(brewdash.STATE_DIR, {"sha": SHA_A, "tag": None}, mode="app")
+        updater.assert_called_once_with(brewdash.STATE_DIR, {"sha": SHA_A, "tag": None})
         self.assertIs(serve.call_args.kwargs["updater"], updater.return_value)
         updater.return_value.run_hourly.assert_called_once_with()
 

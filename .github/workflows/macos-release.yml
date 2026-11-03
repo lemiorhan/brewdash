@@ -99,7 +99,7 @@ jobs:
           echo "BREWDASH_SIGN_IDENTITY=$hash" >>"$GITHUB_ENV"
 
       - name: Build and sign brewdash.app
-        run: BREWDASH_MODE=app BREWDASH_UNIVERSAL=1 bash macos/build-app.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release/brewdash.app"
+        run: BREWDASH_UNIVERSAL=1 bash macos/build-app.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release/brewdash.app"
 
       - name: Check the signature
         env:

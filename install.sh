@@ -2,13 +2,9 @@
 # Installs brewdash.app, or updates it in place:
 #   curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash
 #   wget -qO- https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash
-# The app shows the dashboard in its own window. To open it in your browser instead:
-#   curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --browser
-# Installing one kind removes the other from the folders in BREWDASH_APP_DIRS.
 # Removes it (your settings and Brewfile snapshots stay):
 #   curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall
 #
-# BREWDASH_MODE      app or browser, as --app and --browser; default app
 # BREWDASH_APP_DIR   where the app goes; default /Applications if you can write to it, else ~/Applications
 # BREWDASH_APP_DIRS  the folders, separated by ':', where another brewdash.app is removed; default
 #                    /Applications:~/Applications
@@ -42,8 +38,8 @@ check_ours() {
   [ "$id" = "$BUNDLE_ID" ] || fail "$1 is not brewdash's app (its bundle id is '${id:-none}'); move it away first."
 }
 
-# A brewdash.app of the other kind, or from another folder, would open a second dashboard; it goes, unless it
-# is someone else's app that happens to have the name.
+# A brewdash.app in another folder would open a second dashboard; it goes, unless it is someone else's app that
+# happens to have the name.
 app_dirs() {
   echo "${BREWDASH_APP_DIRS:-/Applications:$HOME/Applications}"
 }
@@ -86,20 +82,14 @@ version_json() {
 
 main() {
   [ "$(uname -s)" = Darwin ] || fail "brewdash runs on macOS only."
-  local app mode="${BREWDASH_MODE:-app}" uninstall=""
+  local app uninstall=""
   app="$(app_dir)/brewdash.app"
   for arg in "$@"; do
     case "$arg" in
-      --app) mode=app ;;
-      --browser) mode=browser ;;
       --uninstall) uninstall=1 ;;
-      *) fail "unknown option $arg; use --app, --browser or --uninstall." ;;
+      *) fail "unknown option $arg; the only one is --uninstall." ;;
     esac
   done
-  case "$mode" in
-    app | browser) ;;
-    *) fail "BREWDASH_MODE must be app or browser, not '$mode'." ;;
-  esac
 
   if [ -n "$uninstall" ]; then
     check_ours "$app"
@@ -124,8 +114,8 @@ main() {
     || fail "Homebrew is not installed. Install it first: https://brew.sh"
   { command -v python3 >/dev/null && python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; } \
     || fail "brewdash needs Python 3.9 or newer. Install the Command Line Tools: xcode-select --install"
-  [ "$mode" = browser ] || [ -n "${BREWDASH_ZIP:-}" ] || xcrun --find swiftc >/dev/null 2>&1 \
-    || fail "the Mac app is built with swiftc. Install the Command Line Tools (xcode-select --install), or install with --browser."
+  [ -n "${BREWDASH_ZIP:-}" ] || xcrun --find swiftc >/dev/null 2>&1 \
+    || fail "brewdash.app is built with swiftc. Install the Command Line Tools: xcode-select --install"
   check_ours "$app"
 
   work="$(mktemp -d)"
@@ -133,7 +123,7 @@ main() {
   if [ -n "${BREWDASH_ZIP:-}" ]; then
     unpack_release
   else
-    build_from_source "$mode"
+    build_from_source
   fi
 
   quit_running
@@ -161,7 +151,7 @@ unpack_release() {
 }
 
 build_from_source() {
-  local mode="$1" tarball version=""
+  local tarball version=""
   if [ -n "${BREWDASH_TARBALL:-}" ]; then
     tarball="$BREWDASH_TARBALL"
   else
@@ -176,9 +166,11 @@ build_from_source() {
   say "Downloading $tarball"
   mkdir "$work/src"
   curl -fsSL "$tarball" | tar -xz -C "$work/src" --strip-components=1
-  say "Building brewdash.app ($mode)"
+  say "Building brewdash.app"
   local log
-  if ! log="$(BREWDASH_VERSION="$version" BREWDASH_MODE="$mode" bash "$work/src/macos/build-app.sh" "$work/src" "$work/brewdash.app" 2>&1)"; then
+  # Up to v0.1.0, build-app.sh builds the app that opens the browser unless it is asked for this one; a commit from
+  # before macos/brewdash.swift builds only that app, whatever it is asked.
+  if ! log="$(BREWDASH_VERSION="$version" BREWDASH_MODE=app bash "$work/src/macos/build-app.sh" "$work/src" "$work/brewdash.app" 2>&1)"; then
     printf '%s\n' "$log" >&2
     fail "building the app failed."
   fi

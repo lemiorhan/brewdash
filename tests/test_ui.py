@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import brewdash  # noqa: E402
 from test_brewdash import (APP_CASKS, APP_ROOT, SHA_A, SHA_B, SHA_C, FakeBrew, FakeGitHub, cask, formula,  # noqa: E402
-                           make_app, wait_for)
+                           make_app, wait_for, zip_url)
 
 try:
     from playwright.sync_api import sync_playwright
@@ -914,7 +914,9 @@ class UiSmokeTest(UiFixture):
         self.assertNotIn("There is no stable release yet.", self.page.inner_text("#content"))
         self.page.click('[data-update="check"]')
         self.page.wait_for_selector(f'[data-update="now"]:text-is("Update to {SHA_C[:7]}"):enabled')
-        self.page.uncheck("[data-auto]")
+        # The box is unchecked as soon as it is clicked; settings.json is written when the POST is answered.
+        with self.page.expect_response(lambda r: r.url.endswith("/api/settings") and r.request.method == "POST"):
+            self.page.uncheck("[data-auto]")
         self.page.wait_for_selector("[data-auto]:not(:checked)")
         self.assertEqual(json.loads((Path(self.tmp.name) / "state" / "settings.json").read_text()),
                          {"channel": "beta", "auto": False})
@@ -923,7 +925,7 @@ class UiSmokeTest(UiFixture):
         self.page.wait_for_selector("#content .info")
         self.assertEqual(self.page.inner_text("#content .info"),
                          f"Installing {SHA_C[:7]}. brewdash quits and opens again when it is done.")
-        self.assertEqual([a[1]["BREWDASH_REF"] for a in self.spawned], [SHA_C])
+        self.assertEqual([a[1]["BREWDASH_ZIP"] for a in self.spawned], [zip_url("beta")])
         self.assertTrue(self.page.is_disabled('[data-update="now"]'))
         self.page.click('nav button[data-tab="history"]')
         with self.page.expect_request("**/api/settings*", timeout=10000):

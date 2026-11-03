@@ -2,9 +2,9 @@
 
 # brewdash
 
-**A local web dashboard for Homebrew.** See what is installed on your Mac, why
+**A dashboard for Homebrew that runs on your Mac.** See what is installed, why
 it is there, what is outdated or broken, and what needs your attention. Then
-fix it from the browser, with every command shown to you before it runs.
+fix it in the app, with every command shown to you before it runs.
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
@@ -120,22 +120,16 @@ brew uninstall --cask --zap brewdash    # deletes them too
 [`install.sh`](install.sh) builds `brewdash.app` on your Mac instead, with
 `swiftc` from the Command Line Tools, and signs it ad-hoc. It puts the app in
 `/Applications` (or `~/Applications` when you cannot write to
-`/Applications`) and opens it. It also builds a second kind of brewdash:
-
-- **Mac app** (the default): the kind the cask installs.
-- **Browser**: an app that opens the dashboard in your default browser.
+`/Applications`) and opens it.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash                  # Mac app
-curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --browser   # Browser
+curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash                  # install or update
 curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall # remove it
 ```
 
-Both kinds are `brewdash.app` with the same bundle id, so only one is
-installed at a time: installing one kind replaces the other, also when the
-other is in the other Applications folder. To switch, run the script with
-`--app` or `--browser`. An update keeps the kind you have. `--uninstall`
-keeps your settings and Brewfile snapshots, like the cask.
+A `brewdash.app` in the other Applications folder is removed, so only one
+brewdash is installed. `--uninstall` keeps your settings and Brewfile
+snapshots, like the cask.
 
 The top of `install.sh` lists the settings it reads, such as
 `BREWDASH_APP_DIR` for another folder and `BREWDASH_REF` for a tag, branch or
@@ -159,9 +153,8 @@ The app updates itself from GitHub. Pick how on the **Settings** page:
   you press **Go back to …**.
 
 An update runs the `install.sh` inside the app with the release to install.
-The Mac app downloads the release's signed and notarized ZIP and takes it only
-once Gatekeeper accepts it; the browser kind is built from the release's
-commit. Then `install.sh` quits brewdash, replaces the app and opens it again. If it
+It downloads the release's signed and notarized ZIP and takes it only once
+Gatekeeper accepts it. Then `install.sh` quits brewdash, replaces the app and opens it again. If it
 fails before it quits brewdash, the Settings page shows the last line of its log,
 `~/.local/state/brewdash/update.log`; a failure after it has quit brewdash is
 only in that log. Your choices are kept in
@@ -179,8 +172,7 @@ git clone https://github.com/lemiorhan/brewdash.git
 cd brewdash
 python3 brewdash.py                            # opens your browser
 python3 brewdash.py --port 8765 --no-browser   # fixed port, no browser
-bash macos/build-app.sh                        # build the browser kind of brewdash.app into build/
-BREWDASH_MODE=app bash macos/build-app.sh      # build the Mac app kind
+bash macos/build-app.sh                        # build brewdash.app into build/
 ```
 
 To look around without touching your own setup, run the demo. It serves
@@ -305,7 +297,7 @@ works as before.
 ## Security
 
 The server listens on `127.0.0.1` only. Each start generates a random token
-that the browser URL carries; API calls without it, or with a `Host` other
+that the dashboard URL carries; API calls without it, or with a `Host` other
 than `127.0.0.1:<port>` / `localhost:<port>`, get 403. To report a
 vulnerability, see [SECURITY.md](SECURITY.md).
 

@@ -12,6 +12,13 @@ tagged `vX.Y.Z`; changes from before the first one are listed by date.
   not trusted. The README installs with the cask too, and keeps `install.sh`
   for building the app on your Mac.
 
+### Removed
+- The `brewdash.app` that opens the dashboard in your browser, and
+  `install.sh --browser` and `--app` with it. `install.sh` builds the Mac app
+  from every release, and an app of the browser kind becomes the Mac app at its
+  next update, on a Mac that has `swiftc`. `python3 brewdash.py` still serves
+  the dashboard to your browser, for development.
+
 ## [0.1.0] - 2026-11-03
 
 ### Added

@@ -1,6 +1,5 @@
 // brewdash.app as a Mac app: the dashboard in its own window instead of a browser tab.
-// Compiled with policy.swift by macos/build-app.sh when BREWDASH_MODE=app. It shares launch.sh with the browser applet, so the
-// server, its token and its stop-with-the-app watch are the same in both.
+// Compiled with policy.swift by macos/build-app.sh.
 import Cocoa
 import WebKit
 
