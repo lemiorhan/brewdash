@@ -210,33 +210,35 @@ def setup(root):
     return brew, home, apps
 
 
-def alert(n, check_id, kind, severity, title, detail, remediation, fix, identity):
-    return {"fingerprint": f"{n:02x}" * 32, "check_id": check_id, "kind": kind, "severity": severity, "title": title,
-            "detail": detail, "remediation": remediation, "fix_command": fix, "identity": identity}
+def alert(n, check_id, severity, title, detail, remediation, fix, subject):
+    return {"check_id": check_id, "severity": severity, "title": title, "detail": detail, "remediation": remediation,
+            "fix_command": fix, "accept_command": f'sudo secure-it accept {f"{n:02x}" * 5} --note "neden"', "subject": subject}
 
 
 def secure_it_report(prefix):
-    return {"schema": 1, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(NOW - 3600)),
+    return {"schema": 2, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(NOW - 3600)),
             "scan": {}, "alerts": [
-        alert(1, "exposure.listening", "brew_listener", "high", "redis listens on every interface (*:6379)",
+        alert(1, "exposure.listening", "high", "redis listens on every interface (*:6379)",
               "pid 612; Homebrew package: redis", "Bind it to 127.0.0.1 in redis.conf, or stop the service when you do not need it.",
-              "brew services stop redis", {"exe": "/opt/homebrew/Cellar/redis/7.4.1/bin/redis-server", "port": 6379}),
-        alert(2, "system.firewall", "disabled", "high", "The application firewall is off",
+              "brew services stop redis", {"kind": "path", "path": "/opt/homebrew/Cellar/redis/7.4.1/bin/redis-server"}),
+        alert(2, "system.firewall", "high", "The application firewall is off",
               "socketfilterfw reports state 0", "Turn it on in System Settings > Network > Firewall.",
-              "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on", {}),
-        alert(3, "persistence.path_shadow", "synced", "medium", "Synced folder ahead of the system in PATH: ~/Dropbox/tools/bin",
-              ".zshrc:5", "Move it after $PATH, or copy the tools to a local folder.", None, {"dir": "~/Dropbox/tools/bin"}),
-        alert(4, "packages.brew_taps", "third_party_tap", "low", "Third-party tap: ngrok/ngrok",
+              "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on", None),
+        alert(3, "persistence.path_shadow", "medium", "Synced folder ahead of the system in PATH: ~/Dropbox/tools/bin",
+              ".zshrc:5", "Move it after $PATH, or copy the tools to a local folder.", None, {"kind": "shell"}),
+        alert(4, "packages.brew_taps", "low", "Third-party tap: ngrok/ngrok",
               "Remote: https://github.com/ngrok/homebrew-ngrok", "Keep it only if you trust its owner.",
-              "brew untap ngrok/ngrok", {"tap": "ngrok/ngrok", "remote": "https://github.com/ngrok/homebrew-ngrok"}),
+              "brew untap ngrok/ngrok", {"kind": "tap", "name": "ngrok/ngrok"}),
     ]}
 
 
 def start(port=0):
     root = Path(tempfile.mkdtemp(prefix="brewdash-demo-", dir="/tmp"))  # short paths read better in screenshots
     brew, home, apps = setup(root)
+    (root / "secure-it").write_text("")
+    catalog = ({**brewdash.PLUGIN_CATALOG[0], "exe": str(root / "secure-it")},)
     server, url, _ = brewdash.serve(port=port, open_browser=False, brew=brew, state_dir=str(root / "state"),
-                                    home=str(home), app_dirs=[str(apps)], sysrun=demo_sysrun)
+                                    home=str(home), app_dirs=[str(apps)], sysrun=demo_sysrun, catalog=catalog)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, url, root
 

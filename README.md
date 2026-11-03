@@ -46,8 +46,9 @@ line of its **Needs attention** list opens the page where you can act on it.
   and which are not used by anything. Select taps to untap them.
 - **Health**: `brew doctor`, missing dependencies, deprecated packages, orphans
   and what `brew cleanup` would free.
-- **Security**: findings from [secure-it](https://github.com/lemiorhan/secure-it),
-  shown next to the packages, taps and shell files they concern (see below).
+- **Plugins**: findings from separate tools such as
+  [secure-it](https://github.com/lemiorhan/brewdash-plugin-security), one tab each, shown next
+  to the packages, taps and shell files they concern (see below).
 - **Apps**: every app in `/Applications` and `~/Applications`, how it got there
   (brew, App Store or by hand), and who signed it. **Bring into brew** lets
   Homebrew take over an app you installed by hand. Uninstall a brew app, or
@@ -66,7 +67,7 @@ line of its **Needs attention** list opens the page where you can act on it.
 
 | | |
 |---|---|
-| ![Package list with the detail panel of node](docs/screenshots/packages-light.png) | ![secure-it findings in the Security tab](docs/screenshots/security-light.png) |
+| ![Package list with the detail panel of node](docs/screenshots/packages-light.png) | ![secure-it findings in its plugin tab](docs/screenshots/security-light.png) |
 | ![Services with their listening ports](docs/screenshots/services-dark.png) | ![Apps with how they were installed and who signed them](docs/screenshots/apps-dark.png) |
 
 ## Install
@@ -273,26 +274,81 @@ flagged even when it is harmless today: a file that arrives through sync, from
 another device or a shared folder, would run in place of the system command
 of the same name.
 
-## secure-it integration
+## Plugins
 
-[secure-it](https://github.com/lemiorhan/secure-it) is a separate macOS
-security scanner that runs as root. After each scan it writes
-`~/secure-it/report.json`, and brewdash shows those findings in the
-**Security** tab:
+A plugin is a separate tool that writes its findings to a JSON report.
+brewdash reads that report and gives the plugin its own tab, in a group of its
+own above **History**:
 
 - high and critical findings appear as *critical* in *Needs attention*,
   medium as *warning*, low as *info*;
-- a finding about a brew service or a Homebrew launchd job appears in that
+- a finding about a Homebrew package or its launchd job appears in that
   package's detail panel;
-- a finding about a third-party tap marks the tap in **Taps**;
+- a finding about a tap marks the tap in **Taps**;
 - PATH and shell findings link to **Shell**.
 
-brewdash only reads that file, and treats it as untrusted: every field is
-type-checked before brewdash uses it, and escaped before it is shown. Each
-finding shows its fix command and the
-`secure-it accept` command for you to copy; brewdash never runs them. Without
-secure-it, the Security tab says how to install it, and the rest of brewdash
-works as before.
+A plugin is data, not code. brewdash runs nothing a plugin's files say: it
+type-checks every field before it uses it and escapes it before it shows it.
+Each finding's fix and accept commands are there for you to copy into
+Terminal.
+
+### secure-it
+
+[secure-it](https://github.com/lemiorhan/brewdash-plugin-security) is a macOS security
+scanner, and it is in brewdash's built-in catalog. Without it, its tab says
+what it is and how to install it. Once `/usr/local/bin/secure-it` is there,
+the tab has a **Scan now** button. It runs `/usr/bin/sudo -A
+/usr/local/bin/secure-it scan --exit-zero` after you confirm, and macOS asks
+for your password. secure-it then writes `~/secure-it/report.json`, and the
+tab shows the new findings. With `--exit-zero` a scan that finds open alerts
+exits with 0, because sudo also exits with 1 when you cancel the password
+dialog; brewdash shows any other exit code as a failed job. secure-it does not
+scan on its own; it scans when you start a scan.
+
+Only a plugin in the catalog can be started from brewdash. The command is in
+`brewdash.py`, not in a file anyone else can write.
+
+### Adding a plugin
+
+Put a manifest at `~/.local/state/brewdash/plugins/<id>.json`. The `<id>` is
+lowercase letters, digits and hyphens, up to 40 characters, starting with a
+letter or a digit; an id from the catalog is taken.
+
+```json
+{"schema": 1, "name": "Acme", "report": "~/acme/report.json", "homepage": "https://acme.example"}
+```
+
+`report` is an absolute path or one under `~/`. `homepage` is shown as a link
+only when it starts with `https://`. A manifest plugin has no **Scan now**:
+brewdash only shows its report. A broken manifest still gets a tab, and the
+tab says what is wrong with it.
+
+### The report
+
+```json
+{"schema": 2, "generated_at": "2026-11-01T09:00:00", "alerts": [
+  {"severity": "high", "title": "redis listens on every interface (*:6379)",
+   "check_id": "exposure.listening", "detail": "pid 612",
+   "remediation": "Bind it to 127.0.0.1.", "fix_command": "brew services stop redis",
+   "accept_command": "acme accept 1a2b3c --note \"why\"",
+   "subject": {"kind": "path", "path": "/opt/homebrew/Cellar/redis/7.4.1/bin/redis-server"}}
+]}
+```
+
+`severity` is `critical`, `high`, `medium` or `low`, and `title` is a string.
+An alert without either is left out. The other text fields are strings or
+`null`. `subject` says what an alert is about:
+
+- `{"kind": "path", "path": "/abs/path"}`: a file under a Homebrew `Cellar` or
+  `opt` folder, or a `homebrew.mxcl.<name>.plist`, links to that formula if
+  it is installed;
+- `{"kind": "tap", "name": "user/repo"}` links to the tap if it is tapped;
+- `{"kind": "shell"}` links to **Shell**;
+- `null`, or anything else, links nowhere.
+
+brewdash reads report schema 2 only. A report with an older schema makes the
+tab say to update the plugin, and gives the plugin's update commands. A newer
+schema makes it say to update brewdash.
 
 ## Security
 

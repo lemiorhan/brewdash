@@ -4,7 +4,7 @@
 // messages (brewdash.py MESSAGES), which arrive in English already, so this catalog has none.
 I18N.en = {
   "tab.overview": "Overview", "tab.requested": "Installed by you", "tab.deps": "Dependencies", "tab.casks": "Casks",
-  "tab.services": "Services", "tab.taps": "Taps", "tab.health": "Health", "tab.security": "Security", "tab.apps": "Apps",
+  "tab.services": "Services", "tab.taps": "Taps", "tab.health": "Health", "tab.apps": "Apps",
   "tab.shell": "Shell", "tab.history": "History", "tab.install": "Install", "tab.export": "Export", "tab.settings": "Settings",
 
   "ago.never": "never", "ago.min": "{n} min ago", "ago.h": "{n} h ago", "ago.days": "{n} days ago",
@@ -33,7 +33,7 @@ I18N.en = {
   "btn.copied": "Copied", "btn.remove": "Remove", "btn.cancel": "Cancel", "btn.run": "Run", "btn.close": "Close",
 
   "detail.cask": "cask", "detail.what_to_do": "What to do", "detail.already_installed": "Already installed:",
-  "detail.no_desc": "No description.", "detail.findings": "secure-it findings", "detail.app": "App", "detail.homepage": "Homepage",
+  "detail.no_desc": "No description.", "detail.findings": "{name} findings", "detail.app": "App", "detail.homepage": "Homepage",
   "detail.tap": "Tap", "detail.license": "License", "detail.by_you": "(by you)", "detail.as_dependency": "(as dependency)",
   "detail.keg_only": "Keg-only", "detail.keg_only_text": "yes, not linked into the prefix", "detail.service": "Service",
   "detail.status": "Status", "detail.log": "Log", "detail.listening": "Listening", "detail.depends_on": "Depends on ({n})",
@@ -49,7 +49,7 @@ I18N.en = {
   "contact.author": "Author", "contact.source": "Source code", "contact.bugs": "Bugs and ideas", "contact.security": "Security problems",
 
   "taps.remote": "Remote", "taps.installed": "Installed from it", "taps.formulae": "Formulae", "taps.last_commit": "Last commit",
-  "taps.official": "official", "taps.private": "private", "taps.flagged": "secure-it flags this tap", "taps.unused": "0 · unused?",
+  "taps.official": "official", "taps.private": "private", "taps.flagged": "{name} flags this tap", "taps.unused": "0 · unused?",
 
   "health.missing": "Missing dependencies ({n})", "health.needs": "{pkg} needs {deps}", "health.none": "None.",
   "health.orphans": "Orphans: autoremove candidates ({n})", "health.orphans_text": "Installed as dependencies; nothing needs them any more.",
@@ -77,11 +77,14 @@ I18N.en = {
   "shell.tool": "Tool", "shell.from_brew": "From brew", "shell.then_point": "then point {file} at brew's copy",
 
   "sec.package": "Package:", "sec.open_tap": "Open {name} in Taps", "sec.open": "Open {name}", "sec.fix": "Fix:",
-  "sec.if_expected": "If it is expected:", "sec.not_setup": "secure-it is not set up",
-  "sec.not_setup_text": "{link} is a separate, root-run scanner for macOS security settings, persistence, listening ports and installed packages. After each scan it writes {path}, and brewdash shows those findings here, next to the packages they concern.",
-  "sec.unusable": "brewdash could not use {path}: {error}",
-  "sec.from": "From {path}, scan of {time}. Only findings you have not accepted are listed.", "sec.unknown_time": "unknown time",
-  "sec.nothing_open": "secure-it reports nothing open.",
+  "sec.if_expected": "If it is expected:",
+  "sec.unusable": "brewdash could not use {path}: {error}", "sec.unknown_time": "unknown time",
+  "plugin.not_installed": "{name} is not installed",
+  "plugin.not_installed_text": "After each scan {link} writes {path}, and brewdash shows those findings here, next to the packages, taps and shell files they concern. To install it:",
+  "plugin.from": "From {path}, written {time}.", "plugin.no_report": "{name} has not written {path} yet.",
+  "plugin.nothing_open": "{name} reports nothing open.", "plugin.scan": "Scan now",
+  "plugin.update_plugin": "An older {name} is installed, and this brewdash no longer reads its report. Update it, then scan again:",
+  "plugin.update_brewdash": "{name} writes a newer report than this brewdash reads. Update brewdash in Settings.",
   "sev.critical": "critical", "sev.high": "high", "sev.medium": "medium", "sev.low": "low",
 
   "level.critical": "critical", "level.warning": "warning", "level.info": "info",
@@ -96,7 +99,7 @@ I18N.en = {
   "att.synced": "synced folders ahead in PATH",
   "att.synced_text": "{names}: a file that arrives by sync runs in place of the system command of the same name.",
   "att.path": "PATH problems", "att.path_text": "Duplicate, missing or outdated entries in your shell startup files.",
-  "att.findings": "secure-it findings", "att.report_unreadable": "secure-it report unreadable",
+  "att.findings": "{name} findings", "att.report_unreadable": "{name} report unreadable", "att.plugin_outdated": "{name} needs an update",
   "att.exposed": "services reachable from the network", "att.exposed_text": "{names}: listening on all interfaces, not only this Mac.",
   "att.weak": "apps without a real signature", "att.weak_text": "{names}: not signed, or signed ad-hoc with no identity behind it.",
   "att.orphans": "orphans", "att.orphans_text": "Installed as dependencies; nothing needs them any more. Autoremove takes them out.",
@@ -223,8 +226,8 @@ I18N.en = {
   "intro.taps.todo": "Untap a tap nothing is installed from. Keep a third-party tap only if you trust its owner; a <b>secure-it</b> badge means the scanner flagged it.",
   "intro.health.what": "What brew itself reports: missing dependencies, deprecated or disabled packages, orphans, cache that cleanup can free, and the full <b>brew doctor</b> output.",
   "intro.health.todo": "Work from the top: missing dependencies break packages now, deprecated ones will. Then autoremove and clean up to win back disk space.",
-  "intro.security.what": "Findings from <b>secure-it</b>, a separate scanner that runs as root and checks macOS settings, startup items, open ports, shell files and packages. brewdash only reads the report it leaves in your home folder.",
-  "intro.security.todo": "Read each finding and fix it with the command shown, or accept it in secure-it if it is expected. brewdash copies commands for you to run in Terminal; it never runs them itself.",
+  "intro.plugin.what": "Findings from <b>{name}</b>, a separate tool. brewdash only reads the report it leaves in your home folder.",
+  "intro.plugin.todo": "Read each finding and fix it with the command shown, or accept it in {name} if it is expected. brewdash copies those commands for you to run in Terminal and never runs them itself; it runs only a scan you start.",
   "intro.apps.what": "Every app in /Applications and ~/Applications: how it got there (brew, App Store or by hand) and who signed it.",
   "intro.apps.todo": "<b>Bring into brew</b> lets Homebrew take over an app you installed by hand, so it upgrades with everything else. Check apps marked <b>not signed</b> or <b>ad-hoc</b>: nothing vouches for who built them.",
   "intro.shell.what": "The PATH lines and tools your shell startup files (.zshrc, .zprofile, .bashrc and friends) set up.",

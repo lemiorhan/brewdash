@@ -8,7 +8,7 @@ import WebKit
 let shots: [(file: String, tab: String, detailRow: String?)] = [
     ("overview", "overview", nil),
     ("packages", "requested", "f:node"),
-    ("security", "security", nil),
+    ("security", "plugin-secure-it", nil),
     ("services", "services", nil),
     ("apps", "apps", nil),
     ("shell", "shell", nil),

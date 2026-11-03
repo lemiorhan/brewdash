@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         window.toolbar = NSToolbar(identifier: "brewdash")
         window.toolbarStyle = .unified
         window.tabbingMode = .disallowed
-        window.minSize = NSSize(width: 900, height: 600)
+        window.minSize = NSSize(width: 900, height: 620)
         window.isReleasedWhenClosed = false
         window.contentView = webView
         window.delegate = self

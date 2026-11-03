@@ -6,6 +6,23 @@ tagged `vX.Y.Z`; changes from before the first one are listed by date.
 
 ## Unreleased
 
+### Added
+- Plugins: a separate tool that writes a JSON report gets its own tab, in a
+  group above History, and its findings show next to the packages, taps and
+  shell files they concern. secure-it is in the built-in catalog; another
+  tool joins with a manifest in `~/.local/state/brewdash/plugins/`. The
+  README's "Plugins" section has the manifest and report formats.
+- **Scan now** on the secure-it tab runs `/usr/bin/sudo -A
+  /usr/local/bin/secure-it scan --exit-zero` after you confirm. Only a plugin
+  in brewdash's catalog can be started this way.
+
+### Changed
+- The Security tab is now the secure-it tab. brewdash reads secure-it's
+  report schema 2 only; with an older secure-it, the tab says to update it and
+  gives the commands.
+- The Mac app's window is at least 620 points tall, so the built-in tabs
+  still fit in the sidebar with the plugin group's line.
+
 ### Fixed
 - The install command trusts brewdash's tap first, with
   `brew trust lemiorhan/brewdash`: Homebrew refuses a cask from a tap you have

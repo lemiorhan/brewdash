@@ -654,9 +654,15 @@ def no_listeners_unsigned(argv, timeout=60):
 EMPTY_HOME = tempfile.TemporaryDirectory()
 
 
+def catalog(exe="/nonexistent/secure-it", **kw):
+    """brewdash's catalog with secure-it's executable moved, so no test asks whether this Mac has secure-it."""
+    return ({**brewdash.PLUGIN_CATALOG[0], "exe": exe, **kw},)
+
+
 def store_of(*args, **kw):
-    """A Store that reads none of this Mac's home, apps, processes or signatures."""
-    return brewdash.Store(*args, **{"sysrun": no_listeners_unsigned, "home": EMPTY_HOME.name, "app_dirs": [], **kw})
+    """A Store that reads none of this Mac's home, apps, processes, signatures or installed plugins."""
+    return brewdash.Store(*args, **{"sysrun": no_listeners_unsigned, "home": EMPTY_HOME.name, "app_dirs": [],
+                                    "catalog": catalog(), **kw})
 
 
 def wait_for(fn, timeout=10):
@@ -1210,7 +1216,7 @@ class AdoptTest(unittest.TestCase):
                          ("bring Zed into brew", [["brew", "install", "--cask", "--adopt", "zed"]], False))
 
     def test_adopt_refuses_app_store_unmatched_brew_and_unknown_apps(self):
-        for app in ("a:/A/Shop.app", "a:/A/Bare.app", "a:/A/Gui.app", "a:/A/Nope.app", None):
+        for app in ("a:/A/Shop.app", "a:/A/Bare.app", "a:/A/Gui.app", "a:/A/Nope.app", None, ["a:/A/Zed.app"]):
             with self.subTest(app=app), self.assertRaises(ValueError):
                 brewdash.plan_job({"action": "adopt", "app": app}, by_id(), self.APPS)
         with self.assertRaises(ValueError):
@@ -1231,7 +1237,7 @@ class TrashTest(unittest.TestCase):
                                  (f"move {name} to the Trash", [[*self.SCRIPT, f"/A/{name}.app"]], False))
 
     def test_trash_refuses_a_brew_app_and_unknown_apps(self):
-        for app in ("a:/A/Gui.app", "a:/A/Nope.app", None):
+        for app in ("a:/A/Gui.app", "a:/A/Nope.app", None, ["a:/A/Zed.app"]):
             with self.subTest(app=app), self.assertRaises(ValueError):
                 brewdash.plan_job({"action": "trash", "app": app}, by_id(), self.APPS)
 
@@ -1728,10 +1734,15 @@ class ServerWiringTest(unittest.TestCase):
         cls.zed = make_app(root / "Applications", "Zed", "0.8")
         (root / "home").mkdir()
         (root / "home" / ".zshrc").write_text("export PATH=/nope/bin:$PATH\n")
+        (root / "secure-it").write_text("")
+        (root / "state" / "plugins").mkdir(parents=True)
+        (root / "state" / "plugins" / "acme.json").write_text(json.dumps({"schema": 1, "name": "Acme", "report": "~/acme.json"}))
+        (root / "home" / "acme.json").write_text(json.dumps(report(alert(subject={"kind": "tap", "name": "me/tap"}))))
         brew = FakeBrew(cache=str(root / "cache"), casks=APP_CASKS)
         cls.server, url, cls.token = brewdash.serve(port=0, open_browser=False, brew=brew, state_dir=str(root / "state"),
                                                     home=str(root / "home"), app_dirs=[str(root / "Applications")],
-                                                    sysrun=no_listeners_unsigned)
+                                                    sysrun=no_listeners_unsigned,
+                                                    catalog=catalog(str(root / "secure-it"), report="~/scans/secure-it.json"))
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 
@@ -1833,6 +1844,45 @@ class ServerWiringTest(unittest.TestCase):
         status, data = self.request("POST", "/api/plan", {"action": "adopt", "app": "a:" + self.zed})
         self.assertEqual((status, json.loads(data)["commands"]), (200, ["brew install --cask --adopt zed"]))
 
+    def test_state_lists_the_catalog_then_the_manifests_in_the_state_dir(self):
+        snap = wait_for(self.state)
+        secure_it, acme = snap["plugins"]
+        self.assertEqual((secure_it["id"], secure_it["installed"], secure_it["scan"], secure_it["found"], secure_it["path"]),
+                         ("secure-it", True, True, False, str(Path(self.tmp.name) / "home" / "scans" / "secure-it.json")))
+        self.assertEqual((acme["id"], acme["name"], acme["scan"], acme["found"], [a["link"] for a in acme["alerts"]]),
+                         ("acme", "Acme", False, True, [{"type": "tap", "name": "me/tap"}]))
+
+    def test_a_scan_is_planned_and_run_only_from_the_catalog(self):
+        wait_for(self.state)
+        status, data = self.request("POST", "/api/plan", {"action": "plugin_scan", "plugin": "secure-it"})
+        self.assertEqual((status, json.loads(data)["commands"], json.loads(data)["title_msg"]),
+                         (200, ["/usr/bin/sudo -A /usr/local/bin/secure-it scan --exit-zero"], ["plan.plugin_scan", {"name": "secure-it"}]))
+        self.assertEqual(self.request("POST", "/api/plan", {"action": "plugin_scan", "plugin": "acme"})[0], 400)
+        self.assertEqual(self.request("POST", "/api/jobs", {"action": "plugin_scan", "plugin": "acme"})[0], 400)
+        status, data = self.request("POST", "/api/jobs", {"action": "plugin_scan", "plugin": "secure-it"})
+        self.assertEqual(status, 201)
+        job_id = json.loads(data)["id"]
+
+        def finished():
+            job = next(j for j in json.loads(self.request("GET", f"/api/jobs?log={job_id}")[1]) if j["id"] == job_id)
+            return job if job["status"] in ("succeeded", "failed") else None
+
+        self.assertEqual((wait_for(finished)["status"], wait_for(finished)["log"]),
+                         ("succeeded", ["$ /usr/bin/sudo -A /usr/local/bin/secure-it scan --exit-zero"]))
+
+    def test_a_catalog_plugin_whose_executable_is_gone_cannot_be_scanned_over_http(self):
+        wait_for(self.state)
+        exe = Path(self.tmp.name) / "secure-it"
+        exe.unlink()
+        try:
+            for path in ("/api/plan", "/api/jobs"):
+                with self.subTest(path=path):
+                    status, data = self.request("POST", path, {"action": "plugin_scan", "plugin": "secure-it"})
+                    self.assertEqual((status, json.loads(data)["error"]),
+                                     (400, "only an installed plugin from brewdash's catalog can be scanned"))
+        finally:
+            exe.write_text("")
+
     def test_export_list_add_download_and_remove(self):
         wait_for(self.apps_ready)
         status, data = self.request("POST", "/api/list", {"op": "add", "ids": ["t:me/tap", "f:libA", "a:" + self.zed]})
@@ -1890,15 +1940,17 @@ class ServerWiringTest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/%2e%2e/brewdash.py", token=False)[0], 404)
 
 
-FP = "a" * 64
+def alert(severity="high", subject=None, **extra):
+    return {"check_id": "exposure.listening", "severity": severity, "title": "t", "detail": "d", "remediation": "r",
+            "fix_command": None, "accept_command": "sudo secure-it accept aaaaaaaaaa --note \"neden\"", "subject": subject,
+            **extra}
 
 
-def alert(severity="high", check_id="exposure.listening", identity=None, **extra):
-    return {"fingerprint": FP, "check_id": check_id, "kind": "open_port", "severity": severity, "title": "t",
-            "detail": "d", "remediation": "r", "fix_command": None, "identity": identity or {}, **extra}
+def report(*alerts, schema=2, **extra):
+    return {"schema": schema, "alerts": list(alerts), **extra}
 
 
-class SecurityReportTest(unittest.TestCase):
+class PluginReportTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name) / "report.json"
@@ -1908,97 +1960,215 @@ class SecurityReportTest(unittest.TestCase):
 
     def load(self, data):
         self.path.write_text(data if isinstance(data, str) else json.dumps(data))
-        return brewdash.load_security(self.path)
+        return brewdash.load_report(self.path)
 
     def test_no_file_is_not_an_error(self):
-        r = brewdash.load_security(self.path)
-        self.assertEqual((r["found"], r["error"], r["alerts"]), (False, None, []))
+        r = brewdash.load_report(self.path)
+        self.assertEqual((r["found"], r["error"], r["outdated"], r["alerts"]), (False, None, None, []))
 
     def test_a_broken_or_foreign_file_is_reported(self):
         self.assertIn("could not read it", self.load("{nope")["error"])
-        self.assertEqual(self.load({"schema": 2, "alerts": [alert()]})["error"],
-                         "it has schema 2; this brewdash reads schema 1")
         r = self.load([alert()])
-        self.assertEqual((r["found"], r["error"], r["alerts"]), (True, "it has schema None; this brewdash reads schema 1", []))
-        self.assertEqual(self.load({"schema": True, "alerts": [alert()]})["error"],
-                         "it has schema True; this brewdash reads schema 1")
+        self.assertEqual((r["found"], r["error"], r["outdated"], r["alerts"]),
+                         (True, "it has schema None; this brewdash reads schema 2", None, []))
+        self.assertEqual((self.load(report(alert(), schema=True))["error"], self.load(report(alert(), schema=True))["outdated"]),
+                         ("it has schema True; this brewdash reads schema 2", None))
         self.assertIn("could not read it", self.load("[" * 200000)["error"])
 
-    def test_a_fingerprint_with_a_trailing_newline_is_not_one(self):
-        [a] = self.load({"schema": 1, "alerts": [alert(fingerprint=FP + "\n")]})["alerts"]
-        self.assertIsNone(a["fingerprint"])
+    def test_a_report_of_another_schema_says_which_side_is_older(self):
+        old, new = self.load(report(alert(), schema=1)), self.load(report(alert(), schema=3))
+        self.assertEqual((old["error"], old["outdated"], old["alerts"]), ("it has schema 1; this brewdash reads schema 2", "plugin", []))
+        self.assertEqual((new["error"], new["outdated"], new["alerts"]), ("it has schema 3; this brewdash reads schema 2", "brewdash", []))
 
-    def test_an_identity_of_the_wrong_type_links_nowhere_and_does_not_raise(self):
-        self.assertIsNone(brewdash.link_alert(alert(check_id="packages.brew_taps", identity={"tap": ["x"]}), set(), {"x"}))
-
-    def test_test_stores_read_no_real_home_or_apps(self):
+    def test_test_stores_read_no_real_home_apps_or_plugins(self):
         store = store_of(FakeBrew())
         self.assertEqual((store.home, store.app_dirs), (EMPTY_HOME.name, []))
         self.assertEqual(os.listdir(EMPTY_HOME.name), [])
+        self.assertEqual([c["exe"] for c in store.catalog], ["/nonexistent/secure-it"])
 
     def test_alerts_are_typed_sorted_and_cleaned(self):
-        r = self.load({"schema": 1, "generated_at": "2026-11-01T10:00:00", "alerts": [
+        r = self.load(report(
             alert("low", title="<img src=x onerror=alert(1)>"),
             alert("bogus"), "not a dict", alert("high", title=None),
-            alert("critical", fingerprint="../../x", detail=7, identity=["x"]),
+            alert("critical", detail=7, accept_command=["rm"], subject="shell", fingerprint="f", identity={"exe": "/x"}),
             alert("medium", fix_command="brew untap me/tap"),
-        ]})
+            generated_at="2026-11-01T10:00:00"))
         self.assertEqual(r["generated_at"], "2026-11-01T10:00:00")
         self.assertEqual([a["severity"] for a in r["alerts"]], ["critical", "medium", "low"])
         crit, med, low = r["alerts"]
-        self.assertEqual((crit["fingerprint"], crit["detail"], crit["identity"]), (None, None, {}))
-        self.assertEqual((med["fingerprint"], med["fix_command"]), (FP, "brew untap me/tap"))
+        self.assertEqual((crit["detail"], crit["accept_command"], crit["subject"]), (None, None, None))
+        self.assertEqual((med["fix_command"], med["accept_command"]), ("brew untap me/tap", alert()["accept_command"]))
         self.assertEqual(low["title"], "<img src=x onerror=alert(1)>")
-        self.assertEqual(sorted(low), sorted([*brewdash.ALERT_TEXT, "severity", "identity", "fingerprint"]))
+        self.assertEqual(sorted(crit), sorted([*brewdash.ALERT_TEXT, "severity", "subject"]))
 
-    def test_identity_keeps_only_the_strings_links_are_made_from(self):
-        [a] = self.load({"schema": 1, "alerts": [alert(identity={
-            "exe": "/opt/homebrew/bin/x", "plist": 5, "tap": "me/tap", "shadowed": ["git"]})]})["alerts"]
-        self.assertEqual(a["identity"], {"exe": "/opt/homebrew/bin/x", "tap": "me/tap"})
+    def test_a_subject_keeps_only_the_strings_links_are_made_from(self):
+        clean = brewdash.clean_subject
+        self.assertEqual(clean({"kind": "path", "path": "/opt/homebrew/bin/x", "name": "n", "deep": [[1]]}),
+                         {"kind": "path", "path": "/opt/homebrew/bin/x"})
+        self.assertEqual(clean({"kind": "tap", "name": "me/tap", "path": "/p"}), {"kind": "tap", "name": "me/tap"})
+        self.assertEqual(clean({"kind": "shell", "path": "/p"}), {"kind": "shell"})
+        for bad in (None, "shell", ["shell"], {}, {"kind": "file", "path": "/p"}, {"kind": "path", "path": 5},
+                    {"kind": "path", "name": "/p"}, {"kind": "tap", "name": ["x"]}, {"kind": ["tap"]}):
+            with self.subTest(subject=bad):
+                self.assertIsNone(clean(bad))
 
-    def test_an_identity_too_deep_to_encode_cannot_break_the_state(self):
+    def test_a_subject_too_deep_to_encode_cannot_break_the_state(self):
         deep = "[" * 120000 + "]" * 120000
-        text = json.dumps({"schema": 1, "alerts": [alert(identity={"exe": "X"})]}).replace('"X"', deep)
-        r = self.load(text)
-        json.dumps({**r, "alerts": [{**a, "link": brewdash.link_alert(a, set(), set())} for a in r["alerts"]]})
+        r = self.load(json.dumps(report(alert(subject={"kind": "path", "path": "X"}))).replace('"X"', deep))
+        json.dumps({**r, "alerts": [{**a, "link": brewdash.link_subject(a["subject"], set(), set())} for a in r["alerts"]]})
 
     def test_alerts_link_to_where_brewdash_can_act(self):
         pkgs, taps = {"f:redis"}, {"me/tap"}
-        link = lambda **kw: brewdash.link_alert(alert(**kw), pkgs, taps)
-        self.assertEqual(link(identity={"exe": "/opt/homebrew/Cellar/redis/7.2/bin/redis-server"}),
-                         {"type": "package", "id": "f:redis"})
-        self.assertEqual(link(identity={"exe": "/usr/local/opt/redis/bin/redis-server"}), {"type": "package", "id": "f:redis"})
-        self.assertIsNone(link(identity={"exe": "/opt/homebrew/Cellar/nginx/1/bin/nginx"}))
-        self.assertIsNone(link(identity={"exe": "/Applications/Redis.app/redis"}))
-        self.assertEqual(link(check_id="persistence.launchd", identity={"plist": "/Library/LaunchDaemons/homebrew.mxcl.redis.plist"}),
-                         {"type": "package", "id": "f:redis"})
-        self.assertIsNone(link(check_id="persistence.launchd", identity={"plist": "/x/com.redis.plist"}))
-        self.assertEqual(link(check_id="packages.brew_taps", identity={"tap": "me/tap"}), {"type": "tap", "name": "me/tap"})
-        self.assertIsNone(link(check_id="packages.brew_taps", identity={"tap": "gone/tap"}))
-        self.assertEqual(link(check_id="persistence.path_shadow"), {"type": "tab", "tab": "shell"})
-        self.assertEqual(link(check_id="persistence.shell_rc"), {"type": "tab", "tab": "shell"})
-        self.assertIsNone(link(check_id="system.firewall"))
-        self.assertIsNone(link(check_id="exposure.listening", identity={"exe": 5}))
+        link = lambda kind, **kw: brewdash.link_subject({"kind": kind, **kw}, pkgs, taps)
+        self.assertEqual(link("path", path="/opt/homebrew/Cellar/redis/7.2/bin/redis-server"), {"type": "package", "id": "f:redis"})
+        self.assertEqual(link("path", path="/usr/local/opt/redis/bin/redis-server"), {"type": "package", "id": "f:redis"})
+        self.assertIsNone(link("path", path="/opt/homebrew/Cellar/nginx/1/bin/nginx"))
+        self.assertIsNone(link("path", path="/Applications/Redis.app/redis"))
+        self.assertEqual(link("path", path="/Library/LaunchDaemons/homebrew.mxcl.redis.plist"), {"type": "package", "id": "f:redis"})
+        self.assertIsNone(link("path", path="/Library/LaunchDaemons/homebrew.mxcl.nginx.plist"))
+        self.assertIsNone(link("path", path="/x/com.redis.plist"))
+        self.assertEqual(link("tap", name="me/tap"), {"type": "tap", "name": "me/tap"})
+        self.assertIsNone(link("tap", name="gone/tap"))
+        self.assertEqual(link("shell"), {"type": "tab", "tab": "shell"})
+        self.assertIsNone(brewdash.link_subject(None, pkgs, taps))
 
-    def test_store_reads_the_report_again_only_when_it_changes(self):
+    def test_store_reads_a_report_again_only_when_it_changes(self):
         home = Path(self.tmp.name)
         (home / "secure-it").mkdir()
-        report = home / "secure-it" / "report.json"
+        path = home / "secure-it" / "report.json"
         store = store_of(FakeBrew(), home=str(home))
-        self.assertEqual((store.security()["found"], store.security()["seq"]), (False, 1))
-        report.write_text(json.dumps({"schema": 1, "alerts": [alert(identity={"exe": "/opt/homebrew/opt/tool/bin/tool"})]}))
-        first = store.security()
+        secure_it = lambda: store.plugins()[0]
+        self.assertEqual((secure_it()["found"], secure_it()["seq"], secure_it()["path"]), (False, 1, str(path)))
+        path.write_text(json.dumps(report(alert(subject={"kind": "path", "path": "/opt/homebrew/opt/tool/bin/tool"}))))
+        first = secure_it()
         self.assertEqual((first["found"], first["seq"], first["alerts"][0]["link"]), (True, 2, None))
-        self.assertEqual(store.security()["seq"], 2)
+        self.assertEqual(secure_it()["seq"], 2)
         store.refresh()
         wait_for(lambda: store.model)
-        self.assertEqual(store.security()["alerts"][0]["link"], {"type": "package", "id": "f:tool"})
-        self.assertEqual(store.security()["seq"], 2)
-        before = report.stat().st_mtime_ns
-        report.write_text(json.dumps({"schema": 1, "alerts": []}))
-        os.utime(report, ns=(before, before))
-        self.assertEqual((store.security()["seq"], store.security()["alerts"]), (3, []))
-        self.assertEqual(store.snapshot()["security"]["seq"], 3)
+        self.assertEqual(secure_it()["alerts"][0]["link"], {"type": "package", "id": "f:tool"})
+        self.assertEqual(secure_it()["seq"], 2)
+        before = path.stat().st_mtime_ns
+        path.write_text(json.dumps(report()))
+        os.utime(path, ns=(before, before))
+        self.assertEqual((secure_it()["seq"], secure_it()["alerts"]), (3, []))
+        self.assertEqual([(p["id"], p["seq"]) for p in store.snapshot()["plugins"]], [("secure-it", 3)])
+
+
+class PluginCatalogTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.dir = self.root / "plugins"
+        self.dir.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def manifest(self, pid, data):
+        (self.dir / f"{pid}.json").write_text(data if isinstance(data, str) else json.dumps(data))
+
+    def plugins(self, **kw):
+        return store_of(FakeBrew(), home=str(self.root), plugins_dir=self.dir, **kw).plugins()
+
+    def test_the_catalog_offers_a_scan_only_when_its_executable_is_there(self):
+        exe = self.root / "secure-it"
+        [missing] = self.plugins(catalog=catalog(str(exe)))
+        exe.write_text("")
+        [there] = self.plugins(catalog=catalog(str(exe)))
+        self.assertEqual((missing["installed"], missing["scan"], there["installed"], there["scan"]), (False, False, True, True))
+        self.assertEqual((there["source"], there["install"], there["update"]),
+                         ("catalog", brewdash.PLUGIN_CATALOG[0]["install"], brewdash.PLUGIN_CATALOG[0]["update"]))
+        self.assertEqual((there["about"], there["about_msg"]),
+                         (brewdash.MESSAGES["plugin.about.secure_it"], ["plugin.about.secure_it", {}]))
+
+    def test_a_manifest_adds_a_plugin_after_the_catalog_and_only_https_is_a_link(self):
+        self.manifest("zeta", {"schema": 1, "name": " Zeta ", "report": "~/zeta/out.json", "homepage": "https://zeta.example"})
+        self.manifest("acme", {"schema": 1, "name": "Acme <b>", "report": "/abs/acme.json", "homepage": "http://acme.example"})
+        cat, acme, zeta = self.plugins()
+        self.assertEqual([p["id"] for p in (cat, acme, zeta)], ["secure-it", "acme", "zeta"])
+        self.assertEqual((acme["name"], acme["path"], acme["homepage"], acme["source"]), ("Acme <b>", "/abs/acme.json", None, "manifest"))
+        self.assertEqual((zeta["name"], zeta["path"], zeta["homepage"]), ("Zeta", str(self.root / "zeta" / "out.json"), "https://zeta.example"))
+        self.assertEqual((acme["installed"], acme["scan"], acme["install"], acme["update"], acme["about"]), (True, False, [], [], None))
+
+    def test_a_manifest_plugin_reads_its_report_and_links_it(self):
+        (self.root / "zeta").mkdir()
+        (self.root / "zeta" / "out.json").write_text(json.dumps(report(alert(subject={"kind": "shell"}))))
+        self.manifest("zeta", {"schema": 1, "name": "Zeta", "report": "~/zeta/out.json"})
+        zeta = self.plugins()[1]
+        self.assertEqual((zeta["found"], zeta["error"], [a["link"] for a in zeta["alerts"]]), (True, None, [{"type": "tab", "tab": "shell"}]))
+
+    def test_a_broken_manifest_still_gets_a_tab_that_says_why(self):
+        self.manifest("broken", "{nope")
+        self.manifest("old", {"schema": 2, "report": "/r.json"})
+        self.manifest("noreport", {"schema": 1, "name": "N"})
+        self.manifest("relative", {"schema": 1, "report": "out.json"})
+        self.manifest("notilde", {"schema": 1, "report": "~acme/out.json"})
+        by = {p["id"]: p for p in self.plugins()[1:]}
+        self.assertEqual(sorted(by), ["broken", "noreport", "notilde", "old", "relative"])
+        self.assertIn("could not read its manifest", by["broken"]["error"])
+        self.assertIn("has schema 2; this brewdash reads schema 1", by["old"]["error"])
+        for pid in ("noreport", "relative", "notilde"):
+            with self.subTest(pid=pid):
+                self.assertIn("names no report", by[pid]["error"])
+        for p in by.values():
+            self.assertEqual((p["found"], p["path"], p["alerts"], p["name"] in (p["id"], "N")), (False, None, [], True))
+
+    def test_only_a_file_named_like_an_id_is_a_manifest_and_the_catalog_keeps_its_ids(self):
+        good = {"schema": 1, "report": "/r.json"}
+        for name in ("Upper", "-dash", "under_score", "a" * 41, "secure-it"):
+            self.manifest(name, {**good, "name": "taken" if name == "secure-it" else name})
+        (self.dir / "ok.txt").write_text(json.dumps(good))
+        self.manifest("a" * 40, good)
+        self.manifest("0-k", good)
+        plugins = self.plugins()
+        self.assertEqual([p["id"] for p in plugins], ["secure-it", "0-k", "a" * 40])
+        self.assertEqual((plugins[0]["name"], plugins[0]["source"]), ("secure-it", "catalog"))
+
+    def test_without_a_plugins_folder_there_is_only_the_catalog(self):
+        self.dir.rmdir()
+        self.assertEqual([p["id"] for p in self.plugins()], ["secure-it"])
+        self.assertEqual([p["id"] for p in store_of(FakeBrew()).plugins()], ["secure-it"])
+
+
+class PluginScanTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_scan_runs_the_catalogs_command_and_nothing_else(self):
+        cat = {c["id"]: c for c in brewdash.PLUGIN_CATALOG}
+        title, cmds, snap = brewdash.plan_job({"action": "plugin_scan", "plugin": "secure-it"}, by_id(), plugins=cat)
+        self.assertEqual((title, cmds, snap), ("secure-it scan", [["/usr/bin/sudo", "-A", "/usr/local/bin/secure-it", "scan", "--exit-zero"]], False))
+        for req, plugins in (({"action": "plugin_scan", "plugin": "secure-it"}, {}),
+                             ({"action": "plugin_scan", "plugin": "secure-it"}, None),
+                             ({"action": "plugin_scan", "plugin": "acme"}, cat),
+                             ({"action": "plugin_scan", "plugin": ["secure-it"]}, cat),
+                             ({"action": "plugin_scan"}, cat)):
+            with self.subTest(req=req, plugins=plugins), self.assertRaises(ValueError):
+                brewdash.plan_job(req, by_id(), plugins=plugins)
+
+    def test_only_an_installed_catalog_plugin_is_scannable(self):
+        exe = self.state / "secure-it"
+        store = store_of(FakeBrew(), catalog=catalog(str(exe)))
+        self.assertEqual(store.scannable(), {})
+        exe.write_text("")
+        self.assertEqual(list(store.scannable()), ["secure-it"])
+
+    def run_scan(self, script):
+        brew = FakeBrew({("-A",): script})
+        runner = brewdash.Runner(brew, store_of(brew), self.state)
+        job = runner.submit("secure-it scan", [list(brewdash.PLUGIN_CATALOG[0]["scan"])], False)
+        return wait_for(lambda: job if job["status"] in ("succeeded", "failed") else None)
+
+    def test_a_scan_succeeds_only_on_exit_0_and_a_cancelled_password_asks_for_a_terminal(self):
+        cancelled = "echo 'sudo: a password is required; the brewdash password dialog was cancelled or could not open'; exit 1"
+        crashed = "echo 'Traceback (most recent call last):'; exit 1"
+        jobs = [self.run_scan(s) for s in ("exit 0", cancelled, crashed, "exit 2")]
+        self.assertEqual([(j["status"], j["exit_code"], j["needs_terminal"]) for j in jobs],
+                         [("succeeded", 0, False), ("failed", 1, True), ("failed", 1, False), ("failed", 2, False)])
 
 
 LSOF_TCP = "p42\nf7\nn*:6379\nf8\nn[::1]:6379\nf9\nn127.0.0.1:6380\np99\nf3\nn*:22\n"

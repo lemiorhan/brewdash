@@ -1,7 +1,7 @@
 "use strict";
 I18N.tr = {
   "tab.overview": "Genel bakış", "tab.requested": "Senin kurdukların", "tab.deps": "Bağımlılıklar", "tab.casks": "Cask'ler",
-  "tab.services": "Servisler", "tab.taps": "Tap'ler", "tab.health": "Sağlık", "tab.security": "Güvenlik", "tab.apps": "Uygulamalar",
+  "tab.services": "Servisler", "tab.taps": "Tap'ler", "tab.health": "Sağlık", "tab.apps": "Uygulamalar",
   "tab.shell": "Shell", "tab.history": "Geçmiş", "tab.install": "Kur", "tab.export": "Dışa aktar", "tab.settings": "Ayarlar",
 
   "ago.never": "hiç", "ago.min": "{n} dk önce", "ago.h": "{n} sa önce", "ago.days": "{n} gün önce",
@@ -30,7 +30,7 @@ I18N.tr = {
   "btn.copied": "Kopyalandı", "btn.remove": "Çıkar", "btn.cancel": "Vazgeç", "btn.run": "Çalıştır", "btn.close": "Kapat",
 
   "detail.cask": "cask", "detail.what_to_do": "Ne yapmalı", "detail.already_installed": "Zaten kurulu:",
-  "detail.no_desc": "Açıklama yok.", "detail.findings": "secure-it bulguları", "detail.app": "Uygulama", "detail.homepage": "Ana sayfa",
+  "detail.no_desc": "Açıklama yok.", "detail.findings": "{name} bulguları", "detail.app": "Uygulama", "detail.homepage": "Ana sayfa",
   "detail.tap": "Tap", "detail.license": "Lisans", "detail.by_you": "(senin kurduğun)", "detail.as_dependency": "(bağımlılık olarak)",
   "detail.keg_only": "Keg-only", "detail.keg_only_text": "evet, prefix'e link'lenmedi", "detail.service": "Servis",
   "detail.status": "Durum", "detail.log": "Log", "detail.listening": "Dinliyor", "detail.depends_on": "Bağımlılıkları ({n})",
@@ -46,7 +46,7 @@ I18N.tr = {
   "contact.author": "Yazar", "contact.source": "Kaynak kod", "contact.bugs": "Hatalar ve fikirler", "contact.security": "Güvenlik sorunları",
 
   "taps.remote": "Remote", "taps.installed": "Buradan kurulanlar", "taps.formulae": "Formula'lar", "taps.last_commit": "Son commit",
-  "taps.official": "resmi", "taps.private": "özel", "taps.flagged": "secure-it bu tap'i işaretledi", "taps.unused": "0 · kullanılmıyor mu?",
+  "taps.official": "resmi", "taps.private": "özel", "taps.flagged": "{name} bu tap'i işaretledi", "taps.unused": "0 · kullanılmıyor mu?",
 
   "health.missing": "Eksik bağımlılıklar ({n})", "health.needs": "{pkg} için gerekli: {deps}", "health.none": "Yok.",
   "health.orphans": "Sahipsizler: autoremove adayları ({n})", "health.orphans_text": "Bağımlılık olarak kuruldular; artık hiçbir paket onlara ihtiyaç duymuyor.",
@@ -74,11 +74,14 @@ I18N.tr = {
   "shell.tool": "Araç", "shell.from_brew": "brew'dan", "shell.then_point": "sonra {file} dosyasını brew'daki kopyaya yönlendir",
 
   "sec.package": "Paket:", "sec.open_tap": "{name} tap'ini Tap'ler sekmesinde aç", "sec.open": "{name} detayını aç", "sec.fix": "Çözüm:",
-  "sec.if_expected": "Beklenen bir durumsa:", "sec.not_setup": "secure-it kurulu değil",
-  "sec.not_setup_text": "{link}, macOS güvenlik ayarlarını, kalıcılık (persistence) noktalarını, dinleyen port'ları ve kurulu paketleri tarayan, root ile çalışan ayrı bir araç. Her taramadan sonra {path} dosyasını yazar; brewdash da bu bulguları burada, ilgili paketlerin yanında gösterir.",
-  "sec.unusable": "brewdash {path} dosyasını kullanamadı: {error}",
-  "sec.from": "Kaynak: {path}, tarama zamanı: {time}. Sadece kabul etmediğin bulgular listeleniyor.", "sec.unknown_time": "bilinmiyor",
-  "sec.nothing_open": "secure-it açık bir bulgu bildirmiyor.",
+  "sec.if_expected": "Beklenen bir durumsa:",
+  "sec.unusable": "brewdash {path} dosyasını kullanamadı: {error}", "sec.unknown_time": "bilinmiyor",
+  "plugin.not_installed": "{name} kurulu değil",
+  "plugin.not_installed_text": "{link} her taramadan sonra {path} dosyasını yazar. brewdash da bu bulguları burada, ilgili paketlerin, tap'lerin ve shell dosyalarının yanında gösterir. Kurmak için:",
+  "plugin.from": "Kaynak: {path}, yazılma zamanı: {time}.", "plugin.no_report": "{name} henüz {path} dosyasını yazmadı.",
+  "plugin.nothing_open": "{name} açık bir bulgu bildirmiyor.", "plugin.scan": "Şimdi tara",
+  "plugin.update_plugin": "{name} eski bir version'la kurulu ve bu brewdash onun raporunu artık okumuyor. Güncelle, sonra yeniden tara:",
+  "plugin.update_brewdash": "{name} bu brewdash'in okuduğundan daha yeni bir rapor yazıyor. brewdash'i Ayarlar'dan güncelle.",
   "sev.critical": "kritik", "sev.high": "yüksek", "sev.medium": "orta", "sev.low": "düşük",
 
   "level.critical": "kritik", "level.warning": "uyarı", "level.info": "bilgi",
@@ -93,7 +96,7 @@ I18N.tr = {
   "att.synced": "PATH'te sync klasörleri önde",
   "att.synced_text": "{names}: sync ile gelen bir dosya, aynı adlı sistem komutunun yerine çalışır.",
   "att.path": "PATH sorunları", "att.path_text": "Shell başlangıç dosyalarında tekrar eden, olmayan ya da eskimiş satırlar var.",
-  "att.findings": "secure-it bulguları", "att.report_unreadable": "secure-it raporu okunamadı",
+  "att.findings": "{name} bulguları", "att.report_unreadable": "{name} raporu okunamadı", "att.plugin_outdated": "{name} güncellenmeli",
   "att.exposed": "ağdan erişilebilen servisler", "att.exposed_text": "{names}: sadece bu Mac'te değil, tüm ağ arayüzlerinde dinliyor.",
   "att.weak": "gerçek imzası olmayan uygulamalar", "att.weak_text": "{names}: imzasız ya da arkasında kimlik olmayan ad-hoc bir imzayla imzalı.",
   "att.orphans": "sahipsizler", "att.orphans_text": "Bağımlılık olarak kuruldular; artık hiçbir paket onlara ihtiyaç duymuyor. Autoremove bunları kaldırır.",
@@ -220,8 +223,8 @@ I18N.tr = {
   "intro.taps.todo": "Hiçbir şeyin kurulmadığı tap'i untap et. Üçüncü parti bir tap'i sadece sahibine güveniyorsan tut. <b>secure-it</b> rozeti, secure-it'in o tap'i işaretlediğini gösterir.",
   "intro.health.what": "brew'un kendi bildirdikleri: eksik bağımlılıklar, deprecated ya da devre dışı paketler, sahipsizler, cleanup'ın boşaltabileceği cache ve <b>brew doctor</b> çıktısının tamamı.",
   "intro.health.todo": "Yukarıdan başla: eksik bağımlılıklar paketleri şimdi bozar, deprecated olanlar ileride bozacak. Sonra disk alanı kazanmak için autoremove ve cleanup çalıştır.",
-  "intro.security.what": "<b>secure-it</b> bulguları. secure-it root ile çalışan ayrı bir tarama aracı; macOS ayarlarını, açılışta başlayanları, açık port'ları, shell dosyalarını ve paketleri kontrol eder. brewdash sadece onun home klasörüne bıraktığı raporu okur.",
-  "intro.security.todo": "Her bulguyu oku. Gösterilen komutla düzelt, ya da beklenen bir durumsa secure-it'te kabul et. brewdash komutları Terminal'de çalıştırman için kopyalar; kendisi asla çalıştırmaz.",
+  "intro.plugin.what": "<b>{name}</b> bulguları. {name} ayrı bir araç; brewdash sadece onun home klasörüne bıraktığı raporu okur.",
+  "intro.plugin.todo": "Her bulguyu oku. Gösterilen komutla düzelt, ya da beklenen bir durumsa {name} içinde kabul et. brewdash bu komutları Terminal'de çalıştırman için kopyalar, kendisi asla çalıştırmaz. Çalıştırdığı tek şey senin başlattığın taramadır.",
   "intro.apps.what": "/Applications ve ~/Applications altındaki her uygulama: oraya nasıl geldiği (brew, App Store ya da elle) ve kimin imzaladığı.",
   "intro.apps.todo": "<b>brew'a al</b>, elle kurduğun bir uygulamayı Homebrew'a devreder; böylece diğer her şeyle birlikte yükseltilir. <b>imzasız</b> ya da <b>ad-hoc</b> işaretli uygulamalara bak: onları kimin yaptığına kefil olan bir şey yok.",
   "intro.shell.what": "Shell başlangıç dosyalarının (.zshrc, .zprofile, .bashrc ve benzerleri) kurduğu PATH satırları ve araçlar.",
@@ -328,4 +331,6 @@ I18N.tr = {
   "srv.plan.cleanup": "cleanup",
   "srv.plan.service": "{name} servisini {op}", "srv.service.start": "başlat", "srv.service.stop": "durdur", "srv.service.restart": "yeniden başlat",
   "srv.plan.install": "kur: {name}",
+  "srv.plan.plugin_scan": "{name} taraması",
+  "srv.plugin.about.secure_it": "macOS güvenlik ayarlarını, kalıcılık (persistence) noktalarını, dinleyen port'ları ve kurulu paketleri tarayan ayrı bir araç. Root ile, sadece sen bir tarama başlattığında çalışır.",
 };

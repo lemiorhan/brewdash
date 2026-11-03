@@ -1,7 +1,7 @@
 "use strict";
 I18N.zh = {
   "tab.overview": "概览", "tab.requested": "你安装的", "tab.deps": "依赖", "tab.casks": "Cask",
-  "tab.services": "服务", "tab.taps": "Tap", "tab.health": "健康", "tab.security": "安全", "tab.apps": "应用程序",
+  "tab.services": "服务", "tab.taps": "Tap", "tab.health": "健康", "tab.apps": "应用程序",
   "tab.shell": "Shell", "tab.history": "历史", "tab.install": "安装", "tab.export": "导出", "tab.settings": "设置",
 
   "ago.never": "从未", "ago.min": "{n} 分钟前", "ago.h": "{n} 小时前", "ago.days": "{n} 天前",
@@ -30,7 +30,7 @@ I18N.zh = {
   "btn.copied": "已拷贝", "btn.remove": "移除", "btn.cancel": "取消", "btn.run": "运行", "btn.close": "关闭",
 
   "detail.cask": "cask", "detail.what_to_do": "怎么做", "detail.already_installed": "已安装：",
-  "detail.no_desc": "无描述。", "detail.findings": "secure-it 发现的问题", "detail.app": "应用程序", "detail.homepage": "主页",
+  "detail.no_desc": "无描述。", "detail.findings": "{name} 发现的问题", "detail.app": "应用程序", "detail.homepage": "主页",
   "detail.tap": "Tap", "detail.license": "许可证", "detail.by_you": "（你安装的）", "detail.as_dependency": "（作为依赖）",
   "detail.keg_only": "Keg-only", "detail.keg_only_text": "是，未链接到前缀目录", "detail.service": "服务",
   "detail.status": "状态", "detail.log": "日志", "detail.listening": "监听", "detail.depends_on": "依赖于（{n}）",
@@ -46,7 +46,7 @@ I18N.zh = {
   "contact.author": "作者", "contact.source": "源代码", "contact.bugs": "Bug 与建议", "contact.security": "安全问题",
 
   "taps.remote": "远程地址", "taps.installed": "从中安装的", "taps.formulae": "Formula", "taps.last_commit": "最近提交",
-  "taps.official": "官方", "taps.private": "私有", "taps.flagged": "secure-it 标记了此 tap", "taps.unused": "0 · 未使用？",
+  "taps.official": "官方", "taps.private": "私有", "taps.flagged": "{name} 标记了此 tap", "taps.unused": "0 · 未使用？",
 
   "health.missing": "缺少的依赖（{n}）", "health.needs": "{pkg} 需要 {deps}", "health.none": "无。",
   "health.orphans": "孤立软件包：可自动移除（{n}）", "health.orphans_text": "作为依赖安装，但已不再被任何软件包需要。",
@@ -74,11 +74,14 @@ I18N.zh = {
   "shell.tool": "工具", "shell.from_brew": "来自 brew", "shell.then_point": "然后让 {file} 指向 brew 的版本",
 
   "sec.package": "软件包：", "sec.open_tap": "在 Tap 中打开 {name}", "sec.open": "打开 {name}", "sec.fix": "修复：",
-  "sec.if_expected": "如果这是预期行为：", "sec.not_setup": "尚未设置 secure-it",
-  "sec.not_setup_text": "{link} 是一个独立的、以 root 身份运行的扫描器，检查 macOS 安全设置、持久化项、监听端口和已安装的软件包。每次扫描后它会写入 {path}，brewdash 会在此处显示这些发现，并将其与相关软件包放在一起。",
-  "sec.unusable": "brewdash 无法使用 {path}：{error}",
-  "sec.from": "来自 {path}，扫描时间 {time}。仅列出你尚未接受的发现。", "sec.unknown_time": "未知时间",
-  "sec.nothing_open": "secure-it 未报告任何待处理的问题。",
+  "sec.if_expected": "如果这是预期行为：",
+  "sec.unusable": "brewdash 无法使用 {path}：{error}", "sec.unknown_time": "未知时间",
+  "plugin.not_installed": "尚未安装 {name}",
+  "plugin.not_installed_text": "每次扫描后 {link} 会写入 {path}，brewdash 会在此处显示这些发现，并将其与相关的软件包、tap 和 Shell 文件放在一起。安装方法：",
+  "plugin.from": "来自 {path}，写入时间 {time}。", "plugin.no_report": "{name} 尚未写入 {path}。",
+  "plugin.nothing_open": "{name} 未报告任何待处理的问题。", "plugin.scan": "立即扫描",
+  "plugin.update_plugin": "已安装的 {name} 版本较旧，此 brewdash 已无法读取它的报告。请更新它，然后重新扫描：",
+  "plugin.update_brewdash": "{name} 写入的报告格式比此 brewdash 能读取的更新。请在设置中更新 brewdash。",
   "sev.critical": "严重", "sev.high": "高", "sev.medium": "中", "sev.low": "低",
 
   "level.critical": "严重", "level.warning": "警告", "level.info": "信息",
@@ -93,7 +96,7 @@ I18N.zh = {
   "att.synced": "PATH 中同步文件夹排在前面",
   "att.synced_text": "{names}：通过同步传来的文件会代替同名的系统命令运行。",
   "att.path": "PATH 问题", "att.path_text": "Shell 启动文件中存在重复、不存在或过时的条目。",
-  "att.findings": "secure-it 发现的问题", "att.report_unreadable": "无法读取 secure-it 报告",
+  "att.findings": "{name} 发现的问题", "att.report_unreadable": "无法读取 {name} 报告", "att.plugin_outdated": "{name} 需要更新",
   "att.exposed": "可从网络访问的服务", "att.exposed_text": "{names}：在所有网络接口上监听，而不仅限本机。",
   "att.weak": "没有真正签名的应用程序", "att.weak_text": "{names}：未签名，或为没有身份的临时签名。",
   "att.orphans": "孤立软件包", "att.orphans_text": "作为依赖安装，但已不再被任何软件包需要。自动移除可将其清除。",
@@ -220,8 +223,8 @@ I18N.zh = {
   "intro.taps.todo": "移除没有安装任何软件包的 tap。只有在信任其所有者时才保留第三方 tap；<b>secure-it</b> 标记表示扫描器标记了它。",
   "intro.health.what": "brew 自身报告的内容：缺少的依赖、已弃用或已停用的软件包、孤立软件包、cleanup 可释放的缓存，以及完整的 <b>brew doctor</b> 输出。",
   "intro.health.todo": "从上往下处理：缺少的依赖现在就会让软件包无法运行，已弃用的将来也会。然后自动移除并清理，以回收磁盘空间。",
-  "intro.security.what": "来自 <b>secure-it</b> 的发现。secure-it 是一个以 root 身份运行的独立扫描器，检查 macOS 设置、启动项、开放端口、Shell 文件和软件包。brewdash 只读取它留在你个人文件夹中的报告。",
-  "intro.security.todo": "阅读每项发现，用给出的命令修复；如果这是预期行为，就在 secure-it 中接受它。brewdash 会拷贝命令供你在终端中运行，它自己从不运行这些命令。",
+  "intro.plugin.what": "来自 <b>{name}</b> 的发现。{name} 是一个独立的工具，brewdash 只读取它留在你个人文件夹中的报告。",
+  "intro.plugin.todo": "阅读每项发现，用给出的命令修复；如果这是预期行为，就在 {name} 中接受它。brewdash 会拷贝这些命令供你在终端中运行，它自己从不运行；它只运行你启动的扫描。",
   "intro.apps.what": "/Applications 和 ~/Applications 中的每个应用程序：它的来源（brew、App Store 或手动安装）以及签名者。",
   "intro.apps.todo": "<b>交由 brew 管理</b>让 Homebrew 接管你手动安装的应用程序，使其与其他软件一起升级。请检查标为 <b>未签名</b> 或 <b>临时签名</b> 的应用程序：没有任何东西能证明它们由谁构建。",
   "intro.shell.what": "你的 Shell 启动文件（.zshrc、.zprofile、.bashrc 等）设置的 PATH 行和工具。",
@@ -328,4 +331,6 @@ I18N.zh = {
   "srv.plan.cleanup": "清理",
   "srv.plan.service": "{op}服务 {name}", "srv.service.start": "启动", "srv.service.stop": "停止", "srv.service.restart": "重启",
   "srv.plan.install": "安装 {name}",
+  "srv.plan.plugin_scan": "{name} 扫描",
+  "srv.plugin.about.secure_it": "一个独立的扫描器，检查 macOS 安全设置、持久化项、监听端口和已安装的软件包。只有在你启动扫描时，它才以 root 身份运行。",
 };

@@ -1,7 +1,7 @@
 "use strict";
 I18N.es = {
   "tab.overview": "Resumen", "tab.requested": "Instalado por ti", "tab.deps": "Dependencias", "tab.casks": "Casks",
-  "tab.services": "Servicios", "tab.taps": "Taps", "tab.health": "Estado", "tab.security": "Seguridad", "tab.apps": "Apps",
+  "tab.services": "Servicios", "tab.taps": "Taps", "tab.health": "Estado", "tab.apps": "Apps",
   "tab.shell": "Shell", "tab.history": "Historial", "tab.install": "Instalar", "tab.export": "Exportar", "tab.settings": "Ajustes",
 
   "ago.never": "nunca", "ago.min": "hace {n} min", "ago.h": "hace {n} h", "ago.days": "hace {n} días",
@@ -30,7 +30,7 @@ I18N.es = {
   "btn.copied": "Copiado", "btn.remove": "Quitar", "btn.cancel": "Cancelar", "btn.run": "Ejecutar", "btn.close": "Cerrar",
 
   "detail.cask": "cask", "detail.what_to_do": "Qué hacer", "detail.already_installed": "Ya instalado:",
-  "detail.no_desc": "Sin descripción.", "detail.findings": "Hallazgos de secure-it", "detail.app": "App", "detail.homepage": "Sitio web",
+  "detail.no_desc": "Sin descripción.", "detail.findings": "Hallazgos de {name}", "detail.app": "App", "detail.homepage": "Sitio web",
   "detail.tap": "Tap", "detail.license": "Licencia", "detail.by_you": "(por ti)", "detail.as_dependency": "(como dependencia)",
   "detail.keg_only": "Keg-only", "detail.keg_only_text": "sí, no está enlazado en el prefijo", "detail.service": "Servicio",
   "detail.status": "Estado", "detail.log": "Log", "detail.listening": "Escuchando", "detail.depends_on": "Depende de ({n})",
@@ -46,7 +46,7 @@ I18N.es = {
   "contact.author": "Autor", "contact.source": "Código fuente", "contact.bugs": "Errores e ideas", "contact.security": "Problemas de seguridad",
 
   "taps.remote": "Remoto", "taps.installed": "Instalado desde aquí", "taps.formulae": "Fórmulas", "taps.last_commit": "Último commit",
-  "taps.official": "oficial", "taps.private": "privado", "taps.flagged": "secure-it marca este tap", "taps.unused": "0 · ¿sin uso?",
+  "taps.official": "oficial", "taps.private": "privado", "taps.flagged": "{name} marca este tap", "taps.unused": "0 · ¿sin uso?",
 
   "health.missing": "Dependencias faltantes ({n})", "health.needs": "{pkg} necesita {deps}", "health.none": "Ninguna.",
   "health.orphans": "Huérfanos: candidatos para autoremove ({n})", "health.orphans_text": "Se instalaron como dependencias; ya nada los necesita.",
@@ -77,11 +77,14 @@ I18N.es = {
   "shell.tool": "Herramienta", "shell.from_brew": "De brew", "shell.then_point": "y luego apunta {file} a la copia de brew",
 
   "sec.package": "Paquete:", "sec.open_tap": "Abrir {name} en Taps", "sec.open": "Abrir {name}", "sec.fix": "Solución:",
-  "sec.if_expected": "Si es lo esperado:", "sec.not_setup": "secure-it no está configurado",
-  "sec.not_setup_text": "{link} es un escáner aparte, que se ejecuta como root, para la configuración de seguridad de macOS, la persistencia, los puertos en escucha y los paquetes instalados. Tras cada escaneo escribe {path}, y brewdash muestra esos hallazgos aquí, junto a los paquetes a los que afectan.",
-  "sec.unusable": "brewdash no pudo usar {path}: {error}",
-  "sec.from": "De {path}, escaneo del {time}. Solo se listan los hallazgos que no has aceptado.", "sec.unknown_time": "fecha desconocida",
-  "sec.nothing_open": "secure-it no informa nada pendiente.",
+  "sec.if_expected": "Si es lo esperado:",
+  "sec.unusable": "brewdash no pudo usar {path}: {error}", "sec.unknown_time": "fecha desconocida",
+  "plugin.not_installed": "{name} no está instalado",
+  "plugin.not_installed_text": "Tras cada escaneo {link} escribe {path}, y brewdash muestra esos hallazgos aquí, junto a los paquetes, taps y archivos de la shell a los que afectan. Para instalarlo:",
+  "plugin.from": "De {path}, escrito el {time}.", "plugin.no_report": "{name} aún no ha escrito {path}.",
+  "plugin.nothing_open": "{name} no informa nada pendiente.", "plugin.scan": "Escanear ahora",
+  "plugin.update_plugin": "Hay una versión antigua de {name} instalada, y este brewdash ya no lee su informe. Actualízalo y vuelve a escanear:",
+  "plugin.update_brewdash": "{name} escribe un informe más nuevo del que lee este brewdash. Actualiza brewdash en Ajustes.",
   "sev.critical": "crítico", "sev.high": "alto", "sev.medium": "medio", "sev.low": "bajo",
 
   "level.critical": "crítico", "level.warning": "advertencia", "level.info": "info",
@@ -96,7 +99,7 @@ I18N.es = {
   "att.synced": "carpetas sincronizadas al principio del PATH",
   "att.synced_text": "{names}: un archivo que llega por sincronización se ejecuta en lugar del comando del sistema con el mismo nombre.",
   "att.path": "problemas en el PATH", "att.path_text": "Entradas duplicadas, inexistentes u obsoletas en los archivos de inicio de tu shell.",
-  "att.findings": "hallazgos de secure-it", "att.report_unreadable": "no se puede leer el informe de secure-it",
+  "att.findings": "hallazgos de {name}", "att.report_unreadable": "no se puede leer el informe de {name}", "att.plugin_outdated": "hay que actualizar {name}",
   "att.exposed": "servicios accesibles desde la red", "att.exposed_text": "{names}: escuchan en todas las interfaces, no solo en este Mac.",
   "att.weak": "apps sin una firma real", "att.weak_text": "{names}: sin firmar, o firmadas ad-hoc sin ninguna identidad detrás.",
   "att.orphans": "huérfanos", "att.orphans_text": "Se instalaron como dependencias; ya nada los necesita. Autoremove los elimina.",
@@ -227,8 +230,8 @@ I18N.es = {
   "intro.taps.todo": "Quita (untap) los taps desde los que no hay nada instalado. Conserva un tap de terceros solo si confías en su dueño; una etiqueta <b>secure-it</b> significa que el escáner lo marcó.",
   "intro.health.what": "Lo que informa el propio brew: dependencias faltantes, paquetes obsoletos o deshabilitados, huérfanos, caché que cleanup puede liberar y la salida completa de <b>brew doctor</b>.",
   "intro.health.todo": "Empieza por arriba: las dependencias faltantes rompen paquetes ya, los obsoletos lo harán. Luego usa autoremove y cleanup para recuperar espacio en disco.",
-  "intro.security.what": "Hallazgos de <b>secure-it</b>, un escáner aparte que se ejecuta como root y revisa la configuración de macOS, los elementos de inicio, los puertos abiertos, los archivos de la shell y los paquetes. brewdash solo lee el informe que deja en tu carpeta de inicio.",
-  "intro.security.todo": "Lee cada hallazgo y corrígelo con el comando que se muestra, o acéptalo en secure-it si es lo esperado. brewdash copia los comandos para que los ejecutes en Terminal; nunca los ejecuta por su cuenta.",
+  "intro.plugin.what": "Hallazgos de <b>{name}</b>, una herramienta aparte. brewdash solo lee el informe que deja en tu carpeta de inicio.",
+  "intro.plugin.todo": "Lee cada hallazgo y corrígelo con el comando que se muestra, o acéptalo en {name} si es lo esperado. brewdash copia esos comandos para que los ejecutes en Terminal y nunca los ejecuta por su cuenta; solo ejecuta un escaneo que tú inicias.",
   "intro.apps.what": "Todas las apps de /Applications y ~/Applications: cómo llegaron (brew, App Store o a mano) y quién las firmó.",
   "intro.apps.todo": "<b>Pasar a brew</b> deja que Homebrew se haga cargo de una app que instalaste a mano, para que se actualice con todo lo demás. Revisa las apps marcadas como <b>sin firmar</b> o <b>ad-hoc</b>: nada garantiza quién las creó.",
   "intro.shell.what": "Las líneas de PATH y las herramientas que configuran los archivos de inicio de tu shell (.zshrc, .zprofile, .bashrc y similares).",
@@ -338,4 +341,6 @@ I18N.es = {
   "srv.plan.cleanup": "cleanup",
   "srv.plan.service": "{op} el servicio {name}", "srv.service.start": "iniciar", "srv.service.stop": "detener", "srv.service.restart": "reiniciar",
   "srv.plan.install": "instalar {name}",
+  "srv.plan.plugin_scan": "escaneo de {name}",
+  "srv.plugin.about.secure_it": "Un escáner aparte para la configuración de seguridad de macOS, la persistencia, los puertos en escucha y los paquetes instalados. Se ejecuta como root, cuando tú inicias un escaneo.",
 };

@@ -155,7 +155,7 @@ def build_model(info, outdated, services, taps, autoremove):
     return {"packages": sorted(pkgs.values(), key=lambda p: p["id"]), "taps": tap_list}
 
 
-# Advice, PATH suggestions and job titles. The UI gets each message twice: rendered here in English, and as
+# Advice, PATH suggestions, job titles and the plugin catalog's text. The UI gets each message twice: rendered here in English, and as
 # [key, args] so web/i18n can render it in another language; a key the UI's language does not have falls
 # back to the English text. Error details (an unreadable report, a failed lsof) are not here and stay English.
 MESSAGES = {
@@ -234,6 +234,9 @@ MESSAGES = {
     "service.stop": "stop",
     "service.restart": "restart",
     "plan.install": "install {name}",
+    "plan.plugin_scan": "{name} scan",
+    "plugin.about.secure_it": "A separate scanner for macOS security settings, persistence, listening ports and "
+                              "installed packages. It runs as root, when you start a scan.",
 }
 
 
@@ -454,27 +457,37 @@ def check_targets(targets, pkgs):
     return targets
 
 
-def plan_job(req, pkgs, apps=None, taps=None):
+def lookup(table, key):
+    """A request's JSON can carry a list where a name goes, and a list cannot be a key."""
+    return (table or {}).get(key) if isinstance(key, str) else None
+
+
+def plan_job(req, pkgs, apps=None, taps=None, plugins=None):
     """Turn an API request into (title, [argv...], snapshot?). Raises ValueError on bad input."""
-    title, cmds, snap = plan_job_msg(req, pkgs, apps, taps)
+    title, cmds, snap = plan_job_msg(req, pkgs, apps, taps, plugins)
     return render(title), cmds, snap
 
 
-def plan_job_msg(req, pkgs, apps=None, taps=None):
+def plan_job_msg(req, pkgs, apps=None, taps=None, plugins=None):
     """plan_job with the title as a message."""
     action = req.get("action")
+    if action == "plugin_scan":
+        plugin = lookup(plugins, req.get("plugin"))
+        if not plugin:
+            raise ValueError("only an installed plugin from brewdash's catalog can be scanned")
+        return msg("plan.plugin_scan", name=plugin["name"]), [list(plugin["scan"])], False
     if action == "untap":
         names = req.get("taps")
         if not isinstance(names, list) or not names or not all(isinstance(n, str) and n in (taps or ()) for n in names):
             raise ValueError("unknown tap in taps")
         return msg("plan.untap", names=", ".join(names)), [["brew", "untap", *names]], True
     if action == "adopt":
-        app = (apps or {}).get(req.get("app"))
+        app = lookup(apps, req.get("app"))
         if not app or app["source"] != "manual" or not app["cask"]:
             raise ValueError("only an app with a verified cask, installed outside brew and the App Store, can be adopted")
         return msg("plan.adopt", name=app["name"]), [["brew", "install", "--cask", "--adopt", app["cask"]]], False
     if action == "trash":
-        app = (apps or {}).get(req.get("app"))
+        app = lookup(apps, req.get("app"))
         # A cask's app goes through brew uninstall, or brew keeps a record of an app that is gone.
         if not app or app["source"] == "brew":
             raise ValueError("only an app installed outside brew can be moved to the Trash")
@@ -539,21 +552,33 @@ def authorize(path, headers, token, port):
     return True
 
 
-# ---------- secure-it findings ----------
+# ---------- plugins ----------
 
-SECURITY_SCHEMA = 1
+REPORT_SCHEMA = 2
+MANIFEST_SCHEMA = 1
 SEVERITIES = ("critical", "high", "medium", "low")
-ALERT_TEXT = ("check_id", "kind", "title", "detail", "remediation", "fix_command")
-IDENTITY_KEYS = ("exe", "plist", "tap")
-FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
+ALERT_TEXT = ("check_id", "title", "detail", "remediation", "fix_command", "accept_command")
+SUBJECT_KEY = {"path": "path", "tap": "name", "shell": None}
+PLUGIN_ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 BREW_FORMULA_PATH = re.compile(r"^(?:/opt/homebrew|/usr/local)/(?:Cellar|opt)/([^/]+)/")
 BREW_SERVICE_PLIST = re.compile(r"^homebrew\.mxcl\.(.+)\.plist$")
+SECURE_IT = "/usr/local/bin/secure-it"
+# Only a plugin in this catalog can be started from brewdash: its command is here, never in a file the user can write.
+PLUGIN_CATALOG = (
+    {"id": "secure-it", "name": "secure-it", "homepage": "https://github.com/lemiorhan/brewdash-plugin-security",
+     "about": "plugin.about.secure_it", "report": "~/secure-it/report.json", "exe": SECURE_IT,
+     "scan": ["/usr/bin/sudo", "-A", SECURE_IT, "scan", "--exit-zero"],
+     "install": ["git clone https://github.com/lemiorhan/brewdash-plugin-security.git",
+                 "cd brewdash-plugin-security && sudo ./install.sh"],
+     # Shown only for a secure-it that writes an older report, and those were cloned before the repo was renamed.
+     "update": ["cd secure-it && git pull && sudo ./install.sh"]},
+)
 
 
-def load_security(path):
-    """secure-it's report.json. The user can write that file, so every field is
+def load_report(path):
+    """A plugin's report. The user can write that file, so every field is
     checked for type and the page escapes all of it; nothing in it becomes a job."""
-    out = {"path": str(path), "found": False, "error": None, "generated_at": None, "alerts": []}
+    out = {"path": str(path), "found": False, "error": None, "outdated": None, "generated_at": None, "alerts": []}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -561,40 +586,83 @@ def load_security(path):
     except (OSError, ValueError, RecursionError) as e:
         return {**out, "found": True, "error": f"could not read it: {e}"}
     out["found"] = True
-    if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != SECURITY_SCHEMA:
-        schema = data.get("schema") if isinstance(data, dict) else None
-        return {**out, "error": f"it has schema {schema!r}; this brewdash reads schema {SECURITY_SCHEMA}"}
+    schema = data.get("schema") if isinstance(data, dict) else None
+    if type(schema) is not int or schema != REPORT_SCHEMA:
+        outdated = None if type(schema) is not int else "plugin" if schema < REPORT_SCHEMA else "brewdash"
+        return {**out, "outdated": outdated, "error": f"it has schema {schema!r}; this brewdash reads schema {REPORT_SCHEMA}"}
     out["generated_at"] = data["generated_at"] if isinstance(data.get("generated_at"), str) else None
     for a in data.get("alerts") if isinstance(data.get("alerts"), list) else []:
         if not isinstance(a, dict) or a.get("severity") not in SEVERITIES or not isinstance(a.get("title"), str):
             continue
         rec = {k: a[k] if isinstance(a.get(k), str) else None for k in ALERT_TEXT}
         rec["severity"] = a["severity"]
-        ident = a["identity"] if isinstance(a.get("identity"), dict) else {}
-        # Only what link_alert reads: a nested value that loads can still be too deep to encode.
-        rec["identity"] = {k: ident[k] for k in IDENTITY_KEYS if isinstance(ident.get(k), str)}
-        rec["fingerprint"] = a["fingerprint"] if FINGERPRINT_RE.fullmatch(str(a.get("fingerprint"))) else None
+        rec["subject"] = clean_subject(a.get("subject"))
         out["alerts"].append(rec)
     out["alerts"].sort(key=lambda a: SEVERITIES.index(a["severity"]))
     return out
 
 
-def link_alert(alert, pkg_ids, tap_names):
+def clean_subject(subject):
+    """Only what link_subject reads: a nested value that loads can still be too deep to encode."""
+    kind = subject.get("kind") if isinstance(subject, dict) else None
+    if not isinstance(kind, str) or kind not in SUBJECT_KEY:
+        return None
+    key = SUBJECT_KEY[kind]
+    if key is None:
+        return {"kind": subject["kind"]}
+    return {"kind": subject["kind"], key: subject[key]} if isinstance(subject.get(key), str) else None
+
+
+def link_subject(subject, pkg_ids, tap_names):
     """Where in brewdash an alert can be acted on: a package, a tap, the Shell tab, or nowhere."""
-    ident, check = alert["identity"], alert["check_id"]
-    if check == "exposure.listening":
-        m = BREW_FORMULA_PATH.match(str(ident.get("exe") or ""))
-        if m and "f:" + m.group(1) in pkg_ids:
-            return {"type": "package", "id": "f:" + m.group(1)}
-    if check == "persistence.launchd":
-        m = BREW_SERVICE_PLIST.match(Path(str(ident.get("plist") or "")).name)
-        if m and "f:" + m.group(1) in pkg_ids:
-            return {"type": "package", "id": "f:" + m.group(1)}
-    if check == "packages.brew_taps" and isinstance(ident.get("tap"), str) and ident["tap"] in tap_names:
-        return {"type": "tap", "name": ident["tap"]}
-    if check in ("persistence.path_shadow", "persistence.shell_rc"):
-        return {"type": "tab", "tab": "shell"}
-    return None
+    if subject is None:
+        return None
+    if subject["kind"] == "path":
+        m = BREW_FORMULA_PATH.match(subject["path"]) or BREW_SERVICE_PLIST.match(Path(subject["path"]).name)
+        return {"type": "package", "id": "f:" + m.group(1)} if m and "f:" + m.group(1) in pkg_ids else None
+    if subject["kind"] == "tap":
+        return {"type": "tap", "name": subject["name"]} if subject["name"] in tap_names else None
+    return {"type": "tab", "tab": "shell"}
+
+
+def under_home(path, home):
+    return str(Path(home) / path[2:]) if path.startswith("~/") else path
+
+
+def catalog_plugin(entry, home):
+    installed = os.path.exists(entry["exe"])
+    about = msg(entry["about"])
+    return {"id": entry["id"], "name": entry["name"], "homepage": entry["homepage"], "about": render(about), "about_msg": about,
+            "source": "catalog", "path": under_home(entry["report"], home), "error": None, "installed": installed,
+            "scan": installed, "install": entry["install"], "update": entry["update"]}
+
+
+def load_manifest(path, home):
+    """A plugin from outside the catalog. Its installer wrote this file into the user's home, so it is as
+    untrusted as a report: brewdash reads no command from it, and links only an https homepage."""
+    out = {"id": path.stem, "name": path.stem, "homepage": None, "about": None, "about_msg": None, "source": "manifest", "path": None,
+           "error": None, "installed": True, "scan": False, "install": [], "update": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as e:
+        return {**out, "error": f"could not read its manifest {path}: {e}"}
+    schema = data.get("schema") if isinstance(data, dict) else None
+    if type(schema) is not int or schema != MANIFEST_SCHEMA:
+        return {**out, "error": f"its manifest {path} has schema {schema!r}; this brewdash reads schema {MANIFEST_SCHEMA}"}
+    if isinstance(data.get("name"), str) and data["name"].strip():
+        out["name"] = data["name"].strip()
+    if isinstance(data.get("homepage"), str) and data["homepage"].startswith("https://"):
+        out["homepage"] = data["homepage"]
+    report = data.get("report")
+    if not isinstance(report, str) or not report.startswith(("/", "~/")):
+        return {**out, "error": f"its manifest {path} names no report; give an absolute path or one under ~/"}
+    return {**out, "path": under_home(report, home)}
+
+
+def manifests(folder, home, taken):
+    """The manifests in `folder`, by id; a catalog id is taken, so a manifest cannot stand in for that plugin."""
+    return [load_manifest(f, home) for f in sorted(Path(folder).glob("*.json"))
+            if PLUGIN_ID_RE.fullmatch(f.stem) and f.stem not in taken]
 
 
 # ---------- listening ports, app signatures ----------
@@ -728,13 +796,14 @@ class Brew:
 
 
 class Store:
-    def __init__(self, brew, home=None, app_dirs=None, sysrun=run_command):
+    def __init__(self, brew, home=None, app_dirs=None, sysrun=run_command, plugins_dir=None, catalog=PLUGIN_CATALOG):
         self.brew = brew
         self.home = home or str(Path.home())
         self.app_dirs = APP_DIRS if app_dirs is None else app_dirs
         self.sysrun = sysrun
-        self.security_path = Path(self.home) / "secure-it" / "report.json"
-        self._security = (None, None)
+        self.plugins_dir = plugins_dir
+        self.catalog = catalog
+        self._reports = {}
         self.apps = None
         self.shell = None
         self.ports = None
@@ -878,33 +947,51 @@ class Store:
         p = subprocess.run(["du", "-sk", *id_by_path], capture_output=True, text=True)
         return parse_du(p.stdout, id_by_path)
 
-    def security(self):
-        """secure-it's report, read again only when the file changed. Links are
-        made on every call, against the packages and taps brewdash has now."""
+    def _report(self, path):
+        """A plugin's report, read again only when the file changed."""
         try:
-            st = self.security_path.stat()
+            st = Path(path).stat()
             key = (st.st_mtime_ns, st.st_size)
         except OSError:
             key = None
         with self.lock:
-            cached_key, report = self._security
-        fresh = load_security(self.security_path) if report is None or key != cached_key else None
+            cached_key, report = self._reports.get(path, (None, None))
+        fresh = load_report(path) if report is None or key != cached_key else None
         with self.lock:
-            cached_key, report = self._security
+            cached_key, report = self._reports.get(path, (None, None))
             if fresh and (report is None or key != cached_key):
                 report = {**fresh, "seq": report["seq"] + 1 if report else 1}
-                self._security = (key, report)
+                self._reports[path] = (key, report)
+        return report
+
+    def plugins(self):
+        """The catalog's plugins, then the manifests in plugins_dir. Links are made on
+        every call, against the packages and taps brewdash has now."""
+        entries = [catalog_plugin(c, self.home) for c in self.catalog]
+        if self.plugins_dir:
+            entries += manifests(self.plugins_dir, self.home, {e["id"] for e in entries})
+        with self.lock:
             pkg_ids = {p["id"] for p in self.model["packages"]} if self.model else set()
             taps = {t["name"] for t in self.model["taps"]} if self.model else set()
-        return {**report, "alerts": [{**a, "link": link_alert(a, pkg_ids, taps)} for a in report["alerts"]]}
+        out = []
+        for e in entries:
+            if e["path"] is None:
+                out.append({**e, "found": False, "outdated": None, "generated_at": None, "alerts": [], "seq": 0})
+                continue
+            r = self._report(e["path"])
+            out.append({**e, **r, "alerts": [{**a, "link": link_subject(a["subject"], pkg_ids, taps)} for a in r["alerts"]]})
+        return out
+
+    def scannable(self):
+        return {c["id"]: c for c in self.catalog if os.path.exists(c["exe"])}
 
     def snapshot(self):
-        security = self.security()
+        plugins = self.plugins()
         with self.lock:
             return {"version": self.version, "refreshing": self.refreshing, "error": self.error,
                     "last_update": self.last_update, "model": self.model,
                     "sizes": self.sizes, "health": self.health, "apps": self.apps, "shell": self.shell,
-                    "ports": self.ports, "security": security}
+                    "ports": self.ports, "plugins": plugins}
 
 
 class Runner:
@@ -1522,11 +1609,13 @@ def make_handler(store, runner, brew, token, port_ref, export, updater):
                     pkgs = store.by_id()
                     return self._send(200, removal_impact(pkgs, check_targets(body.get("targets"), pkgs)))
                 if path == "/api/plan":
-                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id(), store.tap_names())
+                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id(), store.tap_names(),
+                                                     store.scannable())
                     return self._send(200, {"title": render(title), "title_msg": title,
                                             "commands": [shlex.join(c) for c in cmds], "snapshot": snap})
                 if path == "/api/jobs":
-                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id(), store.tap_names())
+                    title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id(), store.tap_names(),
+                                                     store.scannable())
                     return self._send(201, runner.submit(render(title), cmds, snap, title))
                 if path == "/api/list":
                     if body.get("op") == "add":
@@ -1561,10 +1650,10 @@ def make_handler(store, runner, brew, token, port_ref, export, updater):
 
 
 def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True, home=None, app_dirs=None,
-          sysrun=run_command, updater=None):
+          sysrun=run_command, updater=None, catalog=PLUGIN_CATALOG):
     brew = brew or Brew(askpass=write_askpass(state_dir))
     updater = updater or Updater(state_dir, read_installed())
-    store = Store(brew, home, app_dirs, sysrun)
+    store = Store(brew, home, app_dirs, sysrun, plugins_dir=Path(state_dir) / "plugins", catalog=catalog)
     runner = Runner(brew, store, state_dir)
     token = secrets.token_urlsafe(24)
     port_ref = [port]

@@ -23,10 +23,20 @@ const S = {
   list: { items: [], brewfile: "" },
 };
 
-const TABS = ["overview", "requested", "deps", "casks", "services", "taps", "health", "security", "apps", "shell", "history",
+const TABS = ["overview", "requested", "deps", "casks", "services", "taps", "health", "apps", "shell", "history",
   "install", "export", "settings"];
 const GROUP_STARTS = new Set(["requested", "health", "history", "settings"]);
-const tabLabel = (k) => t("tab." + k);
+const PLUGIN_TAB = "plugin-";
+const plugins = () => S.snap?.plugins || [];
+const pluginOf = (tab) => plugins().find((p) => PLUGIN_TAB + p.id === tab);
+const tabs = () => {
+  const at = TABS.indexOf("history");
+  return [...TABS.slice(0, at), ...plugins().map((p) => PLUGIN_TAB + p.id), ...TABS.slice(at)];
+};
+// Before the first state arrives a plugin tab from the URL has only its id to go by.
+const tabLabel = (k) => k.startsWith(PLUGIN_TAB) ? pluginOf(k)?.name ?? k.slice(PLUGIN_TAB.length) : t("tab." + k);
+const tabHtml = (k) => k.startsWith(PLUGIN_TAB) ? esc(tabLabel(k)) : tabLabel(k);
+const knownTab = (k) => TABS.includes(k) || (k?.startsWith(PLUGIN_TAB) && (!S.snap || pluginOf(k))) ? k : "overview";
 
 // ---------- formatting ----------
 
@@ -62,8 +72,9 @@ async function loadState() {
     const snap = await api("/api/state");
     $("#error").classList.toggle("hidden", !snap.error);
     $("#error").textContent = snap.error ? t("error.brew", { error: snap.error }) : "";
-    if (snap.version === S.version && snap.refreshing === S.snap?.refreshing && snap.security?.seq === S.snap?.security?.seq) return;
+    if (snap.version === S.version && snap.refreshing === S.snap?.refreshing && pluginsKey(snap) === pluginsKey(S.snap)) return;
     S.snap = snap; S.version = snap.version;
+    S.tab = knownTab(S.tab);
     S.pkgs = new Map((snap.model?.packages || []).map((p) => [p.id, p]));
     for (const id of [...S.selected]) if (!itemFor(id)) S.selected.delete(id);
     if (S.current && !S.pkgs.has(S.current)) S.current = null;
@@ -82,10 +93,10 @@ async function loadList(change) {
   if (S.tab === "export") renderExport();
 }
 
+const pluginsKey = (snap) => JSON.stringify(snap?.plugins || []);
 const appsList = () => S.snap?.apps?.apps || [];
-const alerts = () => S.snap?.security?.alerts || [];
 const portsOf = (id) => S.snap?.ports?.by_id?.[id] || [];
-const alertsFor = (type, key) => alerts().filter((a) => a.link?.type === type && (a.link.id === key || a.link.name === key));
+const linkedTo = (list, type, key) => list.filter((a) => a.link?.type === type && (a.link.id === key || a.link.name === key));
 
 // The Brewfile line an id stands for, or null when it cannot go into a Brewfile.
 function itemFor(id) {
@@ -116,7 +127,7 @@ function counts() {
     taps: S.snap?.model?.taps?.length || 0,
     apps: S.snap?.apps ? appsList().length : null,
     shell: S.snap?.shell ? (S.snap.shell.path || []).filter((e) => e.issue).length : null,
-    security: S.snap?.security?.found ? alerts().length : null,
+    ...Object.fromEntries(plugins().map((p) => [PLUGIN_TAB + p.id, p.found ? p.alerts.length : null])),
     export: S.list.items.length,
     outdated: all.filter((p) => p.outdated).length,
     upgradable: all.filter(upgradable).length,
@@ -147,8 +158,9 @@ function renderHeader() {
 function renderTabs() {
   const c = counts();
   $("#page-title").textContent = tabLabel(S.tab);
-  $("#tabs").innerHTML = TABS.map((k) => (GROUP_STARTS.has(k) ? "<hr>" : "") +
-    `<button data-tab="${k}" class="${S.tab === k ? "active" : ""}">${tabLabel(k)}${c[k] != null ? `<span class="count">${c[k]}</span>` : ""}</button>`
+  const firstPlugin = PLUGIN_TAB + plugins()[0]?.id;
+  $("#tabs").innerHTML = tabs().map((k) => (GROUP_STARTS.has(k) || k === firstPlugin ? "<hr>" : "") +
+    `<button data-tab="${esc(k)}" class="${S.tab === k ? "active" : ""}">${tabHtml(k)}${c[k] != null ? `<span class="count">${c[k]}</span>` : ""}</button>`
   ).join("");
 }
 
@@ -248,7 +260,8 @@ function renderDetail() {
     </div>
     <p>${esc(p.desc || t("detail.no_desc"))}</p>
     ${renderAdvice(p)}
-    ${alertsFor("package", p.id).length ? `<div class="detail-section"><h4>${t("detail.findings")}</h4>${alertsFor("package", p.id).map(alertCard).join("")}</div>` : ""}
+    ${plugins().map((pl) => [pl, linkedTo(pl.alerts, "package", p.id)]).filter(([, hits]) => hits.length).map(([pl, hits]) =>
+      `<div class="detail-section"><h4>${t("detail.findings", { name: esc(pl.name) })}</h4>${hits.map(alertCard).join("")}</div>`).join("")}
     <div class="kv">
       ${p.kind === "cask" && p.display_name !== p.name ? `<div>${t("detail.app")}</div><div>${esc(p.display_name)}</div>` : ""}
       <div>${t("col.version")}</div><div class="mono">${esc(p.version)}${p.outdated ? ` → <b style="color:var(--accent)">${esc(p.latest)}</b>` : ""}</div>
@@ -359,7 +372,7 @@ function replaceUrl() {
 
 function applyUrl() {
   const p = new URLSearchParams(location.hash.slice(1));
-  S.tab = TABS.includes(p.get("tab")) ? p.get("tab") : "overview";
+  S.tab = knownTab(p.get("tab"));
   S.current = p.get("pkg");
   if (S.snap?.model && !S.pkgs.has(S.current)) S.current = null;
   S.flags = new Set(p.get("flags")?.split(",").filter((f) => FLAGS.some(([k]) => k === f)));
@@ -456,7 +469,7 @@ function renderSettings() {
 function renderTaps() {
   const taps = S.snap?.model?.taps || [];
   $("#content").innerHTML = `<table><thead><tr><th></th><th>${t("detail.tap")}</th><th>${t("taps.remote")}</th><th class="num">${t("taps.installed")}</th><th class="num">${t("taps.formulae")}</th><th class="num">${t("tab.casks")}</th><th>${t("taps.last_commit")}</th></tr></thead><tbody>
-    ${taps.map((tp) => `<tr><td><input type="checkbox" data-sel="t:${esc(tp.name)}" ${S.selected.has("t:" + tp.name) ? "checked" : ""}></td><td class="name">${esc(tp.name)}${tp.official ? `<span class="badge b-service">${t("taps.official")}</span>` : ""}${tp.private ? `<span class="badge b-pinned">${t("taps.private")}</span>` : ""}${alertsFor("tap", tp.name).length ? `<span class="badge b-missing" data-tab="security" title="${t("taps.flagged")}">secure-it</span>` : ""}</td>
+    ${taps.map((tp) => `<tr><td><input type="checkbox" data-sel="t:${esc(tp.name)}" ${S.selected.has("t:" + tp.name) ? "checked" : ""}></td><td class="name">${esc(tp.name)}${tp.official ? `<span class="badge b-service">${t("taps.official")}</span>` : ""}${tp.private ? `<span class="badge b-pinned">${t("taps.private")}</span>` : ""}${plugins().filter((pl) => linkedTo(pl.alerts, "tap", tp.name).length).map((pl) => `<span class="badge b-missing" data-tab="${PLUGIN_TAB}${esc(pl.id)}" title="${t("taps.flagged", { name: esc(pl.name) })}">${esc(pl.name)}</span>`).join("")}</td>
       <td class="mono muted">${esc(tp.remote || "")}</td><td class="num">${tp.installed.length || `<span class="muted">${t("taps.unused")}</span>`}</td>
       <td class="num">${tp.formula_count}</td><td class="num">${tp.cask_count}</td><td class="muted">${esc(tp.last_commit || "")}</td></tr>
       ${tp.installed.length && !tp.official ? `<tr><td></td><td></td><td colspan="5"><div class="chips">${tp.installed.map(chip).join("")}</div></td></tr>` : ""}`).join("")}
@@ -551,7 +564,7 @@ function renderShell() {
     </tbody></table>`;
 }
 
-// ---------- secure-it ----------
+// ---------- plugins ----------
 
 const SEVERITY_LEVEL = { critical: "critical", high: "critical", medium: "warning", low: "info" };
 
@@ -568,31 +581,44 @@ const sevLabel = (s) => SEVERITIES.includes(s) ? t("sev." + s) : s;
 
 // Commands are shown to copy, never run: brewdash does not run what a file in the user's home tells it to.
 function alertCard(a) {
-  const accept = a.fingerprint ? `sudo secure-it accept ${a.fingerprint.slice(0, 12)} --note "why this is fine"` : "";
   return `<div class="alert sev-${esc(a.severity)}">
     <div><span class="sev">${esc(sevLabel(a.severity))}</span> <b>${esc(a.title)}</b> <span class="muted mono">${esc(a.check_id)}</span></div>
     ${a.detail ? `<div class="muted" style="margin-top:4px">${esc(a.detail)}</div>` : ""}
     ${a.remediation ? `<div style="margin-top:6px">${esc(a.remediation)}</div>` : ""}
     ${a.fix_command ? `<div class="cmd"><span class="muted">${t("sec.fix")}</span><pre>${esc(a.fix_command)}</pre><button class="small" data-copytext="${esc(a.fix_command)}">${t("btn.copy")}</button></div>` : ""}
-    ${accept ? `<div class="cmd"><span class="muted">${t("sec.if_expected")}</span><pre>${esc(accept)}</pre><button class="small" data-copytext="${esc(accept)}">${t("btn.copy")}</button></div>` : ""}
+    ${a.accept_command ? `<div class="cmd"><span class="muted">${t("sec.if_expected")}</span><pre>${esc(a.accept_command)}</pre><button class="small" data-copytext="${esc(a.accept_command)}">${t("btn.copy")}</button></div>` : ""}
     ${alertLink(a.link)}</div>`;
 }
 
-function renderSecurity() {
-  const sec = S.snap?.security;
-  if (!sec?.found) {
-    $("#content").innerHTML = `<div class="card"><h3>${t("sec.not_setup")}</h3>
-      <p>${t("sec.not_setup_text", { link: `<a href="https://github.com/lemiorhan/secure-it" target="_blank" rel="noopener">secure-it</a>`, path: `<span class="mono">${esc(sec?.path || "~/secure-it/report.json")}</span>` })}</p>
-      <pre>git clone https://github.com/lemiorhan/secure-it.git\ncd secure-it && sudo ./install.sh\nsudo secure-it scan</pre></div>`;
+const commandLines = (lines) => `<pre>${lines.map(esc).join("\n")}</pre>`;
+
+function pluginProblem(p) {
+  if (!p.error) return "";
+  if (p.outdated === "plugin") return `<div class="warn">${t("plugin.update_plugin", { name: esc(p.name) })}${p.update.length ? commandLines(p.update) : ""}</div>`;
+  if (p.outdated === "brewdash") return `<div class="warn">${t("plugin.update_brewdash", { name: esc(p.name) })}</div>`;
+  return `<div class="warn">${t("sec.unusable", { path: esc(p.path || p.id), error: esc(p.error) })}</div>`;
+}
+
+function renderPlugin() {
+  const p = pluginOf(S.tab);
+  const name = esc(p.name);
+  const path = `<span class="mono">${esc(p.path || "")}</span>`;
+  if (!p.found && !p.installed) {
+    const link = p.homepage ? `<a href="${esc(p.homepage)}" target="_blank" rel="noopener">${name}</a>` : name;
+    $("#content").innerHTML = `<div class="card"><h3>${t("plugin.not_installed", { name })}</h3>
+      ${p.about ? `<p>${tm(p.about_msg, p.about)}</p>` : ""}
+      <p>${t("plugin.not_installed_text", { link, path })}</p>${commandLines(p.install)}</div>`;
     return;
   }
-  const list = alerts();
-  const by = (s) => list.filter((a) => a.severity === s).length;
+  const by = (s) => p.alerts.filter((a) => a.severity === s).length;
+  const from = !p.path ? "" : p.found ? t("plugin.from", { path, time: esc(p.generated_at || t("sec.unknown_time")) }) : t("plugin.no_report", { name, path });
   $("#content").innerHTML = `
-    ${sec.error ? `<div class="warn">${t("sec.unusable", { path: esc(sec.path), error: esc(sec.error) })}</div>` : ""}
-    <p class="muted">${t("sec.from", { path: `<span class="mono">${esc(sec.path)}</span>`, time: esc(sec.generated_at || t("sec.unknown_time")) })}
+    ${pluginProblem(p)}
+    <div class="btnrow"><p class="muted">${from}
+      ${p.homepage ? `<a href="${esc(p.homepage)}" target="_blank" rel="noopener">${t("detail.homepage")}</a>` : ""}
       ${SEVERITIES.map((s) => by(s) ? `<span class="sev-count sev-${s}">${by(s)} ${sevLabel(s)}</span>` : "").join(" ")}</p>
-    ${list.length ? list.map(alertCard).join("") : sec.error ? "" : `<p class="ok">✔ ${t("sec.nothing_open")}</p>`}`;
+      ${p.scan ? `<button class="small accent" data-plugin-scan="${esc(p.id)}">${t("plugin.scan")}</button>` : ""}</div>
+    ${p.alerts.length ? p.alerts.map(alertCard).join("") : p.found && !p.error ? `<p class="ok">✔ ${t("plugin.nothing_open", { name })}</p>` : ""}`;
 }
 
 // ---------- overview ----------
@@ -627,11 +653,13 @@ function attention() {
   const synced = pathIssues.filter((e) => e.issue === "synced");
   add("warning", synced.length, t("att.synced", { n: synced.length }), t("att.synced_text", { names: synced.map((e) => e.raw).join(", ") }), "shell");
   add("warning", pathIssues.length - synced.length, t("att.path", { n: pathIssues.length - synced.length }), t("att.path_text"), "shell");
-  for (const level of ["critical", "warning", "info"]) {
-    const hits = alerts().filter((a) => SEVERITY_LEVEL[a.severity] === level);
-    add(level, hits.length, t("att.findings", { n: hits.length }), hits.slice(0, 3).map((a) => a.title).join("; ") + (hits.length > 3 ? "; …" : ""), "security");
+  for (const p of plugins()) {
+    for (const level of ["critical", "warning", "info"]) {
+      const hits = p.alerts.filter((a) => SEVERITY_LEVEL[a.severity] === level);
+      add(level, hits.length, t("att.findings", { n: hits.length, name: p.name }), hits.slice(0, 3).map((a) => a.title).join("; ") + (hits.length > 3 ? "; …" : ""), PLUGIN_TAB + p.id);
+    }
+    if (p.error) add("warning", true, t(p.outdated === "plugin" ? "att.plugin_outdated" : "att.report_unreadable", { name: p.name }), p.error, PLUGIN_TAB + p.id);
   }
-  if (S.snap?.security?.error) add("warning", true, t("att.report_unreadable"), S.snap.security.error, "security");
   const exposed = all.filter((p) => portsOf(p.id).some((e) => e.exposed));
   add("warning", exposed.length, t("att.exposed", { n: exposed.length }), t("att.exposed_text", { names: names(exposed) }), "services");
   const weak = appsList().filter(weakSignature);
@@ -1094,6 +1122,9 @@ function renderBulk() {
 const JOB_STATUSES = ["queued", "running", "succeeded", "failed"];
 const jobStatus = (s) => JOB_STATUSES.includes(s) ? t("job.status." + s) : s;
 
+// sudo -A asks through brewdash's password dialog, and a Terminal has no such helper.
+const inTerminal = (cmd) => cmd.replace(/^\/usr\/bin\/sudo -A /, "sudo ");
+
 function renderJobs() {
   const active = S.jobs.filter((j) => j.status === "queued" || j.status === "running").length;
   $("#jobs-title").innerHTML = `${t("jobs.title")} ${active ? `<span class="st st-running">${t("jobs.active", { n: active })}</span>` : `<span class="muted">${S.jobs.length}</span>`}`;
@@ -1104,7 +1135,7 @@ function renderJobs() {
     <div class="job"><div class="job-head" data-job="${j.id}"><span class="st st-${j.status}">${esc(jobStatus(j.status))}</span><b>${esc(tm(j.title_msg, j.title))}</b>
       <span class="muted">${new Date(j.created * 1000).toLocaleTimeString(LANG)}</span>${j.snapshot ? `<span class="muted mono">${t("jobs.snapshot", { path: esc(j.snapshot) })}</span>` : ""}</div>
       ${j.status === "failed" ? `<div class="terminal-hint">${j.needs_terminal ? t("jobs.needs_sudo") : t("jobs.failed")}
-        <pre style="margin-top:6px">${j.commands.map(esc).join("\n")}</pre><button class="small" style="margin-top:6px" data-copy="${j.id}">${t("jobs.copy")}</button></div>` : ""}
+        <pre style="margin-top:6px">${j.commands.map((c) => esc(inTerminal(c))).join("\n")}</pre><button class="small" style="margin-top:6px" data-copy="${j.id}">${t("jobs.copy")}</button></div>` : ""}
       ${S.openJobs.has(j.id) ? `<pre data-log="${j.id}">${esc(j.log.join("\n")) || t("jobs.waiting")}</pre>` : ""}</div>`).join("") || `<p class="muted">${t("jobs.empty")}</p>`;
   body.querySelectorAll("pre[data-log]").forEach((pre) => { if (scroll[pre.dataset.log] !== false) pre.scrollTop = pre.scrollHeight; });
 }
@@ -1113,10 +1144,12 @@ function renderJobs() {
 
 function renderIntro() {
   if (S.tab === "overview") { $("#intro").innerHTML = hero(); return; }
-  const what = `<p>${t(`intro.${S.tab}.what`)}</p>`, todo = `<p><b>${t("intro.what_to_do")}</b> ${t(`intro.${S.tab}.todo`)}</p>`;
+  const plugin = S.tab.startsWith(PLUGIN_TAB) ? { name: esc(tabLabel(S.tab)) } : null;
+  const what = `<p>${plugin ? t("intro.plugin.what", plugin) : t(`intro.${S.tab}.what`)}</p>`;
+  const todo = `<p><b>${t("intro.what_to_do")}</b> ${plugin ? t("intro.plugin.todo", plugin) : t(`intro.${S.tab}.todo`)}</p>`;
   $("#intro").innerHTML = macWindow
     ? `<details class="intro"${S.introOpen ? " open" : ""}><summary>${what}</summary>${todo}</details>`
-    : `<div class="intro"><h2>${tabLabel(S.tab)}</h2>${what}${todo}</div>`;
+    : `<div class="intro"><h2>${tabHtml(S.tab)}</h2>${what}${todo}</div>`;
 }
 
 function hero() {
@@ -1126,7 +1159,7 @@ function hero() {
       <ul>
         <li>${t("hero.understand")}</li>
         <li>${t("hero.clean")}</li>
-        <li>${t("hero.safe", { link: `<a href="https://github.com/lemiorhan/secure-it" target="_blank" rel="noopener">secure-it</a>` })}</li>
+        <li>${t("hero.safe", { link: `<a href="https://github.com/lemiorhan/brewdash-plugin-security" target="_blank" rel="noopener">secure-it</a>` })}</li>
         <li>${t("hero.move")}</li>
       </ul></div>
     <div class="hero-side"><h4>${t("hero.how")}</h4>
@@ -1138,8 +1171,9 @@ function renderView() {
   renderIntro();
   if (S.tab !== "settings" && !S.snap?.model) { $("#content").innerHTML = `<p class="loading">${S.snap?.error ? t("view.failed") : t("view.reading")}</p>`; return; }
   if (PKG_TABS[S.tab]) renderPackages();
+  else if (S.tab.startsWith(PLUGIN_TAB)) renderPlugin();
   else ({ overview: renderOverview, services: renderServices, taps: renderTaps, health: renderHealth, history: renderHistory, install: renderInstall,
-    apps: renderApps, shell: renderShell, export: renderExport, security: renderSecurity, settings: renderSettings })[S.tab]();
+    apps: renderApps, shell: renderShell, export: renderExport, settings: renderSettings })[S.tab]();
 }
 
 function renderAll() {
@@ -1184,6 +1218,7 @@ document.addEventListener("click", (e) => {
   }
   if (d("unlist")) { const [type, ...n] = d("unlist").split(":"); loadList({ op: "remove", items: [{ type, name: n.join(":") }] }); return; }
   if (d("adopt")) { confirmAction({ action: "adopt", app: d("adopt") }); return; }
+  if (d("plugin-scan")) { confirmAction({ action: "plugin_scan", plugin: d("plugin-scan") }); return; }
   if (t.matches("[data-channel]")) { loadSettings({ path: "/api/settings", body: { channel: t.dataset.channel } }); return; }
   if (t.matches("[data-auto]")) { loadSettings({ path: "/api/settings", body: { auto: t.checked } }); return; }
   if (d("update")) { loadSettings({ path: "/api/update", body: { op: d("update") } }); return; }
@@ -1196,7 +1231,7 @@ document.addEventListener("click", (e) => {
   if (d("preview")) { const [k, ...n] = d("preview").split(":"); doPreview(k, n.join(":")); return; }
   if (d("install")) { const [k, ...n] = d("install").split(":"); confirmAction({ action: "install", kind: k, name: n.join(":") }); return; }
   if (t.id === "search-go") { doSearch(); return; }
-  if (d("copy")) { const j = S.jobs.find((x) => x.id === +d("copy")); navigator.clipboard.writeText(j.commands.join(" && ")); t.textContent = copiedLabel(); return; }
+  if (d("copy")) { const j = S.jobs.find((x) => x.id === +d("copy")); navigator.clipboard.writeText(j.commands.map(inTerminal).join(" && ")); t.textContent = copiedLabel(); return; }
   if (t.matches("[data-copytext]")) { navigator.clipboard.writeText(t.dataset.copytext); t.textContent = copiedLabel(); return; }
   if (d("job")) { const id = +d("job"); S.openJobs.has(id) ? S.openJobs.delete(id) : S.openJobs.add(id); loadJobs(); return; }
   if (t.closest("#jobs-head")) { $("#jobs").classList.toggle("collapsed"); return; }

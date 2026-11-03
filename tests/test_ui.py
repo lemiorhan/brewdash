@@ -15,8 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import brewdash  # noqa: E402
-from test_brewdash import (APP_CASKS, APP_ROOT, SHA_A, SHA_B, SHA_C, FakeBrew, FakeGitHub, cask, formula,  # noqa: E402
-                           make_app, wait_for, zip_url)
+from test_brewdash import (APP_CASKS, APP_ROOT, SHA_A, SHA_B, SHA_C, FakeBrew, FakeGitHub, cask, catalog,  # noqa: E402
+                           formula, make_app, wait_for, zip_url)
 
 try:
     from playwright.sync_api import sync_playwright
@@ -61,18 +61,21 @@ def ui_sysrun(argv, timeout=60):
     return 1, "p77\nf5\nn*:8080\nf6\nn127.0.0.1:9000\n" if "-iTCP" in argv else "", ""
 
 
-FP = "0123456789abcdef" * 4
-REPORT = {"schema": 1, "generated_at": "2026-11-01T09:00:00", "alerts": [
-    {"fingerprint": "f" * 64, "check_id": "persistence.path_shadow", "kind": "shadowed", "severity": "low",
+ACCEPT = 'sudo secure-it accept 0123456789 --note "neden"'
+REPORT = {"schema": 2, "generated_at": "2026-11-01T09:00:00", "alerts": [
+    {"check_id": "persistence.path_shadow", "severity": "low",
      "title": "~/bin shadows 1 system command", "detail": "git", "remediation": "Move it after $PATH.",
-     "fix_command": None, "identity": {"dir": "~/bin"}},
-    {"fingerprint": FP, "check_id": "exposure.listening", "kind": "brew_listener", "severity": "high",
+     "fix_command": None, "accept_command": 'sudo secure-it accept ffffffffff --note "neden"', "subject": {"kind": "shell"}},
+    {"check_id": "exposure.listening", "severity": "high",
      "title": "jq listens on *:8080", "detail": "pid 77", "remediation": "Stop the service.",
-     "fix_command": "brew services stop jq", "identity": {"exe": "/opt/homebrew/Cellar/jq/1.7/bin/jq"}},
-    {"fingerprint": "not-a-fingerprint", "check_id": "packages.brew_taps", "kind": "third_party_tap",
-     "severity": "medium", "title": XSS, "detail": ATTR_XSS, "remediation": None,
-     "fix_command": f"brew untap {ATTR_XSS}", "identity": {"tap": "me/tap"}},
+     "fix_command": "brew services stop jq", "accept_command": ACCEPT,
+     "subject": {"kind": "path", "path": "/opt/homebrew/Cellar/jq/1.7/bin/jq"}},
+    {"check_id": "packages.brew_taps", "severity": "medium", "title": XSS, "detail": ATTR_XSS, "remediation": None,
+     "fix_command": f"brew untap {ATTR_XSS}", "accept_command": ["not", "a", "string"],
+     "subject": {"kind": "tap", "name": "me/tap"}},
 ]}
+SECURE_IT = "plugin-secure-it"
+SCAN = ["/usr/bin/sudo", "-A", "/usr/local/bin/secure-it", "scan", "--exit-zero"]
 
 
 class Installer:
@@ -114,9 +117,15 @@ class UiFixture(unittest.TestCase):
         (root / "prefix" / "Cellar" / "jq").mkdir(parents=True)
         (root / "prefix" / "Cellar" / "jq" / "bin").write_bytes(b"x" * 65536)
         cls.brew = UiBrew(info=INFO, cache=str(root / "cache"), casks=APP_CASKS, prefix=str(root / "prefix"))
+        cls.exe = root / "secure-it"
+        cls.exe.write_text("")
+        cls.plugins_dir = root / "state" / "plugins"
+        cls.plugins_dir.mkdir(parents=True)
+        cls.home = root / "home"
         cls.server, cls.url, _ = brewdash.serve(port=0, open_browser=False, brew=cls.brew, state_dir=str(root / "state"),
                                                 home=str(root / "home"), app_dirs=[str(root / "Applications")],
-                                                sysrun=ui_sysrun, updater=cls.updater(root / "state"))
+                                                sysrun=ui_sysrun, updater=cls.updater(root / "state"),
+                                                catalog=catalog(str(cls.exe)))
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.pw = sync_playwright().start()
         cls.browser = cls.pw.chromium.launch()
@@ -159,17 +168,17 @@ class UiSmokeTest(UiFixture):
         self.page.wait_for_selector('.att:has-text("apps without a real signature")')
         self.assertEqual(self.attention(), [
             ("critical", "health", "3 deprecated or disabled"),
-            ("critical", "security", "1 secure-it findings"),
+            ("critical", SECURE_IT, "1 secure-it findings"),
             ("warning", "health", "brew doctor has warnings"),
             ("warning", "requested:upgradable", "1 can be upgraded in Installed by you"),
             ("warning", "requested:outdated,pinned", "1 outdated but pinned in Installed by you"),
             ("warning", "update", "brew update is stale"),
             ("warning", "shell", "1 synced folders ahead in PATH"),
             ("warning", "shell", "1 PATH problems"),
-            ("warning", "security", "1 secure-it findings"),
+            ("warning", SECURE_IT, "1 secure-it findings"),
             ("warning", "services", "1 services reachable from the network"),
             ("warning", "apps", "1 apps without a real signature"),
-            ("info", "security", "1 secure-it findings"),
+            ("info", SECURE_IT, "1 secure-it findings"),
             ("info", "health", "cleanup"),
             ("info", "apps", "1 apps brew could manage"),
             ("info", "taps", "1 unused taps"),
@@ -449,11 +458,11 @@ class UiSmokeTest(UiFixture):
 
     def test_sources_brewdash_could_not_read_are_said_and_escaped(self):
         self.page.evaluate("""S.snap.ports = {error: 'could not run lsof: <b>x</b>', by_id: {}};
-            S.snap.security = {...S.snap.security, error: 'could not read it: <i>y</i>', alerts: []}; renderAll()""")
-        self.assertIn(("warning", "security", "secure-it report unreadable"), self.attention())
+            S.snap.plugins = S.snap.plugins.map((p) => ({...p, error: 'could not read it: <i>y</i>', alerts: []})); renderAll()""")
+        self.assertIn(("warning", SECURE_IT, "secure-it report unreadable"), self.attention())
         self.tab("services")
         self.assertEqual(self.page.inner_text("#content .warn"), "could not run lsof: <b>x</b>")
-        self.tab("security")
+        self.tab(SECURE_IT)
         self.assertEqual(self.page.inner_text("#content .warn"),
                          f"brewdash could not use {self.report}: could not read it: <i>y</i>")
 
@@ -788,8 +797,8 @@ class UiSmokeTest(UiFixture):
     def tab(self, name):
         self.page.click(f'nav button[data-tab="{name}"]')
 
-    def test_security_tab_lists_findings_worst_first_and_escapes_them(self):
-        self.tab("security")
+    def test_a_plugin_tab_lists_findings_worst_first_and_escapes_them(self):
+        self.tab(SECURE_IT)
         self.page.wait_for_selector("#content .alert")
         cards = self.page.locator("#content .alert").all()
         self.assertEqual([c.locator(".sev").inner_text().lower() for c in cards], ["high", "medium", "low"])
@@ -797,13 +806,13 @@ class UiSmokeTest(UiFixture):
         self.assertEqual(self.page.locator("#content img").count(), 0)
         self.assertEqual(self.page.locator("#content [onmouseover]").count(), 0)
         self.assertIsNone(self.page.evaluate("window.pwned"))
-        self.assertEqual(self.page.locator('nav button[data-tab="security"] .count').inner_text(), "3")
+        self.assertEqual(self.page.locator(f'nav button[data-tab="{SECURE_IT}"] .count').inner_text(), "3")
+        self.assertEqual(self.page.inner_text("#intro h2"), "secure-it")
 
     def test_a_finding_offers_its_fix_and_accept_commands_to_copy_never_to_run(self):
-        self.tab("security")
+        self.tab(SECURE_IT)
         high = self.page.locator("#content .alert.sev-high")
-        self.assertEqual([p.inner_text() for p in high.locator("pre").all()],
-                         ["brew services stop jq", f'sudo secure-it accept {FP[:12]} --note "why this is fine"'])
+        self.assertEqual([p.inner_text() for p in high.locator("pre").all()], ["brew services stop jq", ACCEPT])
         self.assertEqual(self.page.locator("#content .alert.sev-medium pre").count(), 1)
         self.assertEqual(self.page.locator("#content [data-act], #content [data-svc], #content [data-install]").count(), 0)
         before = list(self.brew.popened)
@@ -812,36 +821,201 @@ class UiSmokeTest(UiFixture):
         self.assertEqual(self.brew.popened, before)
 
     def test_a_finding_links_to_its_package_and_the_package_shows_it(self):
-        self.tab("security")
+        self.tab(SECURE_IT)
         self.page.click('#content .alert.sev-high [data-goto="f:jq"]')
         self.page.wait_for_selector("#detail h2.detail-title")
         self.assertIn("jq listens on *:8080", self.page.inner_text("#detail .detail-section:has(h4:text-is('secure-it findings'))"))
         self.assertIn("TCP *:8080", self.page.inner_text("#detail"))
-        self.tab("security")
+        self.tab(SECURE_IT)
         self.page.click('#content .alert.sev-low [data-tab="shell"]')
         self.assertEqual(self.page.inner_text("#intro h2"), "Shell")
-        self.tab("security")
+        self.tab(SECURE_IT)
         self.page.click('#content .alert.sev-medium button:text-is("Open me/tap in Taps")')
         self.assertEqual(self.page.inner_text("#intro h2"), "Taps")
-        self.assertEqual(self.page.locator('#content tr:has-text("me/tap") .badge:text-is("secure-it")').count(), 1)
+        badge = self.page.locator('#content tr:has-text("me/tap") .badge:text-is("secure-it")')
+        self.assertEqual((badge.count(), badge.get_attribute("title")), (1, "secure-it flags this tap"))
+        badge.click()
+        self.assertEqual(self.page.inner_text("#intro h2"), "secure-it")
 
-    def test_without_a_report_the_tab_says_how_to_get_one(self):
-        self.page.evaluate("S.snap.security = {found: false, path: '/h/secure-it/report.json', alerts: []}; S.tab = 'security'; renderAll()")
-        self.assertIn("sudo secure-it scan", self.page.inner_text("#content"))
-        self.assertEqual(self.page.locator('nav button[data-tab="security"] .count').count(), 0)
-        self.page.evaluate("S.tab = 'overview'; renderAll()")
-        self.assertNotIn("security", [go for _, go, _ in self.attention()])
+    def set_plugin(self, js):
+        self.page.evaluate(f"S.snap.plugins = S.snap.plugins.map((p) => ({{...p, {js}}})); renderAll()")
+
+    def test_a_plugin_that_is_not_installed_says_what_it_is_and_how_to_install_it(self):
+        self.set_plugin("installed: false, scan: false, found: false, alerts: []")
+        self.tab(SECURE_IT)
+        content = self.page.inner_text("#content")
+        self.assertIn("secure-it is not installed", content)
+        self.assertIn("A separate scanner for macOS security settings", content)
+        self.assertEqual(self.page.inner_text("#content pre"),
+                         "git clone https://github.com/lemiorhan/brewdash-plugin-security.git\n"
+                         "cd brewdash-plugin-security && sudo ./install.sh")
+        self.assertEqual(self.page.get_attribute("#content a", "href"), "https://github.com/lemiorhan/brewdash-plugin-security")
+        self.assertIn(str(self.report), content)
+        self.assertEqual(self.page.locator("#content [data-plugin-scan]").count(), 0)
+        self.assertEqual(self.page.locator(f'nav button[data-tab="{SECURE_IT}"] .count').count(), 0)
+        self.tab("overview")
+        self.assertNotIn(SECURE_IT, [go for _, go, _ in self.attention()])
+
+    def test_an_installed_plugin_without_a_report_offers_a_scan(self):
+        self.set_plugin("found: false, alerts: []")
+        self.tab(SECURE_IT)
+        self.assertIn(f"secure-it has not written {self.report} yet.", self.page.inner_text("#content"))
+        self.assertEqual(self.page.inner_text("#content [data-plugin-scan]"), "Scan now")
+        self.assertEqual(self.page.locator("#content .ok").count(), 0)
+
+    def test_a_report_with_nothing_open_says_so(self):
+        self.set_plugin("alerts: []")
+        self.tab(SECURE_IT)
+        self.assertEqual(self.page.inner_text("#content .ok"), "✔ secure-it reports nothing open.")
+
+    def test_installing_the_plugin_while_the_page_is_open_offers_a_scan(self):
+        # With no report the plugin's seq stays put, so only the install itself can tell the page.
+        self.report.unlink()
+        self.exe.unlink()
+        try:
+            self.tab(SECURE_IT)
+            self.page.wait_for_selector('#content h3:text-is("secure-it is not installed")')
+            self.exe.write_text("")
+            self.page.wait_for_selector('#content [data-plugin-scan="secure-it"]')
+        finally:
+            self.exe.write_text("")
+            self.cls_report(REPORT)
+        self.page.wait_for_selector("#content .alert")
+
+    def test_scan_now_runs_the_catalogs_command_after_a_confirm(self):
+        before = len(self.brew.popened)
+        self.tab(SECURE_IT)
+        self.page.click(f'#content [data-plugin-scan="secure-it"]')
+        self.page.wait_for_selector("#m-ok")
+        self.assertIn(shlex.join(SCAN), self.page.inner_text("#modal"))
+        self.assertNotIn(SCAN, self.brew.popened[before:])
+        self.page.click("#m-ok")
+        wait_for(lambda: SCAN in self.brew.popened[before:])
+
+    def test_a_scan_whose_password_dialog_was_cancelled_gives_a_command_that_runs_in_terminal(self):
+        terminal = "sudo /usr/local/bin/secure-it scan --exit-zero"
+        self.brew.scripts[("-A",)] = "echo 'sudo: a password is required; the brewdash password dialog was cancelled'; exit 1"
+        try:
+            last = self.page.evaluate("Math.max(0, ...S.jobs.map((j) => j.id))")
+            self.tab(SECURE_IT)
+            self.page.click('#content [data-plugin-scan="secure-it"]')
+            self.page.click("#m-ok")
+            self.page.wait_for_function(f"S.jobs.some((j) => j.id > {last} && j.status === 'failed')")
+            job = self.page.evaluate(f"S.jobs.find((j) => j.id > {last}).id")
+            hint = self.page.locator(f'.job:has([data-job="{job}"]) .terminal-hint')
+            self.assertEqual(hint.inner_text().splitlines()[:2], ["This needs your sudo password. Run it in Terminal:", terminal])
+            self.page.evaluate("() => { window.copied = []; navigator.clipboard.writeText = async (s) => { window.copied.push(s); }; }")
+            hint.locator("[data-copy]").click()
+            self.assertEqual(self.page.evaluate("window.copied"), [terminal])
+        finally:
+            del self.brew.scripts[("-A",)]
+
+    def test_a_report_from_an_older_plugin_says_to_update_the_plugin(self):
+        try:
+            self.cls_report({**REPORT, "schema": 1})
+            self.page.wait_for_selector('.att:has-text("secure-it needs an update")')
+            self.tab(SECURE_IT)
+            warn = self.page.inner_text("#content .warn")
+            self.assertIn("An older secure-it is installed", warn)
+            self.assertIn("cd secure-it && git pull && sudo ./install.sh", warn)
+            self.assertEqual(self.page.locator("#content .alert, #content .ok").count(), 0)
+        finally:
+            self.cls_report(REPORT)
+        self.page.wait_for_selector("#content .alert")
+
+    def test_a_report_from_a_newer_plugin_says_to_update_brewdash(self):
+        self.set_plugin("found: true, error: 'it has schema 3; this brewdash reads schema 2', outdated: 'brewdash', alerts: []")
+        self.assertIn(("warning", SECURE_IT, "secure-it report unreadable"), self.attention())
+        self.tab(SECURE_IT)
+        self.assertEqual(self.page.inner_text("#content .warn"),
+                         "secure-it writes a newer report than this brewdash reads. Update brewdash in Settings.")
 
     def test_a_new_report_shows_up_without_a_brew_change(self):
         try:
             self.cls_report({**REPORT, "alerts": REPORT["alerts"][:1]})
-            self.page.wait_for_function("document.querySelector('nav button[data-tab=\"security\"] .count').textContent === '1'")
+            self.page.wait_for_function(f"document.querySelector('nav button[data-tab=\"{SECURE_IT}\"] .count').textContent === '1'")
         finally:
             self.cls_report(REPORT)
-        self.page.wait_for_function("document.querySelector('nav button[data-tab=\"security\"] .count').textContent === '3'")
+        self.page.wait_for_function(f"document.querySelector('nav button[data-tab=\"{SECURE_IT}\"] .count').textContent === '3'")
 
     def cls_report(self, data):
-        self.report.write_text(json.dumps(data) + " " * len(data["alerts"]))
+        self.report.write_text(json.dumps(data) + " " * len(data["alerts"]) + " " * data["schema"])
+
+    def test_a_manifest_dropped_into_the_state_dir_gets_its_own_escaped_tab_and_no_scan(self):
+        manifest = self.plugins_dir / "acme.json"
+        (self.home / "acme.json").write_text(json.dumps({"schema": 2, "alerts": [REPORT["alerts"][0]]}))
+        try:
+            manifest.write_text(json.dumps({"schema": 1, "name": XSS, "report": "~/acme.json", "homepage": "https://acme.example/"}))
+            self.page.wait_for_selector('nav button[data-tab="plugin-acme"]')
+            order = self.page.evaluate("tabs()")
+            self.assertEqual(order[order.index(SECURE_IT):order.index("history") + 1], [SECURE_IT, "plugin-acme", "history"])
+            self.assertEqual(self.page.inner_text('nav button[data-tab="plugin-acme"]'), XSS + "1")
+            self.page.click('nav button[data-tab="plugin-acme"]')
+            self.assertEqual(self.page.locator("#content .alert").count(), 1)
+            self.assertEqual(self.page.inner_text('#content a[href="https://acme.example/"]'), "Homepage")
+            self.assertEqual(self.page.locator("#content [data-plugin-scan]").count(), 0)
+            self.assertEqual(self.page.locator("nav img, #content img, #intro img").count(), 0)
+            self.assertIsNone(self.page.evaluate("window.pwned"))
+        finally:
+            manifest.unlink()
+        self.page.wait_for_function("!document.querySelector('nav button[data-tab=\"plugin-acme\"]')")
+        self.page.wait_for_selector('nav button.active[data-tab="overview"]')
+
+    def test_a_manifest_edited_while_the_page_is_open_shows_each_change(self):
+        # Steps two to four and the last each change one manifest field and leave the report's seq alone:
+        # a new report path starts its own seq at 1, and a manifest with no report has seq 0.
+        manifest = self.plugins_dir / "moved.json"
+        (self.home / "moved-a.json").write_text(json.dumps({"schema": 2, "alerts": REPORT["alerts"][:1]}))
+        (self.home / "moved-b.json").write_text(json.dumps({"schema": 2, "alerts": REPORT["alerts"][:2]}))
+        tab = 'nav button[data-tab="plugin-moved"]'
+        moved = {"schema": 1, "name": "Moved", "report": "~/moved-a.json"}
+        steps = ((moved, "label", "Moved1"),
+                 ({**moved, "report": "~/moved-b.json"}, "label", "Moved2"),
+                 ({**moved, "report": "~/moved-b.json", "name": "Renamed"}, "label", "Renamed2"),
+                 ({**moved, "report": "~/moved-b.json", "name": "Renamed", "homepage": "https://moved.example/"},
+                  "link", "https://moved.example/"),
+                 ({"schema": 9}, "warn", "has schema 9"),
+                 ({"schema": 8}, "warn", "has schema 8"))
+        try:
+            for data, where, text in steps:
+                with self.subTest(data=data):
+                    manifest.write_text(json.dumps(data))
+                    if where == "label":
+                        self.page.wait_for_function("([sel, text]) => document.querySelector(sel)?.innerText === text", arg=[tab, text])
+                        self.page.click(tab)
+                    elif where == "link":
+                        self.page.wait_for_selector(f'#content a[href="{text}"]')
+                    else:
+                        self.page.wait_for_selector(f'#content .warn:has-text("{text}")')
+        finally:
+            manifest.unlink()
+
+    def test_a_broken_manifest_gets_a_tab_that_says_what_is_wrong(self):
+        manifest = self.plugins_dir / "broken.json"
+        try:
+            manifest.write_text(json.dumps({"schema": 1, "name": "Broken", "report": "relative.json"}))
+            self.page.wait_for_selector('nav button[data-tab="plugin-broken"]')
+            self.assertIn(("warning", "plugin-broken", "Broken report unreadable"), self.attention())
+            self.page.click('nav button[data-tab="plugin-broken"]')
+            self.assertEqual(self.page.inner_text("#content .warn"),
+                             f"brewdash could not use broken: its manifest {manifest} names no report; "
+                             "give an absolute path or one under ~/")
+            self.assertEqual(self.page.inner_text("#content").strip(), self.page.inner_text("#content .warn"))
+        finally:
+            manifest.unlink()
+
+    def test_a_link_to_a_plugin_tab_opens_it_and_one_to_an_unknown_plugin_falls_back(self):
+        # A new page each time: on the open page a new hash is read after the first state, not before it.
+        for tab, shown in ((SECURE_IT, SECURE_IT), ("plugin-nope", "overview")):
+            with self.subTest(tab=tab):
+                page = self.browser.new_page()
+                try:
+                    page.goto(self.url + f"#tab={tab}")
+                    page.wait_for_selector(".ov .att, #content .alert")
+                    page.wait_for_selector(f'nav button.active[data-tab="{shown}"]')
+                    self.assertEqual(tab in page.url, tab == shown)
+                finally:
+                    page.close()
 
     def test_services_show_ports_and_mark_the_exposed_ones(self):
         self.tab("services")
@@ -1103,7 +1277,7 @@ class UiSmokeTest(UiFixture):
             else:
                 groups[-1].append(key)
         self.assertEqual(groups, [["overview"], ["requested", "deps", "casks", "services", "taps"],
-                                  ["health", "security", "apps", "shell"], ["history", "install", "export"], ["settings"]])
+                                  ["health", "apps", "shell"], [SECURE_IT], ["history", "install", "export"], ["settings"]])
 
     def test_the_mac_app_sidebar_draws_a_line_between_groups_and_spaces_tabs_evenly(self):
         page = self.mac_app_page()
@@ -1113,7 +1287,7 @@ class UiSmokeTest(UiFixture):
                    colour: getComputedStyle(e).borderTopColor };
         })""")
         lines = [i for i, e in enumerate(items) if e["key"] == "HR"]
-        self.assertEqual([items[i + 1]["key"] for i in lines], ["requested", "health", "history", "settings"])
+        self.assertEqual([items[i + 1]["key"] for i in lines], ["requested", "health", SECURE_IT, "history", "settings"])
         for i in lines:
             above, line, below = items[i - 1], items[i], items[i + 1]
             self.assertEqual(line["bottom"] - line["top"], 1, below["key"])
@@ -1123,7 +1297,8 @@ class UiSmokeTest(UiFixture):
             self.assertAlmostEqual(line["top"] - above["bottom"], below["top"] - line["bottom"], delta=0.5,
                                    msg=f"the line before {below['key']} is off the middle of its gap")
         tabs = [e for e in items if e["key"] != "HR"]
-        inside = {round(b["top"] - a["bottom"], 1) for a, b in zip(tabs, tabs[1:]) if b["key"] not in ("requested", "health", "history", "settings")}
+        inside = {round(b["top"] - a["bottom"], 1) for a, b in zip(tabs, tabs[1:])
+                  if b["key"] not in ("requested", "health", SECURE_IT, "history", "settings")}
         across = {round(items[i + 1]["top"] - items[i - 1]["bottom"], 1) for i in lines}
         self.assertEqual((len(inside), len(across)), (1, 1), f"uneven gaps: {inside} within groups, {across} between them")
 
@@ -1200,7 +1375,7 @@ class UiSmokeTest(UiFixture):
         tabs = [box(f'nav [data-tab="{k}"]') for k in self.page.eval_on_selector_all("nav [data-tab]", "bs => bs.map((b) => b.dataset.tab)")]
         self.assertGreater(len(tabs), 10)
         self.assertEqual(len({t["y"] for t in tabs}), 1, "the tabs are one row")
-        self.assertEqual(self.page.eval_on_selector_all("nav hr", "hs => hs.map((h) => h.getClientRects().length)"), [0, 0, 0, 0],
+        self.assertEqual(set(self.page.eval_on_selector_all("nav hr", "hs => hs.map((h) => h.getClientRects().length)")), {0},
                          "the Mac app's group lines show in the browser's tab row")
         self.assertEqual([t["x"] for t in tabs], sorted(t["x"] for t in tabs))
         for part in (".brand", "#stats", "#btn-refresh", "#btn-theme", "#lang"):
@@ -1411,8 +1586,8 @@ class I18nTest(UiFixture):
                 } });
             }
         }""")
-        tabs = self.page.evaluate("TABS")
-        self.assertIn("security", tabs)
+        tabs = self.page.evaluate("tabs()")
+        self.assertIn(SECURE_IT, tabs)
         for lang in LANGS:
             self.choose(lang)
             for tab in tabs:
