@@ -278,7 +278,19 @@ of the same name.
 
 A plugin is a separate tool that writes its findings to a JSON report.
 brewdash reads that report and gives the plugin its own tab, in a group of its
-own above **History**:
+own above **History**. The tab has three views:
+
+- **Alerts**: the findings grouped by category, then by topic, worst first.
+  Search them, filter by severity, category or effort, and show the accepted
+  findings and the info lines when you want them. A topic can explain what it
+  checks, why it matters and how attackers use it, with its sources.
+- **History**: the open findings of each kept run, as a chart and a table, and
+  what came and went between runs.
+- **Checks**: each check that failed or was skipped in a kept run, how often,
+  and why the last time.
+
+Open findings also show up across brewdash. An open finding is one that is
+not accepted and not info:
 
 - high and critical findings appear as *critical* in *Needs attention*,
   medium as *warning*, low as *info*;
@@ -299,8 +311,11 @@ scanner, and it is in brewdash's built-in catalog. Without it, its tab says
 what it is and how to install it. Once `/usr/local/bin/secure-it` is there,
 the tab has a **Scan now** button. It runs `/usr/bin/sudo -A
 /usr/local/bin/secure-it scan --exit-zero` after you confirm, and macOS asks
-for your password. secure-it then writes `~/secure-it/report.json`, and the
-tab shows the new findings. With `--exit-zero` a scan that finds open alerts
+for your password. secure-it then writes
+`~/.local/state/brewdash/plugins/secure-it/report.json`, and the tab shows the
+new findings. A secure-it that writes `~/secure-it/report.json` instead is
+older than this brewdash: the tab says to update it and gives the commands, and
+brewdash does not read that file. With `--exit-zero` a scan that finds open alerts
 exits with 0, because sudo also exits with 1 when you cancel the password
 dialog; brewdash shows any other exit code as a failed job. secure-it does not
 scan on its own; it scans when you start a scan.
@@ -343,28 +358,68 @@ tab says what is wrong with it.
 
 ### The report
 
+brewdash does the grouping, sorting, filtering and counting; the report only
+says what was found. It knows nothing of any one plugin: categories, topics and
+efforts are whatever the report lists.
+
 ```json
-{"schema": 2, "generated_at": "2026-11-01T09:00:00", "alerts": [
-  {"severity": "high", "title": "redis listens on every interface (*:6379)",
-   "check_id": "exposure.listening", "detail": "pid 612",
-   "remediation": "Bind it to 127.0.0.1.", "fix_command": "brew services stop redis",
-   "accept_command": "acme accept 1a2b3c --note \"why\"",
-   "subject": {"kind": "path", "path": "/opt/homebrew/Cellar/redis/7.4.1/bin/redis-server"}}
-]}
+{"schema": 3, "generated_at": "2026-11-01T09:01:00",
+ "scan": {"started_at": "2026-11-01T09:00:00", "facts": [{"label": "macOS", "value": "26.1"}]},
+ "categories": [{"id": "exposure", "label": {"en": "Network", "tr": "Ağ"}}],
+ "efforts": [{"id": "small", "label": "small"}, {"id": "large", "label": "large"}],
+ "topics": [{"id": "exposure.listening/open_port", "category": "exposure", "label": "Open port",
+             "effort": "small", "code": "exposure.listening · open_port",
+             "explain": {"what": "…", "why": "…", "attack": "…",
+                         "sources": [{"title": "MITRE ATT&CK T1046", "kind": "framework",
+                                      "url": "https://attack.mitre.org/techniques/T1046/", "verified": "2026-10-01"}]}}],
+ "findings": [
+   {"fingerprint": "1a2b3c4d5e6f", "topic": "exposure.listening/open_port", "severity": "high",
+    "title": "redis listens on every interface (*:6379)", "row": {"key": "subject:redis", "label": "redis"},
+    "detail": "pid 612", "remediation": "Bind it to 127.0.0.1.", "fix_command": "brew services stop redis",
+    "accept_command": "acme accept 1a2b3c --note \"why\"", "accepted": null,
+    "links": [{"label": "CVE-2026-1", "url": "https://osv.dev/vulnerability/CVE-2026-1"}],
+    "subject": {"kind": "path", "path": "/opt/homebrew/Cellar/redis/7.4.1/bin/redis-server"}}],
+ "history": [
+   {"started_at": "2026-11-01T09:00:00",
+    "alerts": [{"fingerprint": "1a2b3c4d5e6f", "severity": "high", "title": "redis listens on *:6379", "accepted": false}],
+    "checks": [{"id": "system.sip", "title": "SIP", "status": "skipped", "reason": "Full Disk Access missing"}]}]}
 ```
 
-`severity` is `critical`, `high`, `medium` or `low`, and `title` is a string.
-An alert without either is left out. The other text fields are strings or
-`null`. `subject` says what an alert is about:
+A text is a string, or a map from language to string such as
+`{"en": "Network", "tr": "Ağ"}`. brewdash shows the language you chose, else
+English, else Turkish, else any language the map has. The labels of
+categories, efforts, topics, rows and facts, the fact values, titles, details,
+remediations, accept commands, explanations, source titles and check reasons
+are texts. `fix_command`, `code` and a link's `label` are strings.
 
-- `{"kind": "path", "path": "/abs/path"}`: a file under a Homebrew `Cellar` or
-  `opt` folder, or a `homebrew.mxcl.<name>.plist`, links to that formula if
-  it is installed;
-- `{"kind": "tap", "name": "user/repo"}` links to the tap if it is tapped;
-- `{"kind": "shell"}` links to **Shell**;
-- `null`, or anything else, links nowhere.
+- A **category** and an **effort** need an `id` and a `label`. Topics are
+  grouped in the order of their worst open finding, then least effort first in
+  the order `efforts` lists them.
+- A **topic** needs an `id`, a `category` the report lists, and a `label`.
+  `effort` must be an effort the report lists, else it is left out. `explain`
+  and its parts may be `null`; a source links only to an `https://` URL.
+- A **finding** needs a `fingerprint`, a `topic` the report lists, a
+  `severity` (`critical`, `high`, `medium`, `low` or `info`) and a `title`.
+  A finding without one of them is left out. Findings that share a
+  fingerprint are one card, closed by one accept. `row` groups findings under
+  a topic, by `key`; without it each fingerprint is its own row. `accepted` is
+  `{"at": "…", "note": "…"}` or `null`. A link needs a string `label` and an
+  `https://` URL.
+- `subject` says what a finding is about:
+  - `{"kind": "path", "path": "/abs/path"}`: a file under a Homebrew `Cellar`
+    or `opt` folder, or a `homebrew.mxcl.<name>.plist`, links to that formula
+    if it is installed;
+  - `{"kind": "tap", "name": "user/repo"}` links to the tap if it is tapped;
+  - `{"kind": "shell"}` links to **Shell**;
+  - `null`, or anything else, links nowhere.
+- A **run** in `history` needs a `started_at`. Its `alerts` keep only
+  `critical` to `low`, and its `checks` only those whose `status` is
+  `skipped` or `error`.
 
-brewdash reads report schema 2 only. A report with an older schema makes the
+Every field is checked for its type before brewdash uses it, and a field of
+the wrong type is dropped or emptied.
+
+brewdash reads report schema 3 only. A report with an older schema makes the
 tab say to update the plugin, and gives the plugin's update commands. A newer
 schema makes it say to update brewdash.
 

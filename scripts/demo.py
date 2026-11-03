@@ -205,31 +205,65 @@ def setup(root):
         'export PATH="/usr/local/opt/mysql-client/bin:$PATH"',
         'export PATH="$HOME/.cargo/bin:$PATH"',
     ]) + "\n")
-    (home / "secure-it").mkdir()
-    (home / "secure-it" / "report.json").write_text(json.dumps(secure_it_report(brew.prefix)))
+    report = home / ".local" / "state" / "brewdash" / "plugins" / "secure-it" / "report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps(secure_it_report()))
     return brew, home, apps
 
 
-def alert(n, check_id, severity, title, detail, remediation, fix, subject):
-    return {"check_id": check_id, "severity": severity, "title": title, "detail": detail, "remediation": remediation,
-            "fix_command": fix, "accept_command": f'sudo secure-it accept {f"{n:02x}" * 5} --note "neden"', "subject": subject}
+def when(days_ago):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(NOW - days_ago * DAY - 3600))
 
 
-def secure_it_report(prefix):
-    return {"schema": 2, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(NOW - 3600)),
-            "scan": {}, "alerts": [
-        alert(1, "exposure.listening", "high", "redis listens on every interface (*:6379)",
-              "pid 612; Homebrew package: redis", "Bind it to 127.0.0.1 in redis.conf, or stop the service when you do not need it.",
-              "brew services stop redis", {"kind": "path", "path": "/opt/homebrew/Cellar/redis/7.4.1/bin/redis-server"}),
-        alert(2, "system.firewall", "high", "The application firewall is off",
-              "socketfilterfw reports state 0", "Turn it on in System Settings > Network > Firewall.",
-              "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on", None),
-        alert(3, "persistence.path_shadow", "medium", "Synced folder ahead of the system in PATH: ~/Dropbox/tools/bin",
-              ".zshrc:5", "Move it after $PATH, or copy the tools to a local folder.", None, {"kind": "shell"}),
-        alert(4, "packages.brew_taps", "low", "Third-party tap: ngrok/ngrok",
-              "Remote: https://github.com/ngrok/homebrew-ngrok", "Keep it only if you trust its owner.",
-              "brew untap ngrok/ngrok", {"kind": "tap", "name": "ngrok/ngrok"}),
-    ]}
+def finding(n, topic, severity, title, detail, remediation, fix, subject, row=None):
+    fingerprint = f"{n:02x}" * 8
+    return {"fingerprint": fingerprint, "topic": topic, "row": row or {"key": f"title:{title}", "label": title}, "severity": severity,
+            "title": title, "detail": detail, "remediation": remediation, "fix_command": fix,
+            "accept_command": f'sudo secure-it accept {fingerprint[:10]} --note "why"', "accepted": None, "links": [], "subject": subject}
+
+
+TOPICS = [
+    {"id": "exposure.listening/open_port", "category": "exposure", "label": "Port open to the network", "effort": "small",
+     "code": "exposure.listening · open_port", "explain": {
+         "what": "A program accepts connections from other machines on the network.",
+         "why": "Anyone on the same Wi-Fi can talk to it, and a database rarely expects that.",
+         "attack": "Attackers scan networks for open database ports and try default passwords.",
+         "sources": [{"title": "MITRE ATT&CK T1046: Network Service Discovery", "kind": "framework",
+                      "url": "https://attack.mitre.org/techniques/T1046/", "verified": "2026-10-01"}]}},
+    {"id": "system.firewall/off", "category": "system", "label": "Application firewall", "effort": "small",
+     "code": "system.firewall · off", "explain": None},
+    {"id": "persistence.path_shadow/synced", "category": "persistence", "label": "Synced folder in PATH", "effort": "medium",
+     "code": "persistence.path_shadow · synced", "explain": None},
+    {"id": "packages.brew_taps/third_party", "category": "packages", "label": "Third-party tap", "effort": "small",
+     "code": "packages.brew_taps · third_party", "explain": None},
+]
+FINDINGS = [
+    finding(1, "exposure.listening/open_port", "high", "redis listens on every interface (*:6379)", "pid 612; Homebrew package: redis",
+            "Bind it to 127.0.0.1 in redis.conf, or stop the service when you do not need it.", "brew services stop redis",
+            {"kind": "path", "path": "/opt/homebrew/Cellar/redis/7.4.1/bin/redis-server"}, row={"key": "subject:redis", "label": "redis"}),
+    finding(2, "system.firewall/off", "high", "The application firewall is off", "socketfilterfw reports state 0",
+            "Turn it on in System Settings > Network > Firewall.", "sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on", None),
+    finding(3, "persistence.path_shadow/synced", "medium", "Synced folder ahead of the system in PATH: ~/Dropbox/tools/bin", ".zshrc:5",
+            "Move it after $PATH, or copy the tools to a local folder.", None, {"kind": "shell"}),
+    finding(4, "packages.brew_taps/third_party", "low", "Third-party tap: ngrok/ngrok", "Remote: https://github.com/ngrok/homebrew-ngrok",
+            "Keep it only if you trust its owner.", "brew untap ngrok/ngrok", {"kind": "tap", "name": "ngrok/ngrok"}),
+]
+
+
+def run(days_ago, findings, checks=()):
+    return {"started_at": when(days_ago), "checks": list(checks), "alerts": [
+        {"fingerprint": f["fingerprint"], "severity": f["severity"], "title": f["title"], "accepted": False} for f in findings]}
+
+
+def secure_it_report():
+    fda = {"id": "persistence.tcc", "title": "Privacy permissions", "status": "skipped", "reason": "Full Disk Access is missing"}
+    return {"schema": 3, "generated_at": when(0),
+            "scan": {"started_at": when(0), "facts": [{"label": "macOS", "value": "26.1"}, {"label": "user", "value": "demo"}]},
+            "categories": [{"id": "exposure", "label": "Network"}, {"id": "system", "label": "System"},
+                           {"id": "persistence", "label": "Persistence"}, {"id": "packages", "label": "Packages"}],
+            "efforts": [{"id": "small", "label": "small"}, {"id": "medium", "label": "medium"}, {"id": "large", "label": "large"}],
+            "topics": TOPICS, "findings": FINDINGS,
+            "history": [run(14, FINDINGS[:1], [fda]), run(7, FINDINGS[:1] + FINDINGS[2:], [fda]), run(0, FINDINGS)]}
 
 
 def start(port=0):

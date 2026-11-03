@@ -61,19 +61,66 @@ def ui_sysrun(argv, timeout=60):
     return 1, "p77\nf5\nn*:8080\nf6\nn127.0.0.1:9000\n" if "-iTCP" in argv else "", ""
 
 
-ACCEPT = 'sudo secure-it accept 0123456789 --note "neden"'
-REPORT = {"schema": 2, "generated_at": "2026-11-01T09:00:00", "alerts": [
-    {"check_id": "persistence.path_shadow", "severity": "low",
-     "title": "~/bin shadows 1 system command", "detail": "git", "remediation": "Move it after $PATH.",
-     "fix_command": None, "accept_command": 'sudo secure-it accept ffffffffff --note "neden"', "subject": {"kind": "shell"}},
-    {"check_id": "exposure.listening", "severity": "high",
-     "title": "jq listens on *:8080", "detail": "pid 77", "remediation": "Stop the service.",
-     "fix_command": "brew services stop jq", "accept_command": ACCEPT,
-     "subject": {"kind": "path", "path": "/opt/homebrew/Cellar/jq/1.7/bin/jq"}},
-    {"check_id": "packages.brew_taps", "severity": "medium", "title": XSS, "detail": ATTR_XSS, "remediation": None,
-     "fix_command": f"brew untap {ATTR_XSS}", "accept_command": ["not", "a", "string"],
-     "subject": {"kind": "tap", "name": "me/tap"}},
-]}
+ACCEPT = 'sudo secure-it accept 0123456789 --note "why"'
+JQ_TITLE = {"en": "jq listens on *:8080", "tr": "jq *:8080 portunda dinliyor"}
+OPEN_PORT = {"id": "exposure.listening/open_port", "category": "exposure", "label": {"en": "Open port", "tr": "Açık port"},
+             "effort": "medium", "code": "exposure.listening · open_port", "explain": {
+                 "what": {"en": "A port other machines can reach.", "tr": "Başka makinelerin erişebildiği bir port."},
+                 "why": "Anyone on the network can talk to it.", "attack": "Attackers scan for it.",
+                 "sources": [{"title": "MITRE ATT&CK T1046", "kind": "framework", "url": "https://attack.mitre.org/techniques/T1046/", "verified": "2026-10-01"},
+                             {"title": "Apple Platform Security", "kind": "vendor", "url": None, "verified": None}]}}
+TOPICS = [OPEN_PORT,
+          {"id": "persistence.path_shadow", "category": "persistence", "label": "PATH shadowing", "effort": "small",
+           "code": "persistence.path_shadow", "explain": None},
+          {"id": "packages.brew_taps", "category": "packages", "label": "Third-party taps", "effort": "small", "code": "packages.brew_taps", "explain": None},
+          {"id": "packages.inventory", "category": "packages", "label": "Inventory", "effort": None, "code": "packages.inventory", "explain": None}]
+
+
+def finding(fingerprint, topic, severity, title, row=None, **extra):
+    return {"fingerprint": fingerprint, "topic": topic, "row": row or {"key": f"title:{title}", "label": title}, "severity": severity,
+            "title": title, "detail": None, "remediation": None, "fix_command": None, "accept_command": None, "accepted": None,
+            "links": [], "subject": None, **extra}
+
+
+JQ = dict(row={"key": "subject:/opt/homebrew/Cellar/jq/1.7/bin/jq", "label": "jq"}, detail="pid 77",
+          remediation={"en": "Stop the service.", "tr": "Servisi durdur."}, fix_command="brew services stop jq",
+          accept_command={"en": ACCEPT, "tr": 'sudo secure-it accept 0123456789 --note "neden"'},
+          subject={"kind": "path", "path": "/opt/homebrew/Cellar/jq/1.7/bin/jq"})
+FINDINGS = [
+    finding("0123456789abcdef", OPEN_PORT["id"], "high", JQ_TITLE, **JQ,
+            links=[{"label": "CVE-2026-1", "url": "https://osv.dev/vulnerability/CVE-2026-1"}]),
+    finding("0123456789abcdef", OPEN_PORT["id"], "medium", "jq listens on 127.0.0.1:9000", **JQ),
+    finding("cccccccccc", OPEN_PORT["id"], "low", "cupsd listens on *:631", row={"key": "subject:/usr/sbin/cupsd", "label": "cupsd"},
+            remediation={"en": "Stop the service.", "tr": "Servisi durdur."}, accepted={"at": "2026-10-30T12:00:00", "note": "printer sharing"},
+            accept_command='sudo secure-it accept cccccccccc --note "why"'),
+    finding("ffffffffff", "persistence.path_shadow", "low", "~/bin shadows 1 system command", detail="git", remediation="Move it after $PATH.",
+            accept_command='sudo secure-it accept ffffffffff --note "why"', subject={"kind": "shell"}),
+    finding("eeeeeeeeee", "packages.brew_taps", "medium", XSS, row={"key": "subject:me/tap", "label": XSS}, detail=ATTR_XSS,
+            fix_command=f"brew untap {ATTR_XSS}", accept_command=["not", "a", "string"], subject={"kind": "tap", "name": "me/tap"}),
+    finding("dddddddddd", "packages.inventory", "info", "Homebrew: 7 formulae"),
+]
+SIP = {"en": "SIP is on", "tr": "SIP açık"}
+
+
+def run_alert(f, accepted=False):
+    return {"fingerprint": f["fingerprint"], "severity": f["severity"], "title": f["title"], "accepted": accepted}
+
+
+REPORT = {"schema": 3, "generated_at": "2026-11-03T08:01:00",
+          "scan": {"started_at": "2026-11-03T08:00:00", "facts": [{"label": "host", "value": "mac"}, {"label": {"en": "user", "tr": "kullanıcı"}, "value": "me"}]},
+          "categories": [{"id": "exposure", "label": {"en": "Network", "tr": "Ağ"}}, {"id": "packages", "label": "Packages"},
+                         {"id": "persistence", "label": "Persistence"}, {"id": "system", "label": "System"}],
+          "efforts": [{"id": "small", "label": {"en": "small", "tr": "küçük"}}, {"id": "medium", "label": "medium"}, {"id": "large", "label": "large"}],
+          "topics": TOPICS, "findings": FINDINGS,
+          "history": [
+              {"started_at": "2026-11-01T08:00:00",
+               "alerts": [run_alert(FINDINGS[0]), {"fingerprint": "7e7e7e7e7e", "severity": "medium", "title": "telnetd listens on *:23", "accepted": False}],
+               "checks": [{"id": "system.sip", "title": SIP, "status": "error", "reason": "timeout after 30s"}]},
+              {"started_at": "2026-11-02T08:00:00", "alerts": [run_alert(f) for f in (FINDINGS[0], FINDINGS[1], FINDINGS[3])],
+               "checks": [{"id": "system.sip", "title": SIP, "status": "skipped", "reason": {"en": "Full Disk Access missing", "tr": "Full Disk Access yok"}}]},
+              {"started_at": "2026-11-03T08:00:00",
+               "alerts": [run_alert(f) for f in (FINDINGS[0], FINDINGS[1], FINDINGS[3], FINDINGS[4])] + [run_alert(FINDINGS[2], accepted=True)],
+               "checks": []}]}
 SECURE_IT = "plugin-secure-it"
 SCAN = ["/usr/bin/sudo", "-A", "/usr/local/bin/secure-it", "scan", "--exit-zero"]
 
@@ -109,9 +156,10 @@ class UiFixture(unittest.TestCase):
         cls.zed = make_app(root / "Applications", "Zed", "0.8")
         make_app(root / "Applications", "Shop", "1.0", app_store=True)
         make_app(root / "Applications", "Bare", "1.0")
-        (root / "home" / "secure-it").mkdir(parents=True)
-        cls.report = root / "home" / "secure-it" / "report.json"
+        cls.report = root / "home" / ".local" / "state" / "brewdash" / "plugins" / "secure-it" / "report.json"
+        cls.report.parent.mkdir(parents=True)
         cls.report.write_text(json.dumps(REPORT))
+        cls.legacy_report = root / "home" / "secure-it" / "report.json"
         (root / "home" / ".zshrc").write_text("export PATH=/nope/bin:$PATH\nexport PATH=$HOME/Dropbox/bin:$PATH\n")
         cls.list_file = root / "state" / "list.json"
         (root / "prefix" / "Cellar" / "jq").mkdir(parents=True)
@@ -176,7 +224,7 @@ class UiSmokeTest(UiFixture):
             ("warning", "update", "brew update is stale"),
             ("warning", "shell", "1 synced folders ahead in PATH"),
             ("warning", "shell", "1 PATH problems"),
-            ("warning", SECURE_IT, "1 secure-it findings"),
+            ("warning", SECURE_IT, "2 secure-it findings"),
             ("warning", "services", "1 services reachable from the network"),
             ("warning", "apps", "1 apps without a real signature"),
             ("info", SECURE_IT, "1 secure-it findings"),
@@ -184,6 +232,8 @@ class UiSmokeTest(UiFixture):
             ("info", "apps", "1 apps brew could manage"),
             ("info", "taps", "1 unused taps"),
         ])
+        self.assertEqual([a.locator("b + .muted").inner_text() for a in self.page.locator(f'.att[data-overview="{SECURE_IT}"]').all()],
+                         ["jq listens on *:8080", f"jq listens on 127.0.0.1:9000; {XSS}", "~/bin shadows 1 system command"])
 
     def rows(self):
         return [r.get_attribute("data-id") for r in self.page.locator("tr.row").all()]
@@ -798,45 +848,256 @@ class UiSmokeTest(UiFixture):
     def tab(self, name):
         self.page.click(f'nav button[data-tab="{name}"]')
 
-    def test_a_plugin_tab_lists_findings_worst_first_and_escapes_them(self):
+    def open_plugin(self):
         self.tab(SECURE_IT)
-        self.page.wait_for_selector("#content .alert")
-        cards = self.page.locator("#content .alert").all()
-        self.assertEqual([c.locator(".sev").inner_text().lower() for c in cards], ["high", "medium", "low"])
-        self.assertIn(XSS, cards[1].inner_text())
+        self.page.wait_for_selector("#plist .pgroup")
+
+    def unfold(self, *labels):
+        """Opens the topic, then the row, named by each label in turn, as a click on its summary does."""
+        box = self.page.locator("#plist")
+        for label in labels:
+            box = box.locator(f'details:has(> summary:has-text("{label}"))').first
+            if not box.evaluate("(d) => d.open"):
+                box.locator("> summary").click()
+        return box
+
+    def topics(self):
+        return [(g.locator("> summary .sev").inner_text().lower(), g.locator("> summary b").inner_text(), g.locator("> summary .muted").first.inner_text())
+                for g in self.page.locator("#plist .pgroup").all()]
+
+    def test_a_plugin_tab_groups_open_findings_by_category_and_topic_worst_first_and_escapes_them(self):
+        self.open_plugin()
+        self.assertEqual(self.page.locator("#plist > h3").all_inner_texts(), ["Network 2 findings", "Packages 1 finding", "Persistence 1 finding"])
+        self.assertEqual(self.topics(), [("high", "Open port", "2 findings · 1 high · 1 medium"), ("medium", "Third-party taps", "1 finding · 1 medium"),
+                                         ("low", "PATH shadowing", "1 finding · 1 low")])
+        self.assertEqual(self.page.inner_text("#pshown"), "4 findings shown")
+        self.assertIn(XSS, self.unfold("Third-party taps", "onerror").inner_text())
         self.assertEqual(self.page.locator("#content img").count(), 0)
         self.assertEqual(self.page.locator("#content [onmouseover]").count(), 0)
         self.assertIsNone(self.page.evaluate("window.pwned"))
-        self.assertEqual(self.page.locator(f'nav button[data-tab="{SECURE_IT}"] .count').inner_text(), "3")
+        self.assertEqual(self.page.locator(f'nav button[data-tab="{SECURE_IT}"] .count').inner_text(), "4")
         self.assertEqual(self.page.inner_text("#intro h2"), "secure-it")
+        self.assertIn("Scan started 2026-11-03 08:00 · host: mac · user: me", self.page.inner_text("#content"))
+
+    def test_the_findings_of_one_fingerprint_are_one_card_that_counts_each_of_them(self):
+        self.open_plugin()
+        topic = self.unfold("Open port")
+        self.assertEqual(topic.locator(".prow > summary").all_inner_texts(), ["HIGH\njq\n2 findings"])
+        self.assertEqual(self.page.inner_text("#plist .pgroup-body > p"), "Advice: Stop the service.")
+        card = self.unfold("Open port", "jq").locator(".alert")
+        self.assertEqual(card.count(), 1)
+        self.assertEqual(card.locator("> div").first.inner_text(), "HIGH jq listens on *:8080 0123456789")
+        self.assertEqual(card.locator("> div.muted").inner_text(), "Same fingerprint: jq listens on 127.0.0.1:9000")
+        self.assertEqual(card.locator(".kv").inner_text().split("\n"), ["Detail", "pid 77", "Records", "CVE-2026-1"])
+        self.assertEqual(card.locator('.kv a[href="https://osv.dev/vulnerability/CVE-2026-1"]').count(), 1)
 
     def test_a_finding_offers_its_fix_and_accept_commands_to_copy_never_to_run(self):
-        self.tab(SECURE_IT)
-        high = self.page.locator("#content .alert.sev-high")
-        self.assertEqual([p.inner_text() for p in high.locator("pre").all()], ["brew services stop jq", ACCEPT])
-        self.assertEqual(self.page.locator("#content .alert.sev-medium pre").count(), 1)
+        self.open_plugin()
+        jq = self.unfold("Open port", "jq").locator(".alert")
+        self.assertEqual([p.inner_text() for p in jq.locator("pre").all()], ["brew services stop jq", ACCEPT])
+        self.assertEqual(self.unfold("Third-party taps", "onerror").locator(".alert pre").count(), 1)
         self.assertEqual(self.page.locator("#content [data-act], #content [data-svc], #content [data-install]").count(), 0)
         before = list(self.brew.popened)
-        for b in self.page.locator("#content [data-copytext]").all():
+        copies = self.page.locator("#content [data-copytext]:visible")
+        self.assertEqual(copies.count(), 3)
+        for b in copies.all():
             b.click()
         self.assertEqual(self.brew.popened, before)
 
     def test_a_finding_links_to_its_package_and_the_package_shows_it(self):
-        self.tab(SECURE_IT)
-        self.page.click('#content .alert.sev-high [data-goto="f:jq"]')
+        self.open_plugin()
+        self.unfold("Open port", "jq").locator('[data-goto="f:jq"]').click()
         self.page.wait_for_selector("#detail h2.detail-title")
-        self.assertIn("jq listens on *:8080", self.page.inner_text("#detail .detail-section:has(h4:text-is('secure-it findings'))"))
+        section = self.page.locator("#detail .detail-section:has(h4:text-is('secure-it findings'))")
+        self.assertEqual(section.locator(".alert").all_inner_texts(), ["HIGH jq listens on *:8080", "MEDIUM jq listens on 127.0.0.1:9000"])
         self.assertIn("TCP *:8080", self.page.inner_text("#detail"))
-        self.tab(SECURE_IT)
-        self.page.click('#content .alert.sev-low [data-tab="shell"]')
+        section.locator(f'button[data-tab="{SECURE_IT}"]').click()
+        self.assertEqual(self.page.inner_text("#intro h2"), "secure-it")
+        self.unfold("PATH shadowing", "~/bin shadows").locator('[data-tab="shell"]').click()
         self.assertEqual(self.page.inner_text("#intro h2"), "Shell")
-        self.tab(SECURE_IT)
-        self.page.click('#content .alert.sev-medium button:text-is("Open me/tap in Taps")')
+        self.open_plugin()
+        self.unfold("Third-party taps", "onerror").locator('button:text-is("Open me/tap in Taps")').click()
         self.assertEqual(self.page.inner_text("#intro h2"), "Taps")
         badge = self.page.locator('#content tr:has-text("me/tap") .badge:text-is("secure-it")')
         self.assertEqual((badge.count(), badge.get_attribute("title")), (1, "secure-it flags this tap"))
         badge.click()
         self.assertEqual(self.page.inner_text("#intro h2"), "secure-it")
+
+    def choose(self, field, value):
+        self.page.select_option(f'#content select[data-pf="{field}"]', value)
+
+    def test_the_filters_narrow_the_findings_and_the_toggles_show_accepted_and_inventory(self):
+        self.open_plugin()
+        for change, shown, topics in (
+                (lambda: self.choose("severity", "low"), 1, ["PATH shadowing"]),
+                (lambda: self.page.check('[data-pf="accepted"]'), 2, ["Open port", "PATH shadowing"]),
+                (lambda: self.choose("severity", ""), 5, ["Open port", "Third-party taps", "PATH shadowing"]),
+                (lambda: self.page.check('[data-pf="info"]'), 6, ["Open port", "Third-party taps", "Inventory", "PATH shadowing"]),
+                (lambda: self.choose("category", "packages"), 2, ["Third-party taps", "Inventory"]),
+                (lambda: self.choose("category", ""), 6, ["Open port", "Third-party taps", "Inventory", "PATH shadowing"]),
+                (lambda: self.choose("effort", "small"), 2, ["Third-party taps", "PATH shadowing"]),
+                (lambda: self.choose("effort", ""), 6, ["Open port", "Third-party taps", "Inventory", "PATH shadowing"]),
+                (lambda: self.page.uncheck('[data-pf="info"]'), 5, ["Open port", "Third-party taps", "PATH shadowing"]),
+                (lambda: self.choose("severity", "info"), 1, ["Inventory"])):
+            change()
+            with self.subTest(shown=shown, topics=topics):
+                self.assertEqual(self.page.inner_text("#pshown"), f"{shown} finding{'s' if shown > 1 else ''} shown")
+                self.assertEqual(self.page.locator("#plist .pgroup > summary b").all_inner_texts(), topics)
+        self.choose("severity", "")
+        accepted = self.unfold("Open port", "cupsd").locator(".alert")
+        self.assertIn("accepted", accepted.locator("> div").first.inner_text())
+        self.assertIn("Accepted\n2026-10-30 12:00 — printer sharing", accepted.locator(".kv").inner_text())
+        self.assertEqual(accepted.locator("pre").count(), 0)
+        self.assertEqual(self.page.locator('#content select[data-pf="category"] option').all_inner_texts(),
+                         ["Every category", "Network", "Packages", "Persistence"])
+
+    def test_the_search_keeps_its_focus_and_opens_what_it_finds(self):
+        self.open_plugin()
+        self.page.click("#pq")
+        self.page.keyboard.type("8080")
+        self.assertEqual(self.page.evaluate("[document.activeElement.id, document.activeElement.selectionStart]"), ["pq", 4])
+        self.assertEqual(self.page.inner_text("#pshown"), "2 findings shown")
+        self.assertTrue(self.page.locator("#plist .prow").first.evaluate("(d) => d.open"))
+        self.assertTrue(self.page.locator("#plist .alert").first.is_visible())
+        self.page.keyboard.type("xyz")
+        self.assertEqual(self.page.inner_text("#plist"), "Nothing matches these filters.")
+        self.page.fill("#pq", "pid 77")
+        self.assertEqual(self.page.inner_text("#pshown"), "2 findings shown")
+        self.page.fill("#pq", "")
+        self.assertEqual(self.page.inner_text("#pshown"), "4 findings shown")
+
+    def test_a_topic_unfolded_stays_unfolded_when_a_filter_changes(self):
+        self.open_plugin()
+        self.unfold("Open port", "jq")
+        self.page.check('[data-pf="info"]')
+        self.assertTrue(self.unfold("Open port").evaluate("(d) => d.open"))
+        self.assertTrue(self.page.locator('#plist .prow:has(> summary:has-text("jq"))').evaluate("(d) => d.open"))
+        self.page.locator('#plist .pgroup:has(> summary:has-text("Open port")) > summary').click()
+        self.page.uncheck('[data-pf="info"]')
+        self.assertFalse(self.page.locator('#plist .pgroup:has(> summary:has-text("Open port"))').evaluate("(d) => d.open"))
+
+    def test_topics_of_one_severity_come_least_effort_first_then_most_open_then_by_label(self):
+        self.open_plugin()
+        shadow = "reports.get('secure-it').report.topics.find((tp) => tp.id === 'persistence.path_shadow')"
+        self.page.evaluate(f"""reports.get('secure-it').report.findings.find((f) => f.topic === 'persistence.path_shadow').severity = 'medium';
+                               {shadow}.effort = 'large'; renderPlugin()""")
+        self.assertEqual(self.page.locator("#plist .pgroup > summary b").all_inner_texts(), ["Open port", "Third-party taps", "PATH shadowing"])
+        self.page.evaluate(f"{shadow}.effort = 'small'; renderPlugin()")
+        self.assertEqual(self.page.locator("#plist .pgroup > summary b").all_inner_texts(), ["Open port", "PATH shadowing", "Third-party taps"])
+        self.page.evaluate("""const r = reports.get('secure-it').report, tap = r.findings.find((f) => f.topic === 'packages.brew_taps');
+            r.findings.push({ ...tap, fingerprint: 'abababab', title: 'you/tap', row: { key: 'subject:you/tap', label: 'you/tap' } }); renderPlugin()""")
+        self.assertEqual(self.page.locator("#plist .pgroup > summary b").all_inner_texts(), ["Open port", "Third-party taps", "PATH shadowing"])
+
+    def test_a_topic_names_its_amount_of_work_and_its_code(self):
+        self.open_plugin()
+        self.page.check('[data-pf="info"]')
+        summaries = {g.locator("b").inner_text(): g for g in self.page.locator("#plist .pgroup > summary").all()}
+        self.assertEqual({label: (s.locator(".tag").all_inner_texts(), s.locator(".mono").all_inner_texts()) for label, s in summaries.items()},
+                         {"Open port": (["work: medium"], ["exposure.listening · open_port"]),
+                          "Third-party taps": (["work: small"], ["packages.brew_taps"]),
+                          "Inventory": ([], ["packages.inventory"]), "PATH shadowing": (["work: small"], ["persistence.path_shadow"])})
+        self.page.select_option("#lang", "tr")
+        self.assertEqual(self.page.locator('#plist .pgroup > summary:has-text("persistence.path_shadow") .tag').inner_text(), "iş: küçük")
+        self.page.select_option("#lang", "en")
+
+    def test_rows_and_their_fingerprints_come_worst_first_then_most_open_then_by_name(self):
+        self.open_plugin()
+        self.page.evaluate("""const r = reports.get('secure-it').report;
+            const add = (fingerprint, severity, title, row) => r.findings.push({ ...r.findings[0], fingerprint, severity, title,
+                row: { key: 'k:' + row, label: row }, links: [], link: null });
+            add('m1', 'medium', 'mmm one', 'mmm'); add('a1', 'medium', 'aaa one', 'aaa');
+            add('z2', 'low', 'zzz b', 'zzz'); add('z1', 'medium', 'zzz c', 'zzz'); add('z3', 'medium', 'zzz a', 'zzz'); renderPlugin()""")
+        self.assertEqual(self.unfold("Open port").locator(".prow > summary").all_inner_texts(),
+                         ["HIGH\njq\n2 findings", "MEDIUM\nzzz\n3 findings", "MEDIUM\naaa one\n1 finding", "MEDIUM\nmmm one\n1 finding"])
+        self.assertEqual(self.unfold("Open port", "zzz").locator(".alert > div:first-child").all_inner_texts(),
+                         ["MEDIUM zzz a z3", "MEDIUM zzz c z1", "LOW zzz b z2"])
+
+    def test_advice_the_findings_of_a_topic_do_not_share_goes_on_each_card(self):
+        self.open_plugin()
+        self.page.evaluate("""reports.get('secure-it').report.findings.find((f) => f.fingerprint === 'cccccccccc').remediation = 'Close the printer port.';
+            renderPlugin()""")
+        self.assertEqual(self.unfold("Open port").locator(".pgroup-body > p").count(), 0)
+        self.assertEqual(self.unfold("Open port", "jq").locator(".alert .kv").inner_text().split("\n"),
+                         ["Detail", "pid 77", "Advice", "Stop the service.", "Records", "CVE-2026-1"])
+
+    def test_the_tab_says_when_the_report_cannot_be_read_has_no_runs_or_no_run_changed_anything(self):
+        self.open_plugin()
+        failed = lambda route: route.fulfill(status=500, content_type="application/json", body=json.dumps({"error": "disk on fire"}))
+        self.page.route("**/api/plugin?*", failed)
+        try:
+            self.page.evaluate("reports.clear(); renderPlugin()")
+            self.assertEqual(self.page.inner_text("#content .warn"), "brewdash could not read the report: disk on fire")
+        finally:
+            self.page.unroute("**/api/plugin?*")
+        self.page.evaluate("reports.clear(); renderPlugin()")
+        self.page.click('#content [data-pview="history"]')
+        self.page.evaluate("const r = reports.get('secure-it').report; r.history.forEach((run) => { run.alerts = r.history[0].alerts; }); renderPlugin()")
+        self.assertEqual((self.page.locator("#pbody .prun").count(), self.page.inner_text("#pbody > p.muted")),
+                         (0, "No alert came or went between the kept runs."))
+        self.page.evaluate("reports.get('secure-it').report.history = []; renderPlugin()")
+        self.assertEqual(self.page.inner_text("#pbody"), "The report has no runs yet.")
+
+    def test_a_new_brew_state_fetches_the_report_again_for_its_links(self):
+        self.open_plugin()
+        self.page.evaluate("""window.fetched = 0; const was = window.fetch;
+            window.fetch = (url, ...rest) => { if (String(url).includes('/api/plugin?')) fetched++; return was(url, ...rest); }""")
+        self.page.evaluate("renderPlugin()")
+        self.assertEqual(self.page.evaluate("fetched"), 0)
+        self.page.evaluate("S.version += 1; renderPlugin()")
+        self.page.wait_for_function("window.fetched === 1", timeout=5000)
+        self.page.wait_for_selector("#plist .pgroup")
+
+    def test_a_topic_explains_itself_and_names_its_sources(self):
+        self.open_plugin()
+        why = self.unfold("Open port", "Why?")
+        self.assertEqual(why.locator("p").all_inner_texts(), ["What: A port other machines can reach.", "Why it matters: Anyone on the network can talk to it.",
+                                                              "How attackers use it: Attackers scan for it."])
+        self.assertEqual(why.locator("li").all_inner_texts(), ["MITRE ATT&CK T1046 (framework, checked 2026-10-01)",
+                                                               "Apple Platform Security (vendor, no link, not checked)"])
+        self.assertEqual(why.locator("a").get_attribute("href"), "https://attack.mitre.org/techniques/T1046/")
+        self.assertEqual(self.unfold("Third-party taps").locator(".pwhy").count(), 0)
+
+    def test_the_plugins_texts_follow_the_chosen_language_and_fall_back_to_english(self):
+        self.open_plugin()
+        self.unfold("Open port", "jq")
+        self.page.select_option("#lang", "tr")
+        self.assertEqual(self.page.locator("#plist .pgroup > summary b").first.inner_text(), "Açık port")
+        card = self.page.locator("#plist .alert").first
+        self.assertIn("jq *:8080 portunda dinliyor", card.inner_text())
+        self.assertEqual(card.locator("pre").all_inner_texts()[1], 'sudo secure-it accept 0123456789 --note "neden"')
+        self.assertEqual(self.page.locator("#plist > h3").first.inner_text(), "Ağ 2 bulgu")
+        self.assertEqual(self.page.locator("#content [data-pview]").all_inner_texts(), ["Uyarılar", "Geçmiş", "Check'ler"])
+        self.page.select_option("#lang", "es")
+        self.assertEqual(self.page.locator("#plist .pgroup > summary b").first.inner_text(), "Open port")
+        self.assertEqual(self.page.locator("#plist > h3").first.inner_text(), "Network 2 hallazgos")
+        self.page.select_option("#lang", "en")
+
+    def view(self, name):
+        self.open_plugin()
+        self.page.click(f'#content [data-pview="{name}"]')
+
+    def test_history_shows_the_open_alerts_of_each_run_and_what_came_and_went(self):
+        self.view("history")
+        rows = [r.locator("td").all_inner_texts() for r in self.page.locator("#pbody table tbody tr").all()]
+        self.assertEqual(rows, [["2026-11-03 08:00", "0", "1", "2", "1", "4", "2", "0"],
+                                ["2026-11-02 08:00", "0", "1", "1", "1", "3", "1", "1"],
+                                ["2026-11-01 08:00", "0", "1", "1", "0", "2", "–", "–"]])
+        self.assertEqual([m.get_attribute("title") for m in self.page.locator("#pbody .month").all()],
+                         ["2026-11-01 08:00: 0 critical, 1 high, 1 medium, 0 low", "2026-11-02 08:00: 0 critical, 1 high, 1 medium, 1 low",
+                          "2026-11-03 08:00: 0 critical, 1 high, 2 medium, 1 low"])
+        self.assertEqual([s.evaluate("(e) => e.style.height") for s in self.page.locator("#pbody .run-stack").all()], ["50%", "75%", "100%"])
+        changes = [[line for line in c.inner_text().split("\n") if line] for c in self.page.locator("#pbody .prun").all()]
+        self.assertEqual(changes, [["2026-11-03 08:00", "New (2):", f"MEDIUM {XSS} eeeeeeeeee", "LOW cupsd listens on *:631 cccccccccc accepted"],
+                                   ["2026-11-02 08:00", "New (1):", "LOW ~/bin shadows 1 system command ffffffffff",
+                                    "Gone (1):", "MEDIUM telnetd listens on *:23 7e7e7e7e7e"]])
+
+    def test_checks_lists_each_check_that_did_not_run_with_its_counts_and_last_reason(self):
+        self.view("checks")
+        self.assertEqual([r.locator("td").all_inner_texts() for r in self.page.locator("#pbody table tbody tr").all()],
+                         [["SIP is on\nsystem.sip", "1", "1", "2026-11-02 08:00", "Full Disk Access missing"]])
+        self.assertEqual(self.page.inner_text("#pbody > p"), "Checks that failed or were skipped in the 3 kept runs.")
+        self.page.evaluate("reports.get('secure-it').report.history.forEach((r) => { r.checks = []; }); renderPlugin()")
+        self.assertEqual(self.page.inner_text("#pbody"), "✔ Every check ran in each of the 3 kept runs.")
 
     def set_plugin(self, js):
         self.page.evaluate(f"S.snap.plugins = S.snap.plugins.map((p) => ({{...p, {js}}})); renderAll()")
@@ -865,9 +1126,12 @@ class UiSmokeTest(UiFixture):
         self.assertEqual(self.page.locator("#content .ok").count(), 0)
 
     def test_a_report_with_nothing_open_says_so(self):
-        self.set_plugin("alerts: []")
-        self.tab(SECURE_IT)
-        self.assertEqual(self.page.inner_text("#content .ok"), "✔ secure-it reports nothing open.")
+        self.open_plugin()
+        self.page.evaluate("const r = reports.get('secure-it').report; r.findings = r.findings.filter((f) => f.accepted || f.severity === 'info'); renderPlugin()")
+        self.assertEqual(self.page.inner_text("#plist"), "✔ secure-it reports nothing open.")
+        self.page.check('[data-pf="accepted"]')
+        self.assertEqual(self.page.locator("#plist .ok").count(), 1)
+        self.assertEqual(self.page.locator("#plist .pgroup > summary b").all_inner_texts(), ["Open port"])
 
     def test_installing_the_plugin_while_the_page_is_open_offers_a_scan(self):
         # With no report the plugin's seq stays put, so only the install itself can tell the page.
@@ -881,7 +1145,7 @@ class UiSmokeTest(UiFixture):
         finally:
             self.exe.write_text("")
             self.cls_report(REPORT)
-        self.page.wait_for_selector("#content .alert")
+        self.page.wait_for_selector("#plist .pgroup")
 
     def test_a_plugin_someone_other_than_root_can_change_says_why_scan_now_is_off(self):
         self.tab(SECURE_IT)
@@ -915,7 +1179,7 @@ class UiSmokeTest(UiFixture):
             self.unprotected.clear()
             self.exe.write_text("")
             self.cls_report(REPORT)
-        self.page.wait_for_selector("#content .alert")
+        self.page.wait_for_selector("#plist .pgroup")
 
     def test_scan_now_runs_the_catalogs_command_after_a_confirm(self):
         before = len(self.brew.popened)
@@ -945,40 +1209,63 @@ class UiSmokeTest(UiFixture):
         finally:
             del self.brew.scripts[("-A",)]
 
+    UPDATE = "{ cd brewdash-plugin-security 2>/dev/null || cd secure-it; } && git pull && sudo ./install.sh"
+
     def test_a_report_from_an_older_plugin_says_to_update_the_plugin(self):
         try:
-            self.cls_report({**REPORT, "schema": 1})
+            self.cls_report({**REPORT, "schema": 2})
             self.page.wait_for_selector('.att:has-text("secure-it needs an update")')
             self.tab(SECURE_IT)
-            warn = self.page.inner_text("#content .warn")
-            self.assertIn("An older secure-it is installed", warn)
-            self.assertIn("cd secure-it && git pull && sudo ./install.sh", warn)
-            self.assertEqual(self.page.locator("#content .alert, #content .ok").count(), 0)
+            warn = self.page.locator("#content .warn")
+            self.assertIn("An older secure-it is installed", warn.inner_text())
+            self.assertEqual(warn.locator("pre").inner_text(), self.UPDATE)
+            self.assertEqual(self.page.locator("#content .alert, #content .ok, #content [data-pview]").count(), 0)
         finally:
             self.cls_report(REPORT)
-        self.page.wait_for_selector("#content .alert")
+        self.page.wait_for_selector("#plist .pgroup")
+
+    def test_a_report_only_where_an_older_plugin_wrote_says_to_update_the_plugin_and_is_not_read(self):
+        self.report.unlink()
+        self.legacy_report.parent.mkdir(exist_ok=True)
+        self.legacy_report.write_text(json.dumps(REPORT))
+        try:
+            self.page.wait_for_selector('.att:has-text("secure-it needs an update")')
+            self.tab(SECURE_IT)
+            warn = self.page.locator("#content .warn")
+            self.assertIn("An older secure-it is installed", warn.inner_text())
+            self.assertEqual(warn.locator("pre").inner_text(), self.UPDATE)
+            self.assertIn(f"secure-it has not written {self.report} yet.", self.page.inner_text("#content"))
+            self.assertEqual(self.page.locator("#content .alert, #content [data-pview]").count(), 0)
+            self.assertEqual(self.page.locator(f'nav button[data-tab="{SECURE_IT}"] .count').count(), 0)
+        finally:
+            self.legacy_report.unlink()
+            self.cls_report(REPORT)
+        self.page.wait_for_selector("#plist .pgroup")
 
     def test_a_report_from_a_newer_plugin_says_to_update_brewdash(self):
-        self.set_plugin("found: true, error: 'it has schema 3; this brewdash reads schema 2', outdated: 'brewdash', alerts: []")
+        self.set_plugin("found: true, error: 'it has schema 4; this brewdash reads schema 3', outdated: 'brewdash', alerts: []")
         self.assertIn(("warning", SECURE_IT, "secure-it report unreadable"), self.attention())
         self.tab(SECURE_IT)
         self.assertEqual(self.page.inner_text("#content .warn"),
                          "secure-it writes a newer report than this brewdash reads. Update brewdash in Settings.")
 
     def test_a_new_report_shows_up_without_a_brew_change(self):
+        self.open_plugin()
         try:
-            self.cls_report({**REPORT, "alerts": REPORT["alerts"][:1]})
+            self.cls_report({**REPORT, "findings": FINDINGS[:1]})
             self.page.wait_for_function(f"document.querySelector('nav button[data-tab=\"{SECURE_IT}\"] .count').textContent === '1'")
+            self.page.wait_for_function("document.querySelector('#pshown')?.textContent === '1 finding shown'")
         finally:
             self.cls_report(REPORT)
-        self.page.wait_for_function(f"document.querySelector('nav button[data-tab=\"{SECURE_IT}\"] .count').textContent === '3'")
+        self.page.wait_for_function(f"document.querySelector('nav button[data-tab=\"{SECURE_IT}\"] .count').textContent === '4'")
+        self.page.wait_for_function("document.querySelector('#pshown')?.textContent === '4 findings shown'")
 
     def cls_report(self, data):
-        self.report.write_text(json.dumps(data) + " " * len(data["alerts"]) + " " * data["schema"])
+        self.report.write_text(json.dumps(data) + " " * len(data["findings"]) + " " * data["schema"])
 
     def test_a_manifest_dropped_into_the_state_dir_gets_its_own_escaped_tab_and_no_scan(self):
         manifest = self.plugins_dir / "acme.json"
-        (self.home / "acme.json").write_text(json.dumps({"schema": 2, "alerts": [REPORT["alerts"][0]]}))
+        (self.home / "acme.json").write_text(json.dumps({**REPORT, "findings": FINDINGS[:1]}))
         try:
             manifest.write_text(json.dumps({"schema": 1, "name": XSS, "report": "~/acme.json", "homepage": "https://acme.example/"}))
             self.page.wait_for_selector('nav button[data-tab="plugin-acme"]')
@@ -986,6 +1273,7 @@ class UiSmokeTest(UiFixture):
             self.assertEqual(order[order.index(SECURE_IT):order.index("history") + 1], [SECURE_IT, "plugin-acme", "history"])
             self.assertEqual(self.page.inner_text('nav button[data-tab="plugin-acme"]'), XSS + "1")
             self.page.click('nav button[data-tab="plugin-acme"]')
+            self.page.wait_for_selector("#plist .pgroup")
             self.assertEqual(self.page.locator("#content .alert").count(), 1)
             self.assertEqual(self.page.inner_text('#content a[href="https://acme.example/"]'), "Homepage")
             self.assertEqual(self.page.locator("#content [data-plugin-scan]").count(), 0)
@@ -1000,8 +1288,8 @@ class UiSmokeTest(UiFixture):
         # Steps two to four and the last each change one manifest field and leave the report's seq alone:
         # a new report path starts its own seq at 1, and a manifest with no report has seq 0.
         manifest = self.plugins_dir / "moved.json"
-        (self.home / "moved-a.json").write_text(json.dumps({"schema": 2, "alerts": REPORT["alerts"][:1]}))
-        (self.home / "moved-b.json").write_text(json.dumps({"schema": 2, "alerts": REPORT["alerts"][:2]}))
+        (self.home / "moved-a.json").write_text(json.dumps({**REPORT, "findings": FINDINGS[:1]}))
+        (self.home / "moved-b.json").write_text(json.dumps({**REPORT, "findings": FINDINGS[:2]}))
         tab = 'nav button[data-tab="plugin-moved"]'
         moved = {"schema": 1, "name": "Moved", "report": "~/moved-a.json"}
         steps = ((moved, "label", "Moved1"),
@@ -1046,7 +1334,7 @@ class UiSmokeTest(UiFixture):
                 page = self.browser.new_page()
                 try:
                     page.goto(self.url + f"#tab={tab}")
-                    page.wait_for_selector(".ov .att, #content .alert")
+                    page.wait_for_selector(".ov .att, #plist .pgroup")
                     page.wait_for_selector(f'nav button.active[data-tab="{shown}"]')
                     self.assertEqual(tab in page.url, tab == shown)
                 finally:
@@ -1160,6 +1448,7 @@ class UiSmokeTest(UiFixture):
 
     def test_a_copy_without_a_version_says_how_to_get_updates(self):
         self.page.click('nav button[data-tab="settings"]')
+        self.page.wait_for_function("S.settings !== null")
         self.page.evaluate("S.settings = { installed: null }; renderView()")
         self.assertIn("Run install.sh once more to get updates.", self.page.inner_text("#content .info"))
         self.assertEqual(self.page.locator("[data-update], [data-channel], [data-auto]").count(), 0)
@@ -1592,6 +1881,8 @@ class I18nTest(UiFixture):
             "export.group.": js("LIST_GROUPS"),
             "svc.": js("SVC_OPS"),
             "sev.": js("SEVERITIES"),
+            "plugin.view.": js("PLUGIN_VIEWS"),
+            "plugin.show.": js("PLUGIN_TOGGLES"),
             "job.status.": js("JOB_STATUSES"),
             "num.": [k + s for k in re.findall(r'(?:\[|counted\()"(\w+)", ', numbers) for s in ("", "_help")],
             "sig.": re.findall(r'\{"kind": "(\w+)", "signer"', server),
@@ -1628,6 +1919,12 @@ class I18nTest(UiFixture):
             for tab in tabs:
                 self.page.click(f'nav button[data-tab="{tab}"]')
                 self.page.wait_for_function("!document.querySelector('#content .loading')")
+            self.page.click(f'nav button[data-tab="{SECURE_IT}"]')
+            for view in self.page.evaluate("PLUGIN_VIEWS"):
+                self.page.click(f'#content [data-pview="{view}"]')
+            self.page.click('#content [data-pview="alerts"]')
+            self.page.check('[data-pf="accepted"]')
+            self.page.check('[data-pf="info"]')
             self.open("requested", "f:php@8.0")
             self.page.click("[data-advice]")
             self.page.wait_for_selector("#m-cancel")

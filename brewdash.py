@@ -555,10 +555,11 @@ def authorize(path, headers, token, port):
 
 # ---------- plugins ----------
 
-REPORT_SCHEMA = 2
+REPORT_SCHEMA = 3
 MANIFEST_SCHEMA = 1
-SEVERITIES = ("critical", "high", "medium", "low")
-ALERT_TEXT = ("check_id", "title", "detail", "remediation", "fix_command", "accept_command")
+SEVERITIES = ("critical", "high", "medium", "low", "info")
+ALERT_SEVERITIES = SEVERITIES[:-1]
+CHECK_STATUSES = ("skipped", "error")
 SUBJECT_KEY = {"path": "path", "tap": "name", "shell": None}
 PLUGIN_ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 BREW_FORMULA_PATH = re.compile(r"^(?:/opt/homebrew|/usr/local)/(?:Cellar|opt)/([^/]+)/")
@@ -567,21 +568,25 @@ SECURE_IT = "/usr/local/bin/secure-it"
 # Only a plugin in this catalog can be started from brewdash: its command is here, never in a file the user can write.
 PLUGIN_CATALOG = (
     {"id": "secure-it", "name": "secure-it", "homepage": "https://github.com/lemiorhan/brewdash-plugin-security",
-     "about": "plugin.about.secure_it", "report": "~/secure-it/report.json", "exe": SECURE_IT,
+     "about": "plugin.about.secure_it", "report": "~/.local/state/brewdash/plugins/secure-it/report.json",
+     # Where a secure-it before report schema 3 wrote; brewdash only checks that it is there, to say update.
+     "legacy_report": "~/secure-it/report.json", "exe": SECURE_IT,
      # secure-it's paths.py WRAPPER, INSTALL_DIR and STATE_DIR: the wrapper only execs what is in INSTALL_DIR.
      "protect": (SECURE_IT, "/usr/local/libexec/secure-it", "/Library/Application Support/secure-it"),
      "scan": ["/usr/bin/sudo", "-A", SECURE_IT, "scan", "--exit-zero"],
      "install": ["git clone https://github.com/lemiorhan/brewdash-plugin-security.git",
                  "cd brewdash-plugin-security && sudo ./install.sh"],
-     # Shown only for a secure-it that writes an older report, and those were cloned before the repo was renamed.
-     "update": ["cd secure-it && git pull && sudo ./install.sh"]},
+     # Shown only for a secure-it that writes an older report: cloned as secure-it before the repo was renamed,
+     # or as brewdash-plugin-security after. One line, so that outside both clones sudo runs nothing.
+     "update": ["{ cd brewdash-plugin-security 2>/dev/null || cd secure-it; } && git pull && sudo ./install.sh"]},
 )
 
 
 def load_report(path):
-    """A plugin's report. The user can write that file, so every field is
-    checked for type and the page escapes all of it; nothing in it becomes a job."""
-    out = {"path": str(path), "found": False, "error": None, "outdated": None, "generated_at": None, "alerts": []}
+    """A plugin's report, in report schema 3 (README, "Plugins"). The user can write that file, so every
+    field is checked for type and dropped or emptied when it is wrong; the page escapes all of it, and
+    nothing in it becomes a job."""
+    out = {"path": str(path), "found": False, "error": None, "outdated": None, "generated_at": None, "report": None}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -593,16 +598,100 @@ def load_report(path):
     if type(schema) is not int or schema != REPORT_SCHEMA:
         outdated = None if type(schema) is not int else "plugin" if schema < REPORT_SCHEMA else "brewdash"
         return {**out, "outdated": outdated, "error": f"it has schema {schema!r}; this brewdash reads schema {REPORT_SCHEMA}"}
-    out["generated_at"] = data["generated_at"] if isinstance(data.get("generated_at"), str) else None
-    for a in data.get("alerts") if isinstance(data.get("alerts"), list) else []:
-        if not isinstance(a, dict) or a.get("severity") not in SEVERITIES or not isinstance(a.get("title"), str):
-            continue
-        rec = {k: a[k] if isinstance(a.get(k), str) else None for k in ALERT_TEXT}
-        rec["severity"] = a["severity"]
-        rec["subject"] = clean_subject(a.get("subject"))
-        out["alerts"].append(rec)
-    out["alerts"].sort(key=lambda a: SEVERITIES.index(a["severity"]))
-    return out
+    return {**out, "generated_at": _str(data.get("generated_at")), "report": clean_report(data)}
+
+
+def report_text(value):
+    """A Text of a report: a string as it is, or the string entries of a {language: string} map; None when
+    nothing is left."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return {k: v for k, v in value.items() if isinstance(v, str)} or None
+    return None
+
+
+def _str(value):
+    return value if isinstance(value, str) else None
+
+
+def _https(value):
+    return value if isinstance(value, str) and value.startswith("https://") else None
+
+
+def _known(value, known):
+    return value if isinstance(value, str) and value in known else None
+
+
+def _dicts(value):
+    return [x for x in value if isinstance(x, dict)] if isinstance(value, list) else []
+
+
+def _labelled(value):
+    out = {}
+    for x in _dicts(value):
+        label = report_text(x.get("label"))
+        if isinstance(x.get("id"), str) and x["id"] not in out and label is not None:
+            out[x["id"]] = {"id": x["id"], "label": label}
+    return list(out.values())
+
+
+def _explain(value):
+    if not isinstance(value, dict):
+        return None
+    sources = [{"title": report_text(s["title"]), "kind": _str(s.get("kind")), "url": _https(s.get("url")), "verified": _str(s.get("verified"))}
+               for s in _dicts(value.get("sources")) if report_text(s.get("title")) is not None]
+    return {**{k: report_text(value.get(k)) for k in ("what", "why", "attack")}, "sources": sources}
+
+
+def _finding(f, topics):
+    fp, title = f.get("fingerprint"), report_text(f.get("title"))
+    if not isinstance(fp, str) or not fp or not _known(f.get("topic"), topics) or f.get("severity") not in SEVERITIES or title is None:
+        return None
+    row = f["row"] if isinstance(f.get("row"), dict) else {}
+    label, accepted = report_text(row.get("label")), f.get("accepted")
+    return {
+        "fingerprint": fp, "topic": f["topic"], "severity": f["severity"], "title": title,
+        "row": {"key": row["key"], "label": label} if isinstance(row.get("key"), str) and label is not None
+        else {"key": "fingerprint:" + fp, "label": title},
+        "detail": report_text(f.get("detail")), "remediation": report_text(f.get("remediation")),
+        "fix_command": _str(f.get("fix_command")), "accept_command": report_text(f.get("accept_command")),
+        "accepted": {"at": _str(accepted.get("at")), "note": _str(accepted.get("note"))} if isinstance(accepted, dict) else None,
+        "links": [{"label": x["label"], "url": x["url"]} for x in _dicts(f.get("links")) if isinstance(x.get("label"), str) and _https(x.get("url"))],
+        "subject": clean_subject(f.get("subject")),
+    }
+
+
+def _run(run):
+    if not isinstance(run.get("started_at"), str):
+        return None
+    alerts = [{"fingerprint": a["fingerprint"], "severity": a["severity"], "title": report_text(a.get("title")) or a["fingerprint"],
+               "accepted": a.get("accepted") is True}
+              for a in _dicts(run.get("alerts")) if isinstance(a.get("fingerprint"), str) and a.get("severity") in ALERT_SEVERITIES]
+    checks = [{"id": c["id"], "title": report_text(c.get("title")) or c["id"], "status": c["status"], "reason": report_text(c.get("reason"))}
+              for c in _dicts(run.get("checks")) if isinstance(c.get("id"), str) and c.get("status") in CHECK_STATUSES]
+    return {"started_at": run["started_at"], "alerts": alerts, "checks": checks}
+
+
+def clean_report(data):
+    """A schema 3 report with only what the tab reads, each of its type: a topic whose category the report
+    does not list is dropped, and so is a finding whose topic it does not list. Findings may share a
+    fingerprint (one process listening on several ports, each port rated on its own); one accept closes
+    them all, and the tab shows them as one."""
+    categories, efforts = _labelled(data.get("categories")), _labelled(data.get("efforts"))
+    category_ids, effort_ids = {c["id"] for c in categories}, {e["id"] for e in efforts}
+    topics = {}
+    for t in _dicts(data.get("topics")):
+        label = report_text(t.get("label"))
+        if isinstance(t.get("id"), str) and t["id"] not in topics and _known(t.get("category"), category_ids) and label is not None:
+            topics[t["id"]] = {"id": t["id"], "category": t["category"], "label": label, "effort": _known(t.get("effort"), effort_ids),
+                               "code": _str(t.get("code")), "explain": _explain(t.get("explain"))}
+    findings = [x for x in (_finding(f, topics) for f in _dicts(data.get("findings"))) if x]
+    scan = data["scan"] if isinstance(data.get("scan"), dict) else {}
+    facts = [{"label": report_text(x.get("label")), "value": report_text(x.get("value"))} for x in _dicts(scan.get("facts"))]
+    return {"scan": {"started_at": _str(scan.get("started_at")), "facts": [x for x in facts if x["label"] is not None and x["value"] is not None]},
+            "categories": categories, "efforts": efforts, "topics": list(topics.values()), "findings": findings,
+            "history": list(filter(None, map(_run, _dicts(data.get("history")))))}
 
 
 def clean_subject(subject):
@@ -676,7 +765,8 @@ def catalog_plugin(entry, home, unprotected):
     problem = entry_unprotected(entry, unprotected)
     about = msg(entry["about"])
     return {"id": entry["id"], "name": entry["name"], "homepage": entry["homepage"], "about": render(about), "about_msg": about,
-            "source": "catalog", "path": under_home(entry["report"], home), "error": None, "installed": installed,
+            "source": "catalog", "path": under_home(entry["report"], home),
+            "legacy": under_home(entry["legacy_report"], home) if entry.get("legacy_report") else None, "error": None, "installed": installed,
             "scan": installed and not problem, "unprotected": problem, "install": entry["install"], "update": entry["update"]}
 
 
@@ -684,7 +774,7 @@ def load_manifest(path, home):
     """A plugin from outside the catalog. Its installer wrote this file into the user's home, so it is as
     untrusted as a report: brewdash reads no command from it, and links only an https homepage."""
     out = {"id": path.stem, "name": path.stem, "homepage": None, "about": None, "about_msg": None, "source": "manifest", "path": None,
-           "error": None, "installed": True, "scan": False, "unprotected": None, "install": [], "update": []}
+           "legacy": None, "error": None, "installed": True, "scan": False, "unprotected": None, "install": [], "update": []}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError) as e:
@@ -1009,23 +1099,49 @@ class Store:
                 self._reports[path] = (key, report)
         return report
 
-    def plugins(self):
-        """The catalog's plugins, then the manifests in plugins_dir. Links are made on
-        every call, against the packages and taps brewdash has now."""
+    def _entries(self):
+        """The catalog's plugins, then the manifests in plugins_dir."""
         entries = [catalog_plugin(c, self.home, self.unprotected) for c in self.catalog]
         if self.plugins_dir:
             entries += manifests(self.plugins_dir, self.home, {e["id"] for e in entries})
+        return entries
+
+    def _linker(self):
+        """Links made against the packages and taps brewdash has now, so they follow a refresh."""
         with self.lock:
             pkg_ids = {p["id"] for p in self.model["packages"]} if self.model else set()
             taps = {t["name"] for t in self.model["taps"]} if self.model else set()
-        out = []
-        for e in entries:
-            if e["path"] is None:
-                out.append({**e, "found": False, "outdated": None, "generated_at": None, "alerts": [], "seq": 0})
-                continue
-            r = self._report(e["path"])
-            out.append({**e, **r, "alerts": [{**a, "link": link_subject(a["subject"], pkg_ids, taps)} for a in r["alerts"]]})
+        return lambda subject: link_subject(subject, pkg_ids, taps)
+
+    def _plugin_report(self, entry):
+        if entry["path"] is None:
+            return {"found": False, "outdated": None, "generated_at": None, "report": None, "seq": 0}
+        r = dict(self._report(entry["path"]))
+        if not r["found"] and entry["legacy"] and os.path.exists(entry["legacy"]):
+            r.update(outdated="plugin", error=f"found {entry['legacy']}, where an older {entry['name']} writes; this brewdash reads {entry['path']}")
+        return r
+
+    def plugins(self):
+        """Every plugin with its open alerts only: above info and not accepted, the ones the tab badge, the
+        Overview and the package and tap pages count. The page asks plugin_report for the rest, so the
+        state it polls stays small."""
+        link, out = self._linker(), []
+        for e in self._entries():
+            r = self._plugin_report(e)
+            report = r.pop("report")
+            alerts = [{"fingerprint": f["fingerprint"], "severity": f["severity"], "title": f["title"], "link": link(f["subject"])}
+                      for f in (report["findings"] if report else []) if f["severity"] in ALERT_SEVERITIES and f["accepted"] is None]
+            out.append({**e, **r, "alerts": sorted(alerts, key=lambda a: SEVERITIES.index(a["severity"]))})
         return out
+
+    def plugin_report(self, plugin_id):
+        """One plugin's whole report for its tab, every finding linked as plugins() links an open alert."""
+        entry = next((e for e in self._entries() if e["id"] == plugin_id), None)
+        if entry is None:
+            raise ValueError(f"no plugin {plugin_id!r}")
+        r, link = self._plugin_report(entry), self._linker()
+        report = r["report"] and {**r["report"], "findings": [{**f, "link": link(f["subject"])} for f in r["report"]["findings"]]}
+        return {"id": plugin_id, "seq": r["seq"], "report": report}
 
     def scannable(self):
         return {c["id"]: c for c in self.catalog if os.path.exists(c["exe"]) and not entry_unprotected(c, self.unprotected)}
@@ -1618,6 +1734,8 @@ def make_handler(store, runner, brew, token, port_ref, export, updater):
                     return self._send(200, runner.view(open_ids))
                 if path == "/api/history":
                     return self._send(200, runner.history())
+                if path == "/api/plugin":
+                    return self._send(200, store.plugin_report(qs.get("id", [""])[0]))
                 if path == "/api/settings":
                     return self._send(200, updater.view())
                 if path == "/api/search":

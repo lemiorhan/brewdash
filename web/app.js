@@ -20,7 +20,7 @@ const S = {
   selected: new Set(), current: null, depth: 1,
   jobs: [], openJobs: new Set(), history: [], introOpen: false,
   search: { q: "", results: null, preview: null, busy: false },
-  list: { items: [], brewfile: "" },
+  list: { items: [], brewfile: "" }, plugin: {},
 };
 
 const TABS = ["overview", "requested", "deps", "casks", "services", "taps", "health", "apps", "shell", "history",
@@ -261,7 +261,8 @@ function renderDetail() {
     <p>${esc(p.desc || t("detail.no_desc"))}</p>
     ${renderAdvice(p)}
     ${plugins().map((pl) => [pl, linkedTo(pl.alerts, "package", p.id)]).filter(([, hits]) => hits.length).map(([pl, hits]) =>
-      `<div class="detail-section"><h4>${t("detail.findings", { name: esc(pl.name) })}</h4>${hits.map(alertCard).join("")}</div>`).join("")}
+      `<div class="detail-section"><h4>${t("detail.findings", { name: esc(pl.name) })}</h4>${hits.map(alertLine).join("")}
+        <button class="small" data-tab="${PLUGIN_TAB}${esc(pl.id)}">${t("sec.open", { name: esc(pl.name) })}</button></div>`).join("")}
     <div class="kv">
       ${p.kind === "cask" && p.display_name !== p.name ? `<div>${t("detail.app")}</div><div>${esc(p.display_name)}</div>` : ""}
       <div>${t("col.version")}</div><div class="mono">${esc(p.version)}${p.outdated ? ` → <b style="color:var(--accent)">${esc(p.latest)}</b>` : ""}</div>
@@ -576,21 +577,220 @@ function alertLink(l) {
   return `<div style="margin-top:6px"><button class="small" data-tab="${esc(l.tab)}">${t("sec.open", { name: esc(label) })}</button></div>`;
 }
 
-const SEVERITIES = ["critical", "high", "medium", "low"];
+const SEVERITIES = ["critical", "high", "medium", "low", "info"];
+const ALERT_SEVERITIES = SEVERITIES.slice(0, -1);
 const sevLabel = (s) => SEVERITIES.includes(s) ? t("sev." + s) : s;
+const sevRank = (s) => SEVERITIES.length - SEVERITIES.indexOf(s);
+const sevTag = (s) => `<span class="sev sev-${esc(s)}">${esc(sevLabel(s))}</span>`;
+const worstOf = (xs) => xs.reduce((a, x) => sevRank(x.severity) > sevRank(a.severity) ? x : a);
+const isOpen = (f) => ALERT_SEVERITIES.includes(f.severity) && !f.accepted;
+const rankOf = (fs) => Math.max(0, ...fs.filter(isOpen).map((f) => sevRank(f.severity)));
+const FINGERPRINT_SHOWN = 10;
+const stamp = (iso) => (iso || "").replace("T", " ").slice(0, 16);
+const unique = (xs) => [...new Set(xs)];
+const txt = (v) => typeof v === "string" ? v : v ? v[LANG] ?? v.en ?? v.tr ?? Object.values(v)[0] ?? "" : "";
 
-// Commands are shown to copy, never run: brewdash does not run what a file in the user's home tells it to.
-function alertCard(a) {
-  return `<div class="alert sev-${esc(a.severity)}">
-    <div><span class="sev">${esc(sevLabel(a.severity))}</span> <b>${esc(a.title)}</b> <span class="muted mono">${esc(a.check_id)}</span></div>
-    ${a.detail ? `<div class="muted" style="margin-top:4px">${esc(a.detail)}</div>` : ""}
-    ${a.remediation ? `<div style="margin-top:6px">${esc(a.remediation)}</div>` : ""}
-    ${a.fix_command ? `<div class="cmd"><span class="muted">${t("sec.fix")}</span><pre>${esc(a.fix_command)}</pre><button class="small" data-copytext="${esc(a.fix_command)}">${t("btn.copy")}</button></div>` : ""}
-    ${a.accept_command ? `<div class="cmd"><span class="muted">${t("sec.if_expected")}</span><pre>${esc(a.accept_command)}</pre><button class="small" data-copytext="${esc(a.accept_command)}">${t("btn.copy")}</button></div>` : ""}
-    ${alertLink(a.link)}</div>`;
+function bucket(xs, key) {
+  const m = new Map();
+  for (const x of xs) { const k = key(x); m.has(k) ? m.get(k).push(x) : m.set(k, [x]); }
+  return m;
 }
 
+const order = (...keys) => (a, b) => {
+  for (const key of keys) {
+    const x = key(a), y = key(b), c = typeof x === "string" ? x.localeCompare(y) : x - y;
+    if (c) return c;
+  }
+  return 0;
+};
+
+const alertLine = (a) => `<div class="alert sev-${esc(a.severity)}">${sevTag(a.severity)} <b>${esc(txt(a.title))}</b></div>`;
 const commandLines = (lines) => `<pre>${lines.map(esc).join("\n")}</pre>`;
+// Commands are shown to copy, never run: brewdash does not run what a file in the user's home tells it to.
+const copyCommand = (label, c) => `<div class="cmd"><span class="muted">${label}</span><pre>${esc(c)}</pre><button class="small" data-copytext="${esc(c)}">${t("btn.copy")}</button></div>`;
+
+// The key holds S.version because the server links each finding to the packages and taps of that state.
+const reports = new Map();
+
+async function loadReport(p) {
+  const key = `${p.seq}:${S.version}`, had = reports.get(p.id);
+  if (had?.key === key) return;
+  reports.set(p.id, { key, report: had?.report ?? null });
+  let got;
+  try { got = { key, report: (await api("/api/plugin?id=" + encodeURIComponent(p.id))).report }; }
+  catch (e) { got = { key, report: null, error: e.message }; }
+  if (reports.get(p.id)?.key !== key) return;
+  reports.set(p.id, got);
+  if (S.tab === PLUGIN_TAB + p.id) renderPlugin();
+}
+
+const PLUGIN_VIEWS = ["alerts", "history", "checks"];
+const PLUGIN_TOGGLES = ["accepted", "info"];
+const viewOf = (id) => S.plugin[id] ??= { view: "alerts", q: "", severity: "", category: "", effort: "", accepted: false, info: false, open: new Set() };
+const unfolded = (v, key) => v.open.has(key) || !!v.q.trim();
+
+// Category, topic, row, then the findings of one fingerprint, which one accept closes together. Topics come worst open
+// finding first, then least work, then most open; rows and fingerprints worst first. `shown` filters the fingerprints;
+// the order stays that of the whole report.
+function alertTree(r, shown) {
+  const effortAt = (id) => { const i = r.efforts.findIndex((e) => e.id === id); return i < 0 ? r.efforts.length : i; };
+  const rowsOf = new Map(r.topics.map((tp) => [tp.id, new Map()]));
+  for (const same of bucket(r.findings, (f) => f.topic + "\n" + f.fingerprint).values()) {
+    const rows = rowsOf.get(same[0].topic), key = same[0].row.key;
+    rows.has(key) ? rows.get(key).push(same) : rows.set(key, [same]);
+  }
+  const groups = r.topics.filter((tp) => rowsOf.get(tp.id).size).map((topic) => {
+    const rows = [...rowsOf.get(topic.id).values()].map((all) => {
+      all.sort(order((same) => -rankOf(same), (same) => txt(same[0].title)));
+      const findings = all.flat(), titles = unique(findings.map((f) => txt(f.title)));
+      const instances = all.map((same) => ({ same, shown: shown(same, topic) })).filter((i) => i.shown.length);
+      return { key: all[0][0].row.key, label: titles.length === 1 ? titles[0] : txt(all[0][0].row.label), findings, instances, shown: instances.flatMap((i) => i.shown) };
+    }).sort(order((x) => -rankOf(x.findings), (x) => -x.findings.filter(isOpen).length, (x) => x.label));
+    const findings = rows.flatMap((x) => x.findings), visible = rows.filter((x) => x.shown.length);
+    return { topic, findings, rows: visible, shown: visible.flatMap((x) => x.shown) };
+  }).sort(order((g) => -rankOf(g.findings), (g) => effortAt(g.topic.effort), (g) => -g.findings.filter(isOpen).length, (g) => txt(g.topic.label)));
+  return [...bucket(groups, (g) => g.topic.category)].map(([id, all]) => {
+    const visible = all.filter((g) => g.shown.length);
+    return { category: r.categories.find((c) => c.id === id), groups: visible, shown: visible.flatMap((g) => g.shown) };
+  }).filter((c) => c.shown.length);
+}
+
+// An unchosen severity shows every alert, and info only when asked for; a chosen one shows only itself.
+function shownBy(v) {
+  const q = v.q.trim().toLowerCase();
+  return (same, topic) => {
+    if ((v.category && topic.category !== v.category) || (v.effort && topic.effort !== v.effort) || (!v.accepted && same[0].accepted)) return [];
+    if (q && ![topic.label, ...same.flatMap((f) => [f.title, f.detail])].map(txt).join(" ").toLowerCase().includes(q)) return [];
+    return same.filter((f) => v.severity ? f.severity === v.severity : v.info || f.severity !== "info");
+  };
+}
+
+const findingCount = (fs) => t("plugin.count", { n: fs.length });
+const severityCounts = (fs) => SEVERITIES.map((s) => [s, fs.filter((f) => f.severity === s).length]).filter(([, n]) => n).map(([s, n]) => `${n} ${esc(sevLabel(s))}`).join(" · ");
+
+function explainHtml(x, v, key) {
+  if (!x) return "";
+  const part = (label, text) => txt(text) ? `<p><b>${label}</b> ${esc(txt(text))}</p>` : "";
+  const source = (s) => {
+    const title = s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(txt(s.title))}</a>` : esc(txt(s.title));
+    const about = [s.kind && esc(s.kind), !s.url ? t("plugin.source_no_link") : s.verified ? t("plugin.source_checked", { date: esc(s.verified) }) : ""].filter(Boolean);
+    return `<li>${title}${about.length ? ` <span class="muted">(${about.join(", ")})</span>` : ""}</li>`;
+  };
+  return `<details class="pwhy"${unfolded(v, key) ? " open" : ""}><summary data-fold="${esc(key)}">${t("plugin.why")}</summary>
+    ${part(t("plugin.what"), x.what)}${part(t("plugin.why_it_matters"), x.why)}${part(t("plugin.attack"), x.attack)}
+    ${x.sources.length ? `<ul class="sources">${x.sources.map(source).join("")}</ul>` : ""}</details>`;
+}
+
+function instanceHtml({ same, shown }, adviceShown) {
+  const f = same[0];
+  const titles = unique(same.map((x) => txt(x.title)));
+  const accept = same.find((x) => x.accept_command)?.accept_command;
+  const kv = [
+    ...unique(same.map((x) => txt(x.detail))).filter(Boolean).map((d) => [t("plugin.detail"), esc(d)]),
+    ...(adviceShown ? [] : unique(same.map((x) => txt(x.remediation))).filter(Boolean).map((d) => [t("plugin.advice"), esc(d)])),
+    ...(f.links.length ? [[t("plugin.records"), f.links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join(", ")]] : []),
+    ...(f.accepted ? [[t("plugin.accepted_at"), esc(stamp(f.accepted.at)) + (f.accepted.note ? " — " + esc(f.accepted.note) : "")]] : []),
+  ];
+  return `<div class="alert sev-${esc(worstOf(shown).severity)}">
+    <div>${sevTag(worstOf(shown).severity)} <b>${esc(titles[0])}</b> <span class="muted mono">${esc(f.fingerprint.slice(0, FINGERPRINT_SHOWN))}</span>${f.accepted ? ` <span class="tag">${t("plugin.accepted")}</span>` : ""}</div>
+    ${titles.length > 1 ? `<div class="muted">${t("plugin.same_fingerprint", { titles: esc(titles.slice(1).join(", ")) })}</div>` : ""}
+    ${kv.length ? `<div class="kv">${kv.map(([k, x]) => `<div>${k}</div><div>${x}</div>`).join("")}</div>` : ""}
+    ${unique(same.map((x) => x.fix_command)).filter(Boolean).map((c) => copyCommand(t("sec.fix"), c)).join("")}
+    ${accept && !f.accepted ? copyCommand(t("sec.if_expected"), txt(accept)) : ""}
+    ${alertLink(f.link)}</div>`;
+}
+
+function topicHtml(g, r, v) {
+  const advice = unique(g.findings.map((f) => txt(f.remediation)));
+  const shared = advice.length === 1 ? advice[0] : "";
+  const effort = r.efforts.find((e) => e.id === g.topic.effort);
+  const key = "t:" + g.topic.id;
+  const row = (x) => {
+    const rkey = `r:${g.topic.id}|${x.key}`;
+    return `<details class="prow"${unfolded(v, rkey) ? " open" : ""}><summary data-fold="${esc(rkey)}">${sevTag(worstOf(x.shown).severity)}
+      <span>${esc(x.label)}</span><span class="muted">${findingCount(x.shown)}</span></summary>
+      ${x.instances.map((i) => instanceHtml(i, !!shared)).join("")}</details>`;
+  };
+  return `<details class="pgroup"${unfolded(v, key) ? " open" : ""}><summary data-fold="${esc(key)}">${sevTag(worstOf(g.shown).severity)}
+      <b>${esc(txt(g.topic.label))}</b><span class="muted">${findingCount(g.shown)} · ${severityCounts(g.shown)}</span>
+      ${effort ? `<span class="tag">${t("plugin.effort", { effort: esc(txt(effort.label)) })}</span>` : ""}
+      ${g.topic.code ? `<span class="muted mono">${esc(g.topic.code)}</span>` : ""}</summary>
+    <div class="pgroup-body">${shared ? `<p><b>${t("plugin.advice_shared")}</b> ${esc(shared)}</p>` : ""}${explainHtml(g.topic.explain, v, "w:" + g.topic.id)}
+      ${g.rows.map(row).join("")}</div></details>`;
+}
+
+function renderAlertList() {
+  const p = pluginOf(S.tab), r = p && reports.get(p.id)?.report, list = $("#plist");
+  if (!r || !list) return;
+  const v = viewOf(p.id), tree = alertTree(r, shownBy(v));
+  const shown = tree.flatMap((c) => c.shown);
+  $("#pshown").textContent = t("plugin.shown", { n: shown.length });
+  const open = r.findings.some(isOpen);
+  list.innerHTML = (open ? "" : `<p class="ok">✔ ${t("plugin.nothing_open", { name: esc(p.name) })}</p>`) +
+    (tree.length ? tree.map((c) => `<h3>${esc(txt(c.category?.label) || "")} <span class="muted">${findingCount(c.shown)}</span></h3>
+      ${c.groups.map((g) => topicHtml(g, r, v)).join("")}`).join("") : open ? `<p class="muted">${t("plugin.no_match")}</p>` : "");
+}
+
+function alertsHtml(r, v) {
+  const used = new Set(r.topics.filter((tp) => r.findings.some((f) => f.topic === tp.id)).map((tp) => tp.category));
+  const select = (key, all, options) => `<select data-pf="${key}"><option value="">${all}</option>${options.map(([id, label]) =>
+    `<option value="${esc(id)}"${v[key] === id ? " selected" : ""}>${esc(label)}</option>`).join("")}</select>`;
+  return `<div class="toolbar">
+      <input type="search" id="pq" placeholder="${t("plugin.search")}" value="${esc(v.q)}">
+      ${select("severity", t("plugin.all_severities"), SEVERITIES.map((s) => [s, sevLabel(s)]))}
+      ${select("category", t("plugin.all_categories"), r.categories.filter((c) => used.has(c.id)).map((c) => [c.id, txt(c.label)]))}
+      ${r.efforts.length ? select("effort", t("plugin.all_efforts"), r.efforts.map((e) => [e.id, t("plugin.effort", { effort: txt(e.label) })])) : ""}
+      ${PLUGIN_TOGGLES.map((key) => `<label><input type="checkbox" data-pf="${key}"${v[key] ? " checked" : ""}> ${t("plugin.show." + key)}</label>`).join("")}
+      <span class="muted" id="pshown"></span></div>
+    <div id="plist"></div>`;
+}
+
+function runChanges(before, after) {
+  const was = bucket(before.alerts, (a) => a.fingerprint), is = bucket(after.alerts, (a) => a.fingerprint);
+  const only = (a, b) => [...a].filter(([fp]) => !b.has(fp)).map(([, xs]) => worstOf(xs)).sort(order((x) => -sevRank(x.severity), (x) => txt(x.title)));
+  return { added: only(is, was), removed: only(was, is) };
+}
+
+function historyHtml(r) {
+  const runs = r.history;
+  if (!runs.length) return `<p class="muted">${t("plugin.history.none")}</p>`;
+  const open = runs.map((run) => Object.fromEntries(ALERT_SEVERITIES.map((s) => [s, run.alerts.filter((a) => a.severity === s && !a.accepted).length])));
+  const total = open.map((c) => sum(Object.values(c)));
+  const changes = runs.map((run, i) => i ? runChanges(runs[i - 1], run) : null);
+  const peak = Math.max(1, ...total);
+  const counts = (i) => ALERT_SEVERITIES.map((s) => `${open[i][s]} ${sevLabel(s)}`).join(", ");
+  const item = (a) => `<li>${sevTag(a.severity)} ${esc(txt(a.title))} <span class="muted mono">${esc(a.fingerprint.slice(0, FINGERPRINT_SHOWN))}</span>${a.accepted ? ` <span class="tag">${t("plugin.accepted")}</span>` : ""}</li>`;
+  const list = (label, xs) => xs.length ? `<p>${label}</p><ul>${xs.map(item).join("")}</ul>` : "";
+  const changed = runs.map((run, i) => [run, changes[i]]).filter(([, c]) => c && (c.added.length || c.removed.length)).reverse();
+  return `<div class="card"><h3>${t("plugin.history.open_per_run")}</h3><p class="caption muted">${t("plugin.history.caption")}</p>
+      <div class="months">${runs.map((run, i) => `<div class="month" title="${esc(stamp(run.started_at))}: ${esc(counts(i))}">
+        <span class="run-stack" style="height:${(100 * total[i] / peak).toFixed(1)}%">${ALERT_SEVERITIES.filter((s) => open[i][s]).map((s) =>
+          `<span class="run-seg sev-${s}" style="flex:${open[i][s]}"></span>`).join("")}</span></div>`).join("")}</div>
+      <div class="months-axis muted"><span>${esc(stamp(runs[0].started_at))}</span><span>${esc(stamp(runs.at(-1).started_at))}</span></div>
+      <div class="legend">${ALERT_SEVERITIES.map((s) => `<span><i class="dot run-seg sev-${s}"></i>${esc(sevLabel(s))}</span>`).join("")}</div></div>
+    <h3>${t("plugin.history.runs")}</h3>
+    <table class="pruns"><thead><tr><th>${t("plugin.history.run")}</th>${ALERT_SEVERITIES.map((s) => `<th class="num">${esc(sevLabel(s))}</th>`).join("")}
+      <th class="num">${t("plugin.history.total")}</th><th class="num">${t("plugin.history.new")}</th><th class="num">${t("plugin.history.gone")}</th></tr></thead>
+    <tbody>${runs.map((run, i) => `<tr><td class="mono">${esc(stamp(run.started_at))}</td>${ALERT_SEVERITIES.map((s) => `<td class="num">${open[i][s]}</td>`).join("")}
+      <td class="num">${total[i]}</td><td class="num">${changes[i] ? changes[i].added.length : "–"}</td><td class="num">${changes[i] ? changes[i].removed.length : "–"}</td></tr>`).reverse().join("")}</tbody></table>
+    <h3>${t("plugin.history.changes")}</h3>
+    ${changed.length ? changed.map(([run, c]) => `<div class="card prun"><h4 class="mono">${esc(stamp(run.started_at))}</h4>
+      ${list(t("plugin.history.new_n", { n: c.added.length }), c.added)}${list(t("plugin.history.gone_n", { n: c.removed.length }), c.removed)}</div>`).join("") : `<p class="muted">${t("plugin.history.no_changes")}</p>`}`;
+}
+
+function checksHtml(r) {
+  const stats = new Map();
+  for (const run of r.history) for (const c of run.checks) {
+    const s = stats.get(c.id) || { id: c.id, error: 0, skipped: 0 };
+    stats.set(c.id, { ...s, [c.status]: s[c.status] + 1, title: c.title, reason: c.reason, when: run.started_at });
+  }
+  if (!stats.size) return `<p class="ok">✔ ${t("plugin.checks.all_ran", { n: r.history.length })}</p>`;
+  return `<p class="muted">${t("plugin.checks.caption", { n: r.history.length })}</p>
+    <table class="pchecks"><thead><tr><th>${t("plugin.checks.check")}</th><th class="num">${t("plugin.checks.error")}</th><th class="num">${t("plugin.checks.skipped")}</th>
+      <th>${t("plugin.checks.last")}</th><th>${t("plugin.checks.reason")}</th></tr></thead>
+    <tbody>${[...stats.values()].sort(order((s) => s.id)).map((s) => `<tr><td>${esc(txt(s.title))}<div class="muted mono">${esc(s.id)}</div></td>
+      <td class="num">${s.error}</td><td class="num">${s.skipped}</td><td class="mono">${esc(stamp(s.when))}</td><td>${esc(txt(s.reason))}</td></tr>`).join("")}</tbody></table>`;
+}
 
 function pluginProblem(p) {
   if (!p.error) return "";
@@ -613,16 +813,25 @@ function renderPlugin() {
       ${p.about ? `<p>${tm(p.about_msg, p.about)}</p>` : ""}${how}</div>`;
     return;
   }
+  const readable = p.found && !p.error;
+  if (readable) loadReport(p);
+  const got = readable ? reports.get(p.id) : null, r = got?.report, v = viewOf(p.id);
   const by = (s) => p.alerts.filter((a) => a.severity === s).length;
   const from = !p.path ? "" : p.found ? t("plugin.from", { path, time: esc(p.generated_at || t("sec.unknown_time")) }) : t("plugin.no_report", { name, path });
+  const facts = r ? [t("plugin.scanned", { time: esc(stamp(r.scan.started_at) || t("sec.unknown_time")) }),
+    ...r.scan.facts.map((x) => `${esc(txt(x.label))}: ${esc(txt(x.value))}`)].join(" · ") : "";
   $("#content").innerHTML = `
     ${pluginProblem(p)}
     ${p.unprotected ? `<div class="warn">${t("plugin.unprotected", { name, path: unprotected })}</div>` : ""}
     <div class="btnrow"><p class="muted">${from}
       ${p.homepage ? `<a href="${esc(p.homepage)}" target="_blank" rel="noopener">${t("detail.homepage")}</a>` : ""}
-      ${SEVERITIES.map((s) => by(s) ? `<span class="sev-count sev-${s}">${by(s)} ${sevLabel(s)}</span>` : "").join(" ")}</p>
+      ${ALERT_SEVERITIES.map((s) => by(s) ? `<span class="sev-count sev-${s}">${by(s)} ${sevLabel(s)}</span>` : "").join(" ")}</p>
       ${p.scan ? `<button class="small accent" data-plugin-scan="${esc(p.id)}">${t("plugin.scan")}</button>` : ""}</div>
-    ${p.alerts.length ? p.alerts.map(alertCard).join("") : p.found && !p.error ? `<p class="ok">✔ ${t("plugin.nothing_open", { name })}</p>` : ""}`;
+    ${r ? `<p class="muted">${facts}</p>
+      <div class="btnrow pviews">${PLUGIN_VIEWS.map((k) => `<button class="small${v.view === k ? " accent" : ""}" data-pview="${k}">${t("plugin.view." + k)}</button>`).join("")}</div>
+      <div id="pbody">${v.view === "history" ? historyHtml(r) : v.view === "checks" ? checksHtml(r) : alertsHtml(r, v)}</div>`
+    : got?.error ? `<div class="warn">${t("plugin.load_failed", { error: esc(got.error) })}</div>` : got ? `<p class="loading">${t("plugin.loading")}</p>` : ""}`;
+  if (r && v.view === "alerts") renderAlertList();
 }
 
 // ---------- overview ----------
@@ -660,7 +869,7 @@ function attention() {
   for (const p of plugins()) {
     for (const level of ["critical", "warning", "info"]) {
       const hits = p.alerts.filter((a) => SEVERITY_LEVEL[a.severity] === level);
-      add(level, hits.length, t("att.findings", { n: hits.length, name: p.name }), hits.slice(0, 3).map((a) => a.title).join("; ") + (hits.length > 3 ? "; …" : ""), PLUGIN_TAB + p.id);
+      add(level, hits.length, t("att.findings", { n: hits.length, name: p.name }), hits.slice(0, 3).map((a) => txt(a.title)).join("; ") + (hits.length > 3 ? "; …" : ""), PLUGIN_TAB + p.id);
     }
     if (p.error) add("warning", true, t(p.outdated === "plugin" ? "att.plugin_outdated" : "att.report_unreadable", { name: p.name }), p.error, PLUGIN_TAB + p.id);
   }
@@ -1223,6 +1432,10 @@ document.addEventListener("click", (e) => {
   if (d("unlist")) { const [type, ...n] = d("unlist").split(":"); loadList({ op: "remove", items: [{ type, name: n.join(":") }] }); return; }
   if (d("adopt")) { confirmAction({ action: "adopt", app: d("adopt") }); return; }
   if (d("plugin-scan")) { confirmAction({ action: "plugin_scan", plugin: d("plugin-scan") }); return; }
+  if (d("pview")) { viewOf(pluginOf(S.tab).id).view = d("pview"); renderPlugin(); return; }
+  // Runs before the summary's own toggle, so `open` is still the state it leaves.
+  const fold = t.closest("summary[data-fold]");
+  if (fold) { const open = viewOf(pluginOf(S.tab).id).open; fold.parentElement.open ? open.delete(fold.dataset.fold) : open.add(fold.dataset.fold); return; }
   if (t.matches("[data-channel]")) { loadSettings({ path: "/api/settings", body: { channel: t.dataset.channel } }); return; }
   if (t.matches("[data-auto]")) { loadSettings({ path: "/api/settings", body: { auto: t.checked } }); return; }
   if (d("update")) { loadSettings({ path: "/api/update", body: { op: d("update") } }); return; }
@@ -1261,6 +1474,12 @@ document.addEventListener("keydown", (e) => {
 });
 document.addEventListener("change", (e) => {
   if (e.target.id === "depth") { S.depth = +e.target.value; renderGraph(S.pkgs.get(S.current)); }
+  const f = e.target.dataset.pf;
+  if (f) { viewOf(pluginOf(S.tab).id)[f] = e.target.type === "checkbox" ? e.target.checked : e.target.value; renderAlertList(); }
+});
+// Only the list under the search box is drawn again, so the box keeps its focus and caret.
+document.addEventListener("input", (e) => {
+  if (e.target.id === "pq") { viewOf(pluginOf(S.tab).id).q = e.target.value; renderAlertList(); }
 });
 
 $("#btn-refresh").onclick = () => api("/api/refresh", {}).then(loadState);

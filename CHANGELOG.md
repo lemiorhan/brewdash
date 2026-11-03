@@ -12,6 +12,12 @@ tagged `vX.Y.Z`; changes from before the first one are listed by date.
   shell files they concern. secure-it is in the built-in catalog; another
   tool joins with a manifest in `~/.local/state/brewdash/plugins/`. The
   README's "Plugins" section has the manifest and report formats.
+- A plugin's tab groups its findings by category and topic, worst first, with
+  search, filters for severity, category and effort, and the accepted findings
+  and info lines on request. It also shows each kept run's open findings and
+  what came and went, and the checks that failed or were skipped. The report
+  (schema 3) carries its texts in several languages, and the tab shows the one
+  you chose.
 - **Scan now** on the secure-it tab runs `/usr/bin/sudo -A
   /usr/local/bin/secure-it scan --exit-zero` after you confirm. Only a plugin
   in brewdash's catalog can be started this way, and only when root alone can
@@ -21,8 +27,9 @@ tagged `vX.Y.Z`; changes from before the first one are listed by date.
 
 ### Changed
 - The Security tab is now the secure-it tab. brewdash reads secure-it's
-  report schema 2 only; with an older secure-it, the tab says to update it and
-  gives the commands.
+  report at `~/.local/state/brewdash/plugins/secure-it/report.json`, in
+  report schema 3 only. With an older secure-it, or with only its old
+  `~/secure-it/report.json`, the tab says to update it and gives the commands.
 - The Mac app's window is at least 620 points tall, so the built-in tabs
   still fit in the sidebar with the plugin group's line.
 

@@ -192,7 +192,37 @@ pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 
 .sev-medium .sev, .sev-count.sev-medium { color: var(--accent); }
 .sev-low .sev, .sev-count.sev-low { color: var(--blue); }
 .sev-count { font: 600 12px var(--mono); margin-left: 8px; }
+.sev.sev-critical, .sev.sev-high { color: var(--red); }
+.sev.sev-medium { color: var(--accent); }
+.sev.sev-low { color: var(--blue); }
+.sev.sev-info { color: var(--muted); }
 .cmd { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; margin-top: 6px; }
+.tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; }
+.pviews { margin: 4px 0 12px; }
+.pgroup { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); margin-bottom: 8px; }
+.pgroup > summary, .prow > summary { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; list-style: none; cursor: pointer; }
+.pgroup > summary { padding: 8px 12px; }
+.prow > summary { padding: 6px 0; }
+.pgroup > summary::-webkit-details-marker, .prow > summary::-webkit-details-marker, .pwhy > summary::-webkit-details-marker { display: none; }
+.pgroup > summary::before, .prow > summary::before { content: "›"; display: inline-block; width: 8px; color: var(--muted); transition: transform .15s ease; }
+.pgroup[open] > summary::before, .prow[open] > summary::before { transform: rotate(90deg); }
+.pgroup-body { padding: 0 12px 8px; }
+.prow { border-top: 1px solid var(--row-line); }
+.prow .alert { margin: 4px 0 10px 16px; }
+.alert .kv { margin-top: 6px; }
+.pwhy { margin: 6px 0 10px; }
+.pwhy > summary { color: var(--blue); cursor: pointer; list-style: none; }
+.pwhy p { margin: 6px 0; }
+.sources { margin: 6px 0 0; padding-left: 18px; }
+.run-stack { display: flex; flex-direction: column; gap: 1px; width: 100%; border-radius: 4px 4px 0 0; overflow: hidden; }
+.run-seg { min-height: 1px; }
+.run-seg.sev-critical { background: var(--red); }
+.run-seg.sev-high { background: color-mix(in srgb, var(--red) 55%, var(--accent)); }
+.run-seg.sev-medium { background: var(--accent); }
+.run-seg.sev-low { background: var(--blue); }
+.prun { margin-bottom: 8px; }
+.prun h4 { margin: 0 0 4px; }
+.prun ul { margin: 4px 0; padding-left: 18px; }
 .port { display: inline-block; font-size: 12px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; margin: 0 4px 2px 0; }
 .port.exposed { border-color: var(--accent); color: var(--accent); }
 .sig-bad { color: var(--red); }

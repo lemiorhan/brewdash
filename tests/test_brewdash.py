@@ -1743,7 +1743,8 @@ class ServerWiringTest(unittest.TestCase):
         (root / "secure-it").write_text("")
         (root / "state" / "plugins").mkdir(parents=True)
         (root / "state" / "plugins" / "acme.json").write_text(json.dumps({"schema": 1, "name": "Acme", "report": "~/acme.json"}))
-        (root / "home" / "acme.json").write_text(json.dumps(report(alert(subject={"kind": "tap", "name": "me/tap"}))))
+        (root / "home" / "acme.json").write_text(json.dumps(report(finding(subject={"kind": "tap", "name": "me/tap"}),
+                                                                   finding("seen", "info", subject={"kind": "shell"}))))
         brew = FakeBrew(cache=str(root / "cache"), casks=APP_CASKS)
         cls.unprotected = {}
         cls.server, url, cls.token = brewdash.serve(port=0, open_browser=False, brew=brew, state_dir=str(root / "state"),
@@ -1857,8 +1858,21 @@ class ServerWiringTest(unittest.TestCase):
         secure_it, acme = snap["plugins"]
         self.assertEqual((secure_it["id"], secure_it["installed"], secure_it["scan"], secure_it["found"], secure_it["path"]),
                          ("secure-it", True, True, False, str(Path(self.tmp.name) / "home" / "scans" / "secure-it.json")))
-        self.assertEqual((acme["id"], acme["name"], acme["scan"], acme["found"], [a["link"] for a in acme["alerts"]]),
-                         ("acme", "Acme", False, True, [{"type": "tap", "name": "me/tap"}]))
+        self.assertEqual((acme["id"], acme["name"], acme["scan"], acme["found"], acme["alerts"]),
+                         ("acme", "Acme", False, True, [{"fingerprint": "f1", "severity": "high", "title": finding()["title"],
+                                                          "link": {"type": "tap", "name": "me/tap"}}]))
+        self.assertNotIn("report", acme)
+
+    def test_a_plugins_whole_report_is_served_by_its_id(self):
+        wait_for(self.state)
+        status, data = self.request("GET", "/api/plugin?id=acme")
+        whole = json.loads(data)
+        self.assertEqual((status, whole["id"], whole["seq"]), (200, "acme", 1))
+        self.assertEqual([(f["fingerprint"], f["link"]) for f in whole["report"]["findings"]],
+                         [("f1", {"type": "tap", "name": "me/tap"}), ("seen", {"type": "tab", "tab": "shell"})])
+        self.assertEqual(json.loads(self.request("GET", "/api/plugin?id=secure-it")[1]), {"id": "secure-it", "seq": 1, "report": None})
+        self.assertEqual(self.request("GET", "/api/plugin?id=nope"), (400, json.dumps({"error": "no plugin 'nope'"}).encode()))
+        self.assertEqual(self.request("GET", "/api/plugin?id=acme", token=False)[0], 403)
 
     def test_a_scan_is_planned_and_run_only_from_the_catalog(self):
         wait_for(self.state)
@@ -1963,14 +1977,21 @@ class ServerWiringTest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/%2e%2e/brewdash.py", token=False)[0], 404)
 
 
-def alert(severity="high", subject=None, **extra):
-    return {"check_id": "exposure.listening", "severity": severity, "title": "t", "detail": "d", "remediation": "r",
-            "fix_command": None, "accept_command": "sudo secure-it accept aaaaaaaaaa --note \"neden\"", "subject": subject,
-            **extra}
+TOPIC = {"id": "exposure.listening/open_port", "category": "exposure", "label": {"en": "Open port", "tr": "Açık port"},
+         "effort": "medium", "code": "exposure.listening · open_port", "explain": None}
 
 
-def report(*alerts, schema=2, **extra):
-    return {"schema": schema, "alerts": list(alerts), **extra}
+def finding(fingerprint="f1", severity="high", subject=None, **extra):
+    return {"fingerprint": fingerprint, "topic": TOPIC["id"], "row": {"key": "subject:/x", "label": "x"}, "severity": severity,
+            "title": {"en": "port 22 is open", "tr": "port 22 açık"}, "detail": "d", "remediation": {"en": "close it", "tr": "kapat"},
+            "fix_command": None, "accept_command": {"en": "sudo secure-it accept f1", "tr": "sudo secure-it accept f1"},
+            "accepted": None, "links": [], "subject": subject, **extra}
+
+
+def report(*findings, schema=3, **extra):
+    return {"schema": schema, "generated_at": "2026-11-03T10:00:00", "scan": {"started_at": "2026-11-03T09:59:00", "facts": []},
+            "categories": [{"id": "exposure", "label": {"en": "Network", "tr": "Ağ"}}], "efforts": [{"id": "medium", "label": "medium"}],
+            "topics": [TOPIC], "findings": list(findings), "history": [], **extra}
 
 
 class PluginReportTest(unittest.TestCase):
@@ -1987,21 +2008,21 @@ class PluginReportTest(unittest.TestCase):
 
     def test_no_file_is_not_an_error(self):
         r = brewdash.load_report(self.path)
-        self.assertEqual((r["found"], r["error"], r["outdated"], r["alerts"]), (False, None, None, []))
+        self.assertEqual((r["found"], r["error"], r["outdated"], r["report"]), (False, None, None, None))
 
     def test_a_broken_or_foreign_file_is_reported(self):
         self.assertIn("could not read it", self.load("{nope")["error"])
-        r = self.load([alert()])
-        self.assertEqual((r["found"], r["error"], r["outdated"], r["alerts"]),
-                         (True, "it has schema None; this brewdash reads schema 2", None, []))
-        self.assertEqual((self.load(report(alert(), schema=True))["error"], self.load(report(alert(), schema=True))["outdated"]),
-                         ("it has schema True; this brewdash reads schema 2", None))
+        r = self.load([finding()])
+        self.assertEqual((r["found"], r["error"], r["outdated"], r["report"]),
+                         (True, "it has schema None; this brewdash reads schema 3", None, None))
+        r = self.load(report(finding(), schema=True))
+        self.assertEqual((r["error"], r["outdated"], r["report"]), ("it has schema True; this brewdash reads schema 3", None, None))
         self.assertIn("could not read it", self.load("[" * 200000)["error"])
 
     def test_a_report_of_another_schema_says_which_side_is_older(self):
-        old, new = self.load(report(alert(), schema=1)), self.load(report(alert(), schema=3))
-        self.assertEqual((old["error"], old["outdated"], old["alerts"]), ("it has schema 1; this brewdash reads schema 2", "plugin", []))
-        self.assertEqual((new["error"], new["outdated"], new["alerts"]), ("it has schema 3; this brewdash reads schema 2", "brewdash", []))
+        old, new = self.load(report(finding(), schema=2)), self.load(report(finding(), schema=4))
+        self.assertEqual((old["error"], old["outdated"], old["report"]), ("it has schema 2; this brewdash reads schema 3", "plugin", None))
+        self.assertEqual((new["error"], new["outdated"], new["report"]), ("it has schema 4; this brewdash reads schema 3", "brewdash", None))
 
     def test_test_stores_read_no_real_home_apps_or_plugins(self):
         store = store_of(FakeBrew())
@@ -2009,20 +2030,80 @@ class PluginReportTest(unittest.TestCase):
         self.assertEqual(os.listdir(EMPTY_HOME.name), [])
         self.assertEqual([c["exe"] for c in store.catalog], ["/nonexistent/secure-it"])
 
-    def test_alerts_are_typed_sorted_and_cleaned(self):
+    def test_a_text_is_a_string_or_the_strings_of_a_language_map(self):
+        text = brewdash.report_text
+        self.assertEqual(text("<img src=x onerror=alert(1)>"), "<img src=x onerror=alert(1)>")
+        self.assertEqual(text({"en": "Open", "tr": "Açık", "zh": 7, "es": None}), {"en": "Open", "tr": "Açık"})
+        for bad in (None, 7, ["en"], {}, {"en": 1}):
+            with self.subTest(text=bad):
+                self.assertIsNone(text(bad))
+
+    def test_a_finding_needs_a_fingerprint_a_listed_topic_a_severity_and_a_title_and_may_share_its_fingerprint(self):
         r = self.load(report(
-            alert("low", title="<img src=x onerror=alert(1)>"),
-            alert("bogus"), "not a dict", alert("high", title=None),
-            alert("critical", detail=7, accept_command=["rm"], subject="shell", fingerprint="f", identity={"exe": "/x"}),
-            alert("medium", fix_command="brew untap me/tap"),
-            generated_at="2026-11-01T10:00:00"))
-        self.assertEqual(r["generated_at"], "2026-11-01T10:00:00")
-        self.assertEqual([a["severity"] for a in r["alerts"]], ["critical", "medium", "low"])
-        crit, med, low = r["alerts"]
-        self.assertEqual((crit["detail"], crit["accept_command"], crit["subject"]), (None, None, None))
-        self.assertEqual((med["fix_command"], med["accept_command"]), ("brew untap me/tap", alert()["accept_command"]))
-        self.assertEqual(low["title"], "<img src=x onerror=alert(1)>")
-        self.assertEqual(sorted(crit), sorted([*brewdash.ALERT_TEXT, "severity", "subject"]))
+            finding("a"), finding("a", "low"), finding(""), finding(7), finding("b", topic="unlisted"), finding("c", topic=["x"]),
+            finding("d", "bogus"), finding("e", title=None), finding("f", "info"), "not a dict"))
+        self.assertEqual([(f["fingerprint"], f["severity"]) for f in r["report"]["findings"]], [("a", "high"), ("a", "low"), ("f", "info")])
+
+    def test_each_field_of_a_finding_keeps_its_type_or_is_emptied(self):
+        links = [{"label": "GHSA-1", "url": "https://osv.dev/vulnerability/GHSA-1"}, {"label": "x", "url": "javascript:alert(1)"},
+                 {"label": 5, "url": "https://a.example"}, "nope"]
+        r = self.load(report(
+            finding("good", fix_command="brew untap me/tap", accepted={"at": "2026-11-02T10:00:00", "note": "known"}, links=links,
+                    subject={"kind": "tap", "name": "me/tap", "deep": [[1]]}, extra="dropped"),
+            finding("bad", detail=7, remediation={"en": 1}, fix_command=["rm"], accept_command=[], accepted=True, links="x",
+                    row={"key": 5, "label": "x"}, subject="shell"),
+            finding("unlabelled", row={"key": "k", "label": None}, accepted={"at": 1, "note": ["n"]})))
+        good, bad, unlabelled = r["report"]["findings"]
+        self.assertEqual(good, {**finding("good"), "fix_command": "brew untap me/tap", "accepted": {"at": "2026-11-02T10:00:00", "note": "known"},
+                                "links": links[:1], "subject": {"kind": "tap", "name": "me/tap"}})
+        self.assertEqual(bad, {**finding("bad"), "detail": None, "remediation": None, "accept_command": None,
+                               "row": {"key": "fingerprint:bad", "label": finding()["title"]}})
+        self.assertEqual((unlabelled["row"], unlabelled["accepted"]),
+                         ({"key": "fingerprint:unlabelled", "label": finding()["title"]}, {"at": None, "note": None}))
+
+    def test_a_topic_needs_an_id_a_listed_category_and_a_label_and_an_unlisted_effort_is_none(self):
+        sources = [{"title": "Apple", "kind": "apple", "url": "https://support.apple.com/x", "verified": "2026-11-01"},
+                   {"title": {"tr": "CIS"}, "kind": 1, "url": "http://cis.example", "verified": 2}, {"title": None, "url": "https://x.example"}]
+        odd = {**TOPIC, "id": "odd", "effort": "huge", "code": 5, "explain": {"what": {"en": "w"}, "why": 3, "attack": "a", "sources": sources}}
+        topics = [TOPIC, {**TOPIC, "label": "again"}, {**TOPIC, "id": "nocat", "category": "gone"}, {**TOPIC, "id": "listcat", "category": ["exposure"]},
+                  {**TOPIC, "id": "nolabel", "label": None}, {**TOPIC, "id": 5}, odd, {**TOPIC, "id": "flat", "explain": "text"}]
+        r = self.load(report(categories=[{"id": "exposure", "label": "Ağ"}, {"id": "exposure", "label": "again"}, {"id": 3, "label": "x"},
+                                         {"id": "nolabel"}, "x"],
+                             efforts=[{"id": "medium", "label": {"en": "medium"}}, {"id": "huge"}], topics=topics))["report"]
+        self.assertEqual((r["categories"], r["efforts"]), ([{"id": "exposure", "label": "Ağ"}], [{"id": "medium", "label": {"en": "medium"}}]))
+        self.assertEqual([t["id"] for t in r["topics"]], [TOPIC["id"], "odd", "flat"])
+        self.assertEqual(r["topics"][0], TOPIC)
+        self.assertEqual({k: r["topics"][1][k] for k in ("effort", "code", "explain")}, {"effort": None, "code": None, "explain": {
+            "what": {"en": "w"}, "why": None, "attack": "a",
+            "sources": [sources[0], {"title": {"tr": "CIS"}, "kind": None, "url": None, "verified": None}]}})
+        self.assertIsNone(r["topics"][2]["explain"])
+
+    def test_history_keeps_runs_with_a_time_their_alerts_and_the_checks_that_did_not_run(self):
+        history = [
+            {"started_at": "2026-11-01T09:00:00", "alerts": [
+                {"fingerprint": "a", "severity": "high", "title": {"en": "port 22"}, "accepted": True},
+                {"fingerprint": "b", "severity": "low", "title": None, "accepted": "yes"},
+                {"fingerprint": "c", "severity": "info", "title": "x"}, {"fingerprint": 5, "severity": "high"}, "x"],
+             "checks": [{"id": "system.sip", "title": "SIP", "status": "error", "reason": "TimeoutError"},
+                        {"id": "self.fda", "title": None, "status": "skipped", "reason": {"en": "no FDA"}},
+                        {"id": "system.firewall", "title": "x", "status": "ok"}, {"id": None, "status": "error"}]},
+            {"started_at": None, "alerts": []}, "nope", {"started_at": "2026-11-02T09:00:00", "alerts": "x"}]
+        self.assertEqual(self.load(report(history=history))["report"]["history"], [
+            {"started_at": "2026-11-01T09:00:00", "alerts": [
+                {"fingerprint": "a", "severity": "high", "title": {"en": "port 22"}, "accepted": True},
+                {"fingerprint": "b", "severity": "low", "title": "b", "accepted": False}],
+             "checks": [{"id": "system.sip", "title": "SIP", "status": "error", "reason": "TimeoutError"},
+                        {"id": "self.fda", "title": "self.fda", "status": "skipped", "reason": {"en": "no FDA"}}]},
+            {"started_at": "2026-11-02T09:00:00", "alerts": [], "checks": []}])
+
+    def test_the_scan_keeps_its_time_and_the_facts_with_a_label_and_a_value(self):
+        facts = [{"label": "host", "value": "mac"}, {"label": {"tr": "kullanıcı"}, "value": "alice"}, {"label": "root", "value": None},
+                 {"label": 1, "value": "x"}, "x"]
+        r = self.load(report(scan={"started_at": "2026-11-03T09:59:00", "facts": facts}))
+        self.assertEqual((r["generated_at"], r["report"]["scan"]), ("2026-11-03T10:00:00", {"started_at": "2026-11-03T09:59:00", "facts": facts[:2]}))
+        bare = self.load({"schema": 3, "generated_at": 5, "scan": [], "categories": {}, "topics": "x", "findings": None, "history": 1})
+        self.assertEqual((bare["error"], bare["generated_at"], bare["report"]), (None, None, {
+            "scan": {"started_at": None, "facts": []}, "categories": [], "efforts": [], "topics": [], "findings": [], "history": []}))
 
     def test_a_subject_keeps_only_the_strings_links_are_made_from(self):
         clean = brewdash.clean_subject
@@ -2035,10 +2116,12 @@ class PluginReportTest(unittest.TestCase):
             with self.subTest(subject=bad):
                 self.assertIsNone(clean(bad))
 
-    def test_a_subject_too_deep_to_encode_cannot_break_the_state(self):
+    def test_a_value_too_deep_to_encode_cannot_break_the_state(self):
         deep = "[" * 120000 + "]" * 120000
-        r = self.load(json.dumps(report(alert(subject={"kind": "path", "path": "X"}))).replace('"X"', deep))
-        json.dumps({**r, "alerts": [{**a, "link": brewdash.link_subject(a["subject"], set(), set())} for a in r["alerts"]]})
+        r = self.load(json.dumps(report(finding(subject={"kind": "path", "path": "X"}, detail={"en": "X"}, links="X"),
+                                        scan={"facts": "X"}, history=[{"started_at": "t", "alerts": "X"}])).replace('"X"', deep))
+        self.assertEqual(len(r["report"]["findings"]), 1)
+        json.dumps(r)
 
     def test_alerts_link_to_where_brewdash_can_act(self):
         pkgs, taps = {"f:redis"}, {"me/tap"}
@@ -2055,26 +2138,38 @@ class PluginReportTest(unittest.TestCase):
         self.assertEqual(link("shell"), {"type": "tab", "tab": "shell"})
         self.assertIsNone(brewdash.link_subject(None, pkgs, taps))
 
-    def test_store_reads_a_report_again_only_when_it_changes(self):
+    def test_store_reads_a_report_again_only_when_it_changes_and_counts_open_alerts_only(self):
         home = Path(self.tmp.name)
-        (home / "secure-it").mkdir()
-        path = home / "secure-it" / "report.json"
+        path = home / ".local" / "state" / "brewdash" / "plugins" / "secure-it" / "report.json"
         store = store_of(FakeBrew(), home=str(home))
         secure_it = lambda: store.plugins()[0]
         self.assertEqual((secure_it()["found"], secure_it()["seq"], secure_it()["path"]), (False, 1, str(path)))
-        path.write_text(json.dumps(report(alert(subject={"kind": "path", "path": "/opt/homebrew/opt/tool/bin/tool"}))))
+        path.parent.mkdir(parents=True)
+        tool = {"kind": "path", "path": "/opt/homebrew/opt/tool/bin/tool"}
+        path.write_text(json.dumps(report(finding("low", "low", tool), finding("crit", "critical"), finding("info", "info", tool),
+                                          finding("taken", "high", tool, accepted={"at": "2026-11-02T10:00:00", "note": None}))))
         first = secure_it()
-        self.assertEqual((first["found"], first["seq"], first["alerts"][0]["link"]), (True, 2, None))
+        self.assertEqual((first["found"], first["seq"], "report" in first), (True, 2, False))
+        title = finding()["title"]
+        self.assertEqual(first["alerts"], [{"fingerprint": "crit", "severity": "critical", "title": title, "link": None},
+                                           {"fingerprint": "low", "severity": "low", "title": title, "link": None}])
         self.assertEqual(secure_it()["seq"], 2)
         store.refresh()
         wait_for(lambda: store.model)
-        self.assertEqual(secure_it()["alerts"][0]["link"], {"type": "package", "id": "f:tool"})
+        package = {"type": "package", "id": "f:tool"}
+        self.assertEqual([a["link"] for a in secure_it()["alerts"]], [None, package])
+        whole = store.plugin_report("secure-it")
+        self.assertEqual((whole["id"], whole["seq"], whole["report"]["topics"]), ("secure-it", 2, [TOPIC]))
+        self.assertEqual([(f["fingerprint"], f["link"]) for f in whole["report"]["findings"]],
+                         [("low", package), ("crit", None), ("info", package), ("taken", package)])
         self.assertEqual(secure_it()["seq"], 2)
         before = path.stat().st_mtime_ns
         path.write_text(json.dumps(report()))
         os.utime(path, ns=(before, before))
         self.assertEqual((secure_it()["seq"], secure_it()["alerts"]), (3, []))
         self.assertEqual([(p["id"], p["seq"]) for p in store.snapshot()["plugins"]], [("secure-it", 3)])
+        with self.assertRaisesRegex(ValueError, "no plugin 'nope'"):
+            store.plugin_report("nope")
 
 
 class PluginCatalogTest(unittest.TestCase):
@@ -2113,15 +2208,70 @@ class PluginCatalogTest(unittest.TestCase):
     def test_every_path_the_catalog_names_is_checked(self):
         exe = self.root / "secure-it"
         exe.write_text("")
-        lib, state = str(self.root / "libexec"), str(self.root / "state")
-        cat, unprotected = catalog(str(exe), protect=(str(exe), lib, state)), {lib: lib + "/cli.py"}.get
-        [plugin] = self.plugins(catalog=cat, unprotected=unprotected)
-        store = store_of(FakeBrew(), catalog=cat, unprotected=unprotected)
-        self.assertEqual((plugin["scan"], plugin["unprotected"], store.scannable()), (False, lib + "/cli.py", {}))
+        protect = (str(exe), str(self.root / "libexec"), str(self.root / "state"))
+        cat = catalog(str(exe), protect=protect)
+        for flagged in protect:
+            with self.subTest(flagged=flagged):
+                unprotected = {flagged: flagged + "/cli.py"}.get
+                [plugin] = self.plugins(catalog=cat, unprotected=unprotected)
+                store = store_of(FakeBrew(), catalog=cat, unprotected=unprotected)
+                self.assertEqual((plugin["scan"], plugin["unprotected"], store.scannable()), (False, flagged + "/cli.py", {}))
 
     def test_secure_it_is_checked_where_its_installer_puts_it(self):
         self.assertEqual(brewdash.PLUGIN_CATALOG[0]["protect"],
                          ("/usr/local/bin/secure-it", "/usr/local/libexec/secure-it", "/Library/Application Support/secure-it"))
+
+    def test_secure_its_report_is_read_from_brewdashs_state_folder_and_the_old_one_from_home(self):
+        """secure-it's paths.REPORT_RELPATH has to name the same file; this suite cannot reach that repo."""
+        self.assertEqual((brewdash.PLUGIN_CATALOG[0]["report"], brewdash.PLUGIN_CATALOG[0]["legacy_report"]),
+                         ("~/.local/state/brewdash/plugins/secure-it/report.json", "~/secure-it/report.json"))
+
+    def test_the_install_and_update_commands_run_sudo_only_inside_the_plugins_clone(self):
+        """Run as the user pastes them, with a git and a sudo that only record where they ran."""
+        pasted = {(e["id"], key): "\n".join(e[key]) for e in brewdash.PLUGIN_CATALOG for key in ("install", "update")}
+        self.assertEqual(sorted(pasted), [("secure-it", "install"), ("secure-it", "update")])
+        bin_dir, log = self.root / "bin", self.root / "ran.log"
+        bin_dir.mkdir()
+        for tool in ("git", "sudo"):
+            (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $PWD" >> "$LOG"\n')
+            (bin_dir / tool).chmod(0o755)
+        sudo_in = {("install", None): [], ("install", "brewdash-plugin-security"): ["brewdash-plugin-security"],
+                   ("install", "secure-it"): [], ("update", None): [],
+                   ("update", "brewdash-plugin-security"): ["brewdash-plugin-security"], ("update", "secure-it"): ["secure-it"]}
+        for shell in (["/bin/zsh", "-f"], ["/bin/bash", "--norc"]):
+            for (_, key), text in sorted(pasted.items()):
+                for clone in (None, "brewdash-plugin-security", "secure-it"):
+                    with self.subTest(shell=shell[0], key=key, clone=clone):
+                        work = Path(tempfile.mkdtemp(dir=self.root))
+                        if clone:
+                            (work / clone).mkdir()
+                        log.write_text("")
+                        subprocess.run([*shell, "-c", text], cwd=work, env={"PATH": str(bin_dir), "HOME": str(self.root), "LOG": str(log)},
+                                       capture_output=True, timeout=30)
+                        ran = [line.split(" ", 1) for line in log.read_text().splitlines()]
+                        self.assertEqual([os.path.relpath(os.path.realpath(where), os.path.realpath(work)) for tool, where in ran if tool == "sudo"],
+                                         sudo_in[key, clone])
+
+    def test_an_older_secure_its_report_says_update_and_is_never_read(self):
+        legacy = self.root / "secure-it" / "report.json"
+        legacy.parent.mkdir()
+        legacy.write_text("{nope")
+        new = self.root / ".local" / "state" / "brewdash" / "plugins" / "secure-it" / "report.json"
+        [plugin] = self.plugins()
+        self.assertEqual((plugin["found"], plugin["outdated"], plugin["error"], plugin["alerts"]),
+                         (False, "plugin", f"found {legacy}, where an older secure-it writes; this brewdash reads {new}", []))
+        self.assertEqual(store_of(FakeBrew(), home=str(self.root)).plugin_report("secure-it")["report"], None)
+        new.parent.mkdir(parents=True)
+        new.write_text(json.dumps(report(finding())))
+        [plugin] = self.plugins()
+        self.assertEqual((plugin["found"], plugin["outdated"], plugin["error"], len(plugin["alerts"])), (True, None, None, 1))
+
+    def test_the_secure_it_folder_in_the_plugins_folder_is_no_manifest(self):
+        plugins_dir = self.root / ".local" / "state" / "brewdash" / "plugins"
+        (plugins_dir / "secure-it").mkdir(parents=True)
+        (plugins_dir / "secure-it" / "report.json").write_text(json.dumps(report(finding())))
+        plugins = store_of(FakeBrew(), home=str(self.root), plugins_dir=plugins_dir).plugins()
+        self.assertEqual([(p["id"], p["source"], p["found"]) for p in plugins], [("secure-it", "catalog", True)])
 
     def test_a_manifest_adds_a_plugin_after_the_catalog_and_only_https_is_a_link(self):
         self.manifest("zeta", {"schema": 1, "name": " Zeta ", "report": "~/zeta/out.json", "homepage": "https://zeta.example"})
@@ -2134,7 +2284,7 @@ class PluginCatalogTest(unittest.TestCase):
 
     def test_a_manifest_plugin_reads_its_report_and_links_it(self):
         (self.root / "zeta").mkdir()
-        (self.root / "zeta" / "out.json").write_text(json.dumps(report(alert(subject={"kind": "shell"}))))
+        (self.root / "zeta" / "out.json").write_text(json.dumps(report(finding(subject={"kind": "shell"}))))
         self.manifest("zeta", {"schema": 1, "name": "Zeta", "report": "~/zeta/out.json"})
         zeta = self.plugins()[1]
         self.assertEqual((zeta["found"], zeta["error"], [a["link"] for a in zeta["alerts"]]), (True, None, [{"type": "tab", "tab": "shell"}]))
