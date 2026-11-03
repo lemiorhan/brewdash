@@ -244,7 +244,7 @@ I18N.tr = {
   "intro.services.what": "<b>brew services</b> ile arka planda çalışabilen formula'lar (veritabanları, kuyruklar, web sunucuları); durumları ve dinledikleri port'larla birlikte.",
   "intro.services.todo": "Bir servisi başlat, durdur ya da yeniden başlat. Turuncu işaretli port tüm ağ arayüzlerinde dinler, yani ağındaki diğer makineler ona erişebilir. İstediğin bu değilse servisi durdur ya da 127.0.0.1'e bind et.",
   "intro.taps.what": "brew'un formula ve cask'leri okuduğu repo'lar. <b>homebrew/core</b> ve <b>homebrew/cask</b> Homebrew'un kendi tap'leri; diğer her tap, brew'un senin kullanıcınla çalıştırdığı üçüncü parti kod.",
-  "intro.taps.todo": "Hiçbir şeyin kurulmadığı tap'i untap et. Üçüncü parti bir tap'i sadece sahibine güveniyorsan tut. <b>secure-it</b> rozeti, secure-it'in o tap'i işaretlediğini gösterir.",
+  "intro.taps.todo": "Hiçbir şeyin kurulmadığı tap'i untap et. Üçüncü parti bir tap'i sadece sahibine güveniyorsan tut. <b>Security</b> rozeti, brewdash security plugin'in o tap'i işaretlediğini gösterir.",
   "intro.health.what": "brew'un kendi bildirdikleri: eksik bağımlılıklar, deprecated ya da devre dışı paketler, sahipsizler, cleanup'ın boşaltabileceği cache ve <b>brew doctor</b> çıktısının tamamı.",
   "intro.health.todo": "Yukarıdan başla: eksik bağımlılıklar paketleri şimdi bozar, deprecated olanlar ileride bozacak. Sonra disk alanı kazanmak için autoremove ve cleanup çalıştır.",
   "intro.plugin.what": "<b>{name}</b> bulguları. {name} ayrı bir araç; brewdash sadece onun brewdash için bıraktığı raporu okur.",

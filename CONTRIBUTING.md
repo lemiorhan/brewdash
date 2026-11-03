@@ -34,7 +34,8 @@ python3 -m venv .venv && .venv/bin/pip install playwright
 - **Nothing runs without confirmation.** Every action that changes the system
   goes through the confirmation dialog, which shows the exact commands.
 - **brewdash never edits your files.** It reads shell files, app bundles and
-  secure-it's report; it writes only under `~/.local/state/brewdash/`.
+  the brewdash security plugin's report; it writes only under
+  `~/.local/state/brewdash/`.
 - **Escape everything** that comes from brew, the file system or another tool
   before it goes into the page (`esc()` in `web/app.js`).
 - **Tests do not read this Mac's Homebrew, home folder, apps or processes.**

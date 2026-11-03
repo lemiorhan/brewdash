@@ -661,7 +661,7 @@ SCAN_REFUSED = "only a plugin from brewdash's catalog, installed where only root
 
 
 def catalog(exe="/nonexistent/secure-it", **kw):
-    """brewdash's catalog with secure-it's paths moved, so a test that passes it does not read this Mac's secure-it."""
+    """brewdash's catalog with the brewdash security plugin's paths moved, so a test that passes it does not read this Mac's install."""
     return ({**brewdash.PLUGIN_CATALOG[0], "exe": exe, "protect": (exe,), **kw},)
 
 
@@ -1878,7 +1878,7 @@ class ServerWiringTest(unittest.TestCase):
         wait_for(self.state)
         status, data = self.request("POST", "/api/plan", {"action": "plugin_scan", "plugin": "secure-it"})
         self.assertEqual((status, json.loads(data)["commands"], json.loads(data)["title_msg"]),
-                         (200, ["/usr/bin/sudo -A /usr/local/bin/secure-it scan --exit-zero"], ["plan.plugin_scan", {"name": "secure-it"}]))
+                         (200, ["/usr/bin/sudo -A /usr/local/bin/secure-it scan --exit-zero"], ["plan.plugin_scan", {"name": "brewdash security plugin"}]))
         self.assertEqual(self.request("POST", "/api/plan", {"action": "plugin_scan", "plugin": "acme"})[0], 400)
         self.assertEqual(self.request("POST", "/api/jobs", {"action": "plugin_scan", "plugin": "acme"})[0], 400)
         status, data = self.request("POST", "/api/jobs", {"action": "plugin_scan", "plugin": "secure-it"})
@@ -2222,7 +2222,7 @@ class PluginCatalogTest(unittest.TestCase):
                          ("/usr/local/bin/secure-it", "/usr/local/libexec/secure-it", "/Library/Application Support/secure-it"))
 
     def test_secure_its_report_is_read_from_brewdashs_state_folder_and_the_old_one_from_home(self):
-        """secure-it's paths.REPORT_RELPATH has to name the same file; this suite cannot reach that repo."""
+        """The brewdash security plugin's paths.REPORT_RELPATH has to name the same file; this suite cannot reach that repo."""
         self.assertEqual((brewdash.PLUGIN_CATALOG[0]["report"], brewdash.PLUGIN_CATALOG[0]["legacy_report"]),
                          ("~/.local/state/brewdash/plugins/secure-it/report.json", "~/secure-it/report.json"))
 
@@ -2259,7 +2259,7 @@ class PluginCatalogTest(unittest.TestCase):
         new = self.root / ".local" / "state" / "brewdash" / "plugins" / "secure-it" / "report.json"
         [plugin] = self.plugins()
         self.assertEqual((plugin["found"], plugin["outdated"], plugin["error"], plugin["alerts"]),
-                         (False, "plugin", f"found {legacy}, where an older secure-it writes; this brewdash reads {new}", []))
+                         (False, "plugin", f"found {legacy}, where an older brewdash security plugin writes; this brewdash reads {new}", []))
         self.assertEqual(store_of(FakeBrew(), home=str(self.root)).plugin_report("secure-it")["report"], None)
         new.parent.mkdir(parents=True)
         new.write_text(json.dumps(report(finding())))
@@ -2314,12 +2314,32 @@ class PluginCatalogTest(unittest.TestCase):
         self.manifest("0-k", good)
         plugins = self.plugins()
         self.assertEqual([p["id"] for p in plugins], ["secure-it", "0-k", "a" * 40])
-        self.assertEqual((plugins[0]["name"], plugins[0]["source"]), ("secure-it", "catalog"))
+        self.assertEqual((plugins[0]["name"], plugins[0]["tab"], plugins[0]["source"]), ("brewdash security plugin", "Security", "catalog"))
 
     def test_without_a_plugins_folder_there_is_only_the_catalog(self):
         self.dir.rmdir()
         self.assertEqual([p["id"] for p in self.plugins()], ["secure-it"])
         self.assertEqual([p["id"] for p in store_of(FakeBrew()).plugins()], ["secure-it"])
+
+    def test_the_docs_scripts_and_ui_texts_call_the_plugin_by_its_full_name(self):
+        root = Path(brewdash.__file__).resolve().parent
+        groups = [sorted(g) for g in (root.glob("*.md"), (root / ".github").rglob("*.md"), (root / "docs").glob("*.html"),
+                                      (root / "scripts").glob("*.py"), (root / "web").glob("*.html"), (root / "web").glob("*.js"),
+                                      (root / "web" / "i18n").glob("*.js"))]
+        self.assertEqual([bool(g) for g in groups], [True] * len(groups))
+        texts = {f.relative_to(root).as_posix(): f.read_text() for g in groups for f in g}
+        texts["MESSAGES"] = "\n".join(brewdash.MESSAGES.values())
+        # A name the docs' hard wrap splits over two lines is still one name.
+        texts = {k: " ".join(v.split()) for k, v in texts.items()}
+        generic = re.compile(r"(?<!brewdash )security plugin|plugin de seguridad|güvenlik (?:plugin|eklenti)|安全插件", re.I)
+        self.assertEqual({k: generic.findall(v) for k, v in texts.items() if generic.search(v)}, {})
+        # The docs give the plugin's paths and command, which keep the old name.
+        ui = {k: v for k, v in texts.items() if k.startswith("web/") or k == "MESSAGES"}
+        self.assertEqual([k for k, v in ui.items() if "secure-it" in v], [])
+        named = {k for k, v in texts.items() if "brewdash security plugin" in v}
+        self.assertLessEqual({"web/app.js", "web/i18n/en.js", "web/i18n/es.js", "web/i18n/tr.js", "web/i18n/zh.js",
+                              "README.md", "CHANGELOG.md", "SECURITY.md", "CONTRIBUTING.md", "docs/index.html",
+                              "scripts/demo.py"}, named)
 
 
 class FirstUnprotectedTest(unittest.TestCase):
@@ -2425,7 +2445,7 @@ class PluginScanTest(unittest.TestCase):
     def test_a_scan_runs_the_catalogs_command_and_nothing_else(self):
         cat = {c["id"]: c for c in brewdash.PLUGIN_CATALOG}
         title, cmds, snap = brewdash.plan_job({"action": "plugin_scan", "plugin": "secure-it"}, by_id(), plugins=cat)
-        self.assertEqual((title, cmds, snap), ("secure-it scan", [["/usr/bin/sudo", "-A", "/usr/local/bin/secure-it", "scan", "--exit-zero"]], False))
+        self.assertEqual((title, cmds, snap), ("brewdash security plugin scan", [["/usr/bin/sudo", "-A", "/usr/local/bin/secure-it", "scan", "--exit-zero"]], False))
         for req, plugins in (({"action": "plugin_scan", "plugin": "secure-it"}, {}),
                              ({"action": "plugin_scan", "plugin": "secure-it"}, None),
                              ({"action": "plugin_scan", "plugin": "acme"}, cat),
@@ -2458,7 +2478,7 @@ class PluginScanTest(unittest.TestCase):
     def run_scan(self, script):
         brew = FakeBrew({("-A",): script})
         runner = brewdash.Runner(brew, store_of(brew), self.state)
-        job = runner.submit("secure-it scan", [list(brewdash.PLUGIN_CATALOG[0]["scan"])], False)
+        job = runner.submit("brewdash security plugin scan", [list(brewdash.PLUGIN_CATALOG[0]["scan"])], False)
         return wait_for(lambda: job if job["status"] in ("succeeded", "failed") else None)
 
     def test_a_scan_succeeds_only_on_exit_0_and_a_cancelled_password_asks_for_a_terminal(self):

@@ -359,7 +359,7 @@ footer a { color: var(--muted); }
           <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="services" data-alt="Brew services with the ports each one listens on" data-i18n-attr="data-alt:tour.services.alt"><b data-i18n="tour.services.name">Services</b><span data-i18n="tour.services.desc">Start, stop and restart brew services, and see which ports each one opens. A port other machines can reach is flagged.</span></button>
           <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="apps" data-alt="Apps with how each was installed and who signed it" data-i18n-attr="data-alt:tour.apps.alt"><b data-i18n="tour.apps.name">Apps</b><span data-i18n="tour.apps.desc">Every app in your Applications folders, how it got there and who signed it. Hand Homebrew an app you installed by hand.</span></button>
           <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="shell" data-alt="PATH entries from shell startup files with problems flagged" data-i18n-attr="data-alt:tour.shell.alt"><b data-i18n="tour.shell.name">Shell</b><span data-i18n="tour.shell.desc">The PATH lines in your shell startup files, with missing, duplicated and risky entries flagged.</span></button>
-          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="security" data-alt="secure-it findings in the Security tab" data-i18n-attr="data-alt:tour.security.alt"><b data-i18n="tour.security.name">Security</b><span data-i18n="tour.security.desc">Findings from secure-it, a separate macOS security scanner, shown next to the packages, taps and shell files they concern.</span></button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="tour-shot" data-shot="security" data-alt="The brewdash security plugin's findings in the Security tab" data-i18n-attr="data-alt:tour.security.alt"><b data-i18n="tour.security.name">Security</b><span data-i18n="tour.security.desc">Findings from the brewdash security plugin, a separate macOS security scanner, shown next to the packages, taps and shell files they concern.</span></button>
         </div>
         <div id="tour-shot" role="tabpanel" aria-label="Screenshot" data-i18n-attr="aria-label:tour.shotAria">
           <figure class="shot">
@@ -501,8 +501,8 @@ window.brewdashI18n = (() => {
       "tour.shell.desc": "The PATH lines in your shell startup files, with missing, duplicated and risky entries flagged.",
       "tour.shell.alt": "PATH entries from shell startup files with problems flagged",
       "tour.security.name": "Security",
-      "tour.security.desc": "Findings from secure-it, a separate macOS security scanner, shown next to the packages, taps and shell files they concern.",
-      "tour.security.alt": "secure-it findings in the Security tab",
+      "tour.security.desc": "Findings from the brewdash security plugin, a separate macOS security scanner, shown next to the packages, taps and shell files they concern.",
+      "tour.security.alt": "The brewdash security plugin's findings in the Security tab",
       "safety.title": "Nothing changes until you confirm it",
       "safety.intro": "Looking around is free. brewdash runs a brew command only when you press a button and agree to what it shows you.",
       "safety.local.title": "Only your Mac can reach it",
@@ -571,8 +571,8 @@ window.brewdashI18n = (() => {
       "tour.shell.desc": "Shell başlangıç dosyalarındaki PATH satırları. Olmayan, tekrar eden ve riskli girdiler işaretli.",
       "tour.shell.alt": "Shell başlangıç dosyalarındaki PATH girdileri, sorunlu olanlar işaretli",
       "tour.security.name": "Güvenlik taraması",
-      "tour.security.desc": "Ayrı bir macOS güvenlik tarayıcısı olan secure-it'in bulguları, ilgili oldukları paketlerin, tap'lerin ve shell dosyalarının yanında.",
-      "tour.security.alt": "Security sekmesindeki secure-it bulguları",
+      "tour.security.desc": "Ayrı bir macOS güvenlik tarayıcısı olan brewdash security plugin'in bulguları, ilgili oldukları paketlerin, tap'lerin ve shell dosyalarının yanında.",
+      "tour.security.alt": "Security sekmesindeki brewdash security plugin bulguları",
       "safety.title": "Sen onaylamadan hiçbir şey değişmez",
       "safety.intro": "Etrafa bakmak serbest. brewdash bir brew komutunu ancak sen bir butona basıp gösterdiğini onaylarsan çalıştırıyor.",
       "safety.local.title": "Sadece senin Mac'in erişebilir",
@@ -641,8 +641,8 @@ window.brewdashI18n = (() => {
       "tour.shell.desc": "Las líneas de PATH de tus archivos de arranque de la shell, con las entradas inexistentes, duplicadas o arriesgadas marcadas.",
       "tour.shell.alt": "Entradas de PATH de los archivos de arranque de la shell, con los problemas marcados",
       "tour.security.name": "Análisis de seguridad",
-      "tour.security.desc": "Los hallazgos de secure-it, un escáner de seguridad para macOS independiente, junto a los paquetes, taps y archivos de shell a los que afectan.",
-      "tour.security.alt": "Hallazgos de secure-it en la pestaña Security",
+      "tour.security.desc": "Los hallazgos del brewdash security plugin, un escáner de seguridad para macOS independiente, junto a los paquetes, taps y archivos de shell a los que afectan.",
+      "tour.security.alt": "Hallazgos del brewdash security plugin en la pestaña Security",
       "safety.title": "Nada cambia hasta que tú lo confirmas",
       "safety.intro": "Mirar no cuesta nada. brewdash solo ejecuta un comando de brew cuando pulsas un botón y aceptas lo que te muestra.",
       "safety.local.title": "Solo tu Mac puede acceder",
@@ -711,8 +711,8 @@ window.brewdashI18n = (() => {
       "tour.shell.desc": "shell 启动文件里的 PATH 配置，缺失、重复和有风险的条目都会标出来。",
       "tour.shell.alt": "shell 启动文件中的 PATH 条目，问题已标出",
       "tour.security.name": "安全扫描",
-      "tour.security.desc": "secure-it（一个独立的 macOS 安全扫描工具）的检查结果，直接显示在相关的包、tap 和 shell 文件旁边。",
-      "tour.security.alt": "Security 标签页中的 secure-it 检查结果",
+      "tour.security.desc": "brewdash security plugin（一个独立的 macOS 安全扫描工具）的检查结果，直接显示在相关的包、tap 和 shell 文件旁边。",
+      "tour.security.alt": "Security 标签页中的 brewdash security plugin 检查结果",
       "safety.title": "你不确认，什么都不会改",
       "safety.intro": "随便看，不会动任何东西。只有你点了按钮、并同意它展示的内容后，brewdash 才会运行 brew 命令。",
       "safety.local.title": "只有你的 Mac 能访问",

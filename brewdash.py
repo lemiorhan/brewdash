@@ -567,16 +567,18 @@ BREW_SERVICE_PLIST = re.compile(r"^homebrew\.mxcl\.(.+)\.plist$")
 SECURE_IT = "/usr/local/bin/secure-it"
 # Only a plugin in this catalog can be started from brewdash: its command is here, never in a file the user can write.
 PLUGIN_CATALOG = (
-    {"id": "secure-it", "name": "secure-it", "homepage": "https://github.com/lemiorhan/brewdash-plugin-security",
+    # The plugin's id, executable and paths keep the name it had before, secure-it: its installer puts them there.
+    {"id": "secure-it", "name": "brewdash security plugin", "tab": "Security",
+     "homepage": "https://github.com/lemiorhan/brewdash-plugin-security",
      "about": "plugin.about.secure_it", "report": "~/.local/state/brewdash/plugins/secure-it/report.json",
-     # Where a secure-it before report schema 3 wrote; brewdash only checks that it is there, to say update.
+     # Where the plugin wrote before report schema 3; brewdash only checks that it is there, to say update.
      "legacy_report": "~/secure-it/report.json", "exe": SECURE_IT,
-     # secure-it's paths.py WRAPPER, INSTALL_DIR and STATE_DIR: the wrapper only execs what is in INSTALL_DIR.
+     # The plugin's paths.py WRAPPER, INSTALL_DIR and STATE_DIR: the wrapper only execs what is in INSTALL_DIR.
      "protect": (SECURE_IT, "/usr/local/libexec/secure-it", "/Library/Application Support/secure-it"),
      "scan": ["/usr/bin/sudo", "-A", SECURE_IT, "scan", "--exit-zero"],
      "install": ["git clone https://github.com/lemiorhan/brewdash-plugin-security.git",
                  "cd brewdash-plugin-security && sudo ./install.sh"],
-     # Shown only for a secure-it that writes an older report: cloned as secure-it before the repo was renamed,
+     # Shown only for a plugin that writes an older report: cloned as secure-it before the repo was renamed,
      # or as brewdash-plugin-security after. One line, so that outside both clones sudo runs nothing.
      "update": ["{ cd brewdash-plugin-security 2>/dev/null || cd secure-it; } && git pull && sudo ./install.sh"]},
 )
@@ -725,7 +727,7 @@ def first_unprotected(path, lstat=os.lstat, listdir=os.listdir):
     """The first that someone other than root can change of path, everything beneath it when it is a
     folder, and the folders above it; None when there is none. brewdash runs a catalog plugin with sudo,
     so whoever can change what root runs, or rename a folder on the way to it, runs their own code as root.
-    The rules follow secure-it's self.integrity check: no symlink, no owner but root, no write for group
+    The rules follow the brewdash security plugin's self.integrity check: no symlink, no owner but root, no write for group
     or others, except that a folder above may be writable by wheel, whose only member on macOS is root.
     Two are brewdash's own and stricter: only a regular file or a folder passes, and a folder that
     cannot be listed passes only when it gives group and others no access, so only root can reach inside.
@@ -764,7 +766,7 @@ def catalog_plugin(entry, home, unprotected):
     installed = os.path.exists(entry["exe"])
     problem = entry_unprotected(entry, unprotected)
     about = msg(entry["about"])
-    return {"id": entry["id"], "name": entry["name"], "homepage": entry["homepage"], "about": render(about), "about_msg": about,
+    return {"id": entry["id"], "name": entry["name"], "tab": entry["tab"], "homepage": entry["homepage"], "about": render(about), "about_msg": about,
             "source": "catalog", "path": under_home(entry["report"], home),
             "legacy": under_home(entry["legacy_report"], home) if entry.get("legacy_report") else None, "error": None, "installed": installed,
             "scan": installed and not problem, "unprotected": problem, "install": entry["install"], "update": entry["update"]}

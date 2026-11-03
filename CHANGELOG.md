@@ -9,26 +9,28 @@ tagged `vX.Y.Z`; changes from before the first one are listed by date.
 ### Added
 - Plugins: a separate tool that writes a JSON report gets its own tab, in a
   group above History, and its findings show next to the packages, taps and
-  shell files they concern. secure-it is in the built-in catalog; another
-  tool joins with a manifest in `~/.local/state/brewdash/plugins/`. The
-  README's "Plugins" section has the manifest and report formats.
+  shell files they concern. The brewdash security plugin is in the built-in
+  catalog; another tool joins with a manifest in
+  `~/.local/state/brewdash/plugins/`. The README's "Plugins" section has the
+  manifest and report formats.
 - A plugin's tab groups its findings by category and topic, worst first, with
   search, filters for severity, category and effort, and the accepted findings
   and info lines on request. It also shows each kept run's open findings and
   what came and went, and the checks that failed or were skipped. The report
   (schema 3) carries its texts in several languages, and the tab shows the one
   you chose.
-- **Scan now** on the secure-it tab runs `/usr/bin/sudo -A
+- **Scan now** on the Security tab runs `/usr/bin/sudo -A
   /usr/local/bin/secure-it scan --exit-zero` after you confirm. Only a plugin
   in brewdash's catalog can be started this way, and only when root alone can
-  change secure-it's files and every folder above them. On an Intel Mac, where
-  Homebrew gives `/usr/local/bin` to your user, the tab says secure-it cannot
+  change the plugin's files and every folder above them. On an Intel Mac, where
+  Homebrew gives `/usr/local/bin` to your user, the tab says the plugin cannot
   be installed safely.
 
 ### Changed
-- The Security tab is now the secure-it tab. brewdash reads secure-it's
-  report at `~/.local/state/brewdash/plugins/secure-it/report.json`, in
-  report schema 3 only. With an older secure-it, or with only its old
+- The Security tab is now the tab of the brewdash security plugin, the new
+  name of secure-it. Its command and paths keep the old name. brewdash reads
+  its report at `~/.local/state/brewdash/plugins/secure-it/report.json`, in
+  report schema 3 only. With an older version, or with only its old
   `~/secure-it/report.json`, the tab says to update it and gives the commands.
 - The Mac app's window is at least 620 points tall, so the built-in tabs
   still fit in the sidebar with the plugin group's line.

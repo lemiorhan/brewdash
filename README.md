@@ -47,7 +47,7 @@ line of its **Needs attention** list opens the page where you can act on it.
 - **Health**: `brew doctor`, missing dependencies, deprecated packages, orphans
   and what `brew cleanup` would free.
 - **Plugins**: findings from separate tools such as
-  [secure-it](https://github.com/lemiorhan/brewdash-plugin-security), one tab each, shown next
+  the [brewdash security plugin](https://github.com/lemiorhan/brewdash-plugin-security), one tab each, shown next
   to the packages, taps and shell files they concern (see below).
 - **Apps**: every app in `/Applications` and `~/Applications`, how it got there
   (brew, App Store or by hand), and who signed it. **Bring into brew** lets
@@ -67,7 +67,7 @@ line of its **Needs attention** list opens the page where you can act on it.
 
 | | |
 |---|---|
-| ![Package list with the detail panel of node](docs/screenshots/packages-light.png) | ![secure-it findings in its plugin tab](docs/screenshots/security-light.png) |
+| ![Package list with the detail panel of node](docs/screenshots/packages-light.png) | ![The brewdash security plugin's findings in its Security tab](docs/screenshots/security-light.png) |
 | ![Services with their listening ports](docs/screenshots/services-dark.png) | ![Apps with how they were installed and who signed them](docs/screenshots/apps-dark.png) |
 
 ## Install
@@ -304,29 +304,30 @@ type-checks every field before it uses it and escapes it before it shows it.
 Each finding's fix and accept commands are there for you to copy into
 Terminal.
 
-### secure-it
+### The brewdash security plugin
 
-[secure-it](https://github.com/lemiorhan/brewdash-plugin-security) is a macOS security
-scanner, and it is in brewdash's built-in catalog. Without it, its tab says
-what it is and how to install it. Once `/usr/local/bin/secure-it` is there,
-the tab has a **Scan now** button. It runs `/usr/bin/sudo -A
-/usr/local/bin/secure-it scan --exit-zero` after you confirm, and macOS asks
-for your password. secure-it then writes
-`~/.local/state/brewdash/plugins/secure-it/report.json`, and the tab shows the
-new findings. A secure-it that writes `~/secure-it/report.json` instead is
-older than this brewdash: the tab says to update it and gives the commands, and
-brewdash does not read that file. With `--exit-zero` a scan that finds open alerts
-exits with 0, because sudo also exits with 1 when you cancel the password
-dialog; brewdash shows any other exit code as a failed job. secure-it does not
-scan on its own; it scans when you start a scan.
+The [brewdash security plugin](https://github.com/lemiorhan/brewdash-plugin-security)
+is a macOS security scanner, and it is in brewdash's built-in catalog. Its tab
+is **Security**. The plugin used to be called secure-it, and its command and
+paths still carry that name. Without it, the tab says what it is and how to
+install it. Once `/usr/local/bin/secure-it` is there, the tab has a **Scan
+now** button. It runs `/usr/bin/sudo -A /usr/local/bin/secure-it scan
+--exit-zero` after you confirm, and macOS asks for your password. The plugin
+then writes `~/.local/state/brewdash/plugins/secure-it/report.json`, and the
+tab shows the new findings. A version that writes `~/secure-it/report.json`
+instead is older than this brewdash: the tab says to update it and gives the
+commands, and brewdash does not read that file. With `--exit-zero` a scan that
+finds open alerts exits with 0, because sudo also exits with 1 when you cancel
+the password dialog; brewdash shows any other exit code as a failed job. The
+plugin does not scan on its own; it scans when you start a scan.
 
 Only a plugin in the catalog can be started from brewdash. The command is in
 `brewdash.py`, not in a file anyone else can write.
 
-brewdash also runs it only when root alone can change secure-it's files. The
-catalog names them, the same three paths that secure-it's own integrity check
+brewdash also runs it only when root alone can change the plugin's files. The
+catalog names them, the same three paths that the plugin's own integrity check
 covers: `/usr/local/bin/secure-it`, which only hands over to
-`/usr/local/libexec/secure-it`, where secure-it's code is, and
+`/usr/local/libexec/secure-it`, where the plugin's code is, and
 `/Library/Application Support/secure-it`, where it keeps its state. Each of
 them, everything inside them, and every folder above them must belong to root,
 with no write access for other users, and none of them may be a symlink. A
@@ -335,10 +336,10 @@ is root. A folder that gives other users no access at all is not looked into,
 because only root can reach inside. brewdash checks this when it shows the tab
 and again when you start a scan. Otherwise the tab names the path someone else
 can change, and offers no **Scan now**. Before an install, the same check
-covers the folders secure-it would go into. On an Intel Mac, Homebrew gives
-`/usr/local/bin` to your user, so there the tab says secure-it cannot be
+covers the folders the plugin would go into. On an Intel Mac, Homebrew gives
+`/usr/local/bin` to your user, so there the tab says the plugin cannot be
 installed safely and shows no install commands. The check does not cover
-`/usr/bin/python3`, which secure-it runs, or the Xcode or Command Line Tools
+`/usr/bin/python3`, which the plugin runs, or the Xcode or Command Line Tools
 Python that it hands over to.
 
 ### Adding a plugin

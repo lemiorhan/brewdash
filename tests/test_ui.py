@@ -217,17 +217,17 @@ class UiSmokeTest(UiFixture):
         self.page.wait_for_selector('.att:has-text("apps without a real signature")')
         self.assertEqual(self.attention(), [
             ("critical", "health", "3 deprecated or disabled"),
-            ("critical", SECURE_IT, "1 secure-it findings"),
+            ("critical", SECURE_IT, "1 brewdash security plugin findings"),
             ("warning", "health", "brew doctor has warnings"),
             ("warning", "requested:upgradable", "1 can be upgraded in Installed by you"),
             ("warning", "requested:outdated,pinned", "1 outdated but pinned in Installed by you"),
             ("warning", "update", "brew update is stale"),
             ("warning", "shell", "1 synced folders ahead in PATH"),
             ("warning", "shell", "1 PATH problems"),
-            ("warning", SECURE_IT, "2 secure-it findings"),
+            ("warning", SECURE_IT, "2 brewdash security plugin findings"),
             ("warning", "services", "1 services reachable from the network"),
             ("warning", "apps", "1 apps without a real signature"),
-            ("info", SECURE_IT, "1 secure-it findings"),
+            ("info", SECURE_IT, "1 brewdash security plugin findings"),
             ("info", "health", "cleanup"),
             ("info", "apps", "1 apps brew could manage"),
             ("info", "taps", "1 unused taps"),
@@ -510,7 +510,7 @@ class UiSmokeTest(UiFixture):
     def test_sources_brewdash_could_not_read_are_said_and_escaped(self):
         self.page.evaluate("""S.snap.ports = {error: 'could not run lsof: <b>x</b>', by_id: {}};
             S.snap.plugins = S.snap.plugins.map((p) => ({...p, error: 'could not read it: <i>y</i>', alerts: []})); renderAll()""")
-        self.assertIn(("warning", SECURE_IT, "secure-it report unreadable"), self.attention())
+        self.assertIn(("warning", SECURE_IT, "brewdash security plugin report unreadable"), self.attention())
         self.tab("services")
         self.assertEqual(self.page.inner_text("#content .warn"), "could not run lsof: <b>x</b>")
         self.tab(SECURE_IT)
@@ -876,7 +876,7 @@ class UiSmokeTest(UiFixture):
         self.assertEqual(self.page.locator("#content [onmouseover]").count(), 0)
         self.assertIsNone(self.page.evaluate("window.pwned"))
         self.assertEqual(self.page.locator(f'nav button[data-tab="{SECURE_IT}"] .count').inner_text(), "4")
-        self.assertEqual(self.page.inner_text("#intro h2"), "secure-it")
+        self.assertEqual(self.page.inner_text("#intro h2"), "Security")
         self.assertIn("Scan started 2026-11-03 08:00 · host: mac · user: me", self.page.inner_text("#content"))
 
     def test_the_findings_of_one_fingerprint_are_one_card_that_counts_each_of_them(self):
@@ -908,20 +908,22 @@ class UiSmokeTest(UiFixture):
         self.open_plugin()
         self.unfold("Open port", "jq").locator('[data-goto="f:jq"]').click()
         self.page.wait_for_selector("#detail h2.detail-title")
-        section = self.page.locator("#detail .detail-section:has(h4:text-is('secure-it findings'))")
+        section = self.page.locator("#detail .detail-section:has(h4:text-is('brewdash security plugin findings'))")
         self.assertEqual(section.locator(".alert").all_inner_texts(), ["HIGH jq listens on *:8080", "MEDIUM jq listens on 127.0.0.1:9000"])
         self.assertIn("TCP *:8080", self.page.inner_text("#detail"))
-        section.locator(f'button[data-tab="{SECURE_IT}"]').click()
-        self.assertEqual(self.page.inner_text("#intro h2"), "secure-it")
+        section.locator('button:text-is("Open brewdash security plugin")').click()
+        self.assertEqual(self.page.inner_text("#intro h2"), "Security")
+        self.assertIn("Findings from brewdash security plugin, a separate tool.", self.page.inner_text("#intro"))
+        self.assertEqual(self.page.locator(f'#tabs button[data-tab="{SECURE_IT}"]').evaluate("b => b.firstChild.textContent"), "Security")
         self.unfold("PATH shadowing", "~/bin shadows").locator('[data-tab="shell"]').click()
         self.assertEqual(self.page.inner_text("#intro h2"), "Shell")
         self.open_plugin()
         self.unfold("Third-party taps", "onerror").locator('button:text-is("Open me/tap in Taps")').click()
         self.assertEqual(self.page.inner_text("#intro h2"), "Taps")
-        badge = self.page.locator('#content tr:has-text("me/tap") .badge:text-is("secure-it")')
-        self.assertEqual((badge.count(), badge.get_attribute("title")), (1, "secure-it flags this tap"))
+        badge = self.page.locator('#content tr:has-text("me/tap") .badge:text-is("Security")')
+        self.assertEqual((badge.count(), badge.get_attribute("title")), (1, "brewdash security plugin flags this tap"))
         badge.click()
-        self.assertEqual(self.page.inner_text("#intro h2"), "secure-it")
+        self.assertEqual(self.page.inner_text("#intro h2"), "Security")
 
     def choose(self, field, value):
         self.page.select_option(f'#content select[data-pf="{field}"]', value)
@@ -1106,7 +1108,7 @@ class UiSmokeTest(UiFixture):
         self.set_plugin("installed: false, scan: false, found: false, alerts: []")
         self.tab(SECURE_IT)
         content = self.page.inner_text("#content")
-        self.assertIn("secure-it is not installed", content)
+        self.assertIn("brewdash security plugin is not installed", content)
         self.assertIn("A separate scanner for macOS security settings", content)
         self.assertEqual(self.page.inner_text("#content pre"),
                          "git clone https://github.com/lemiorhan/brewdash-plugin-security.git\n"
@@ -1121,14 +1123,14 @@ class UiSmokeTest(UiFixture):
     def test_an_installed_plugin_without_a_report_offers_a_scan(self):
         self.set_plugin("found: false, alerts: []")
         self.tab(SECURE_IT)
-        self.assertIn(f"secure-it has not written {self.report} yet.", self.page.inner_text("#content"))
+        self.assertIn(f"brewdash security plugin has not written {self.report} yet.", self.page.inner_text("#content"))
         self.assertEqual(self.page.inner_text("#content [data-plugin-scan]"), "Scan now")
         self.assertEqual(self.page.locator("#content .ok").count(), 0)
 
     def test_a_report_with_nothing_open_says_so(self):
         self.open_plugin()
         self.page.evaluate("const r = reports.get('secure-it').report; r.findings = r.findings.filter((f) => f.accepted || f.severity === 'info'); renderPlugin()")
-        self.assertEqual(self.page.inner_text("#plist"), "✔ secure-it reports nothing open.")
+        self.assertEqual(self.page.inner_text("#plist"), "✔ brewdash security plugin reports nothing open.")
         self.page.check('[data-pf="accepted"]')
         self.assertEqual(self.page.locator("#plist .ok").count(), 1)
         self.assertEqual(self.page.locator("#plist .pgroup > summary b").all_inner_texts(), ["Open port"])
@@ -1139,7 +1141,7 @@ class UiSmokeTest(UiFixture):
         self.exe.unlink()
         try:
             self.tab(SECURE_IT)
-            self.page.wait_for_selector('#content h3:text-is("secure-it is not installed")')
+            self.page.wait_for_selector('#content h3:text-is("brewdash security plugin is not installed")')
             self.exe.write_text("")
             self.page.wait_for_selector('#content [data-plugin-scan="secure-it"]')
         finally:
@@ -1152,7 +1154,7 @@ class UiSmokeTest(UiFixture):
         self.page.wait_for_selector('#content [data-plugin-scan="secure-it"]')
         self.unprotected[str(self.exe)] = "/usr/local/bin"
         try:
-            self.page.wait_for_selector('#content .warn:has-text("Scan now is off: secure-it runs as root, '
+            self.page.wait_for_selector('#content .warn:has-text("Scan now is off: brewdash security plugin runs as root, '
                                         'and someone other than root can change /usr/local/bin.")')
             self.assertEqual(self.page.locator("#content [data-plugin-scan]").count(), 0)
         finally:
@@ -1165,7 +1167,7 @@ class UiSmokeTest(UiFixture):
         self.unprotected[str(self.exe)] = "/usr/local/bin"
         try:
             self.tab(SECURE_IT)
-            self.page.wait_for_selector('#content .warn:has-text("secure-it cannot be installed safely on this Mac. '
+            self.page.wait_for_selector('#content .warn:has-text("brewdash security plugin cannot be installed safely on this Mac. '
                                         'It runs as root, and its files would go under /usr/local/bin, '
                                         'which someone other than root can change. '
                                         'On an Intel Mac, Homebrew gives /usr/local/bin to your user.")')
@@ -1214,10 +1216,10 @@ class UiSmokeTest(UiFixture):
     def test_a_report_from_an_older_plugin_says_to_update_the_plugin(self):
         try:
             self.cls_report({**REPORT, "schema": 2})
-            self.page.wait_for_selector('.att:has-text("secure-it needs an update")')
+            self.page.wait_for_selector('.att:has-text("brewdash security plugin needs an update")')
             self.tab(SECURE_IT)
             warn = self.page.locator("#content .warn")
-            self.assertIn("An older secure-it is installed", warn.inner_text())
+            self.assertIn("An older brewdash security plugin is installed", warn.inner_text())
             self.assertEqual(warn.locator("pre").inner_text(), self.UPDATE)
             self.assertEqual(self.page.locator("#content .alert, #content .ok, #content [data-pview]").count(), 0)
         finally:
@@ -1229,12 +1231,12 @@ class UiSmokeTest(UiFixture):
         self.legacy_report.parent.mkdir(exist_ok=True)
         self.legacy_report.write_text(json.dumps(REPORT))
         try:
-            self.page.wait_for_selector('.att:has-text("secure-it needs an update")')
+            self.page.wait_for_selector('.att:has-text("brewdash security plugin needs an update")')
             self.tab(SECURE_IT)
             warn = self.page.locator("#content .warn")
-            self.assertIn("An older secure-it is installed", warn.inner_text())
+            self.assertIn("An older brewdash security plugin is installed", warn.inner_text())
             self.assertEqual(warn.locator("pre").inner_text(), self.UPDATE)
-            self.assertIn(f"secure-it has not written {self.report} yet.", self.page.inner_text("#content"))
+            self.assertIn(f"brewdash security plugin has not written {self.report} yet.", self.page.inner_text("#content"))
             self.assertEqual(self.page.locator("#content .alert, #content [data-pview]").count(), 0)
             self.assertEqual(self.page.locator(f'nav button[data-tab="{SECURE_IT}"] .count').count(), 0)
         finally:
@@ -1244,10 +1246,10 @@ class UiSmokeTest(UiFixture):
 
     def test_a_report_from_a_newer_plugin_says_to_update_brewdash(self):
         self.set_plugin("found: true, error: 'it has schema 4; this brewdash reads schema 3', outdated: 'brewdash', alerts: []")
-        self.assertIn(("warning", SECURE_IT, "secure-it report unreadable"), self.attention())
+        self.assertIn(("warning", SECURE_IT, "brewdash security plugin report unreadable"), self.attention())
         self.tab(SECURE_IT)
         self.assertEqual(self.page.inner_text("#content .warn"),
-                         "secure-it writes a newer report than this brewdash reads. Update brewdash in Settings.")
+                         "brewdash security plugin writes a newer report than this brewdash reads. Update brewdash in Settings.")
 
     def test_a_new_report_shows_up_without_a_brew_change(self):
         self.open_plugin()

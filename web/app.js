@@ -33,8 +33,10 @@ const tabs = () => {
   const at = TABS.indexOf("history");
   return [...TABS.slice(0, at), ...plugins().map((p) => PLUGIN_TAB + p.id), ...TABS.slice(at)];
 };
+// A catalog plugin has a short name for its tab and badges; a manifest gives only one name.
+const shortName = (pl) => pl.tab ?? pl.name;
 // Before the first state arrives a plugin tab from the URL has only its id to go by.
-const tabLabel = (k) => k.startsWith(PLUGIN_TAB) ? pluginOf(k)?.name ?? k.slice(PLUGIN_TAB.length) : t("tab." + k);
+const tabLabel = (k) => k.startsWith(PLUGIN_TAB) ? (pluginOf(k) ? shortName(pluginOf(k)) : k.slice(PLUGIN_TAB.length)) : t("tab." + k);
 const tabHtml = (k) => k.startsWith(PLUGIN_TAB) ? esc(tabLabel(k)) : tabLabel(k);
 const knownTab = (k) => TABS.includes(k) || (k?.startsWith(PLUGIN_TAB) && (!S.snap || pluginOf(k))) ? k : "overview";
 
@@ -470,7 +472,7 @@ function renderSettings() {
 function renderTaps() {
   const taps = S.snap?.model?.taps || [];
   $("#content").innerHTML = `<table><thead><tr><th></th><th>${t("detail.tap")}</th><th>${t("taps.remote")}</th><th class="num">${t("taps.installed")}</th><th class="num">${t("taps.formulae")}</th><th class="num">${t("tab.casks")}</th><th>${t("taps.last_commit")}</th></tr></thead><tbody>
-    ${taps.map((tp) => `<tr><td><input type="checkbox" data-sel="t:${esc(tp.name)}" ${S.selected.has("t:" + tp.name) ? "checked" : ""}></td><td class="name">${esc(tp.name)}${tp.official ? `<span class="badge b-service">${t("taps.official")}</span>` : ""}${tp.private ? `<span class="badge b-pinned">${t("taps.private")}</span>` : ""}${plugins().filter((pl) => linkedTo(pl.alerts, "tap", tp.name).length).map((pl) => `<span class="badge b-missing" data-tab="${PLUGIN_TAB}${esc(pl.id)}" title="${t("taps.flagged", { name: esc(pl.name) })}">${esc(pl.name)}</span>`).join("")}</td>
+    ${taps.map((tp) => `<tr><td><input type="checkbox" data-sel="t:${esc(tp.name)}" ${S.selected.has("t:" + tp.name) ? "checked" : ""}></td><td class="name">${esc(tp.name)}${tp.official ? `<span class="badge b-service">${t("taps.official")}</span>` : ""}${tp.private ? `<span class="badge b-pinned">${t("taps.private")}</span>` : ""}${plugins().filter((pl) => linkedTo(pl.alerts, "tap", tp.name).length).map((pl) => `<span class="badge b-missing" data-tab="${PLUGIN_TAB}${esc(pl.id)}" title="${t("taps.flagged", { name: esc(pl.name) })}">${esc(shortName(pl))}</span>`).join("")}</td>
       <td class="mono muted">${esc(tp.remote || "")}</td><td class="num">${tp.installed.length || `<span class="muted">${t("taps.unused")}</span>`}</td>
       <td class="num">${tp.formula_count}</td><td class="num">${tp.cask_count}</td><td class="muted">${esc(tp.last_commit || "")}</td></tr>
       ${tp.installed.length && !tp.official ? `<tr><td></td><td></td><td colspan="5"><div class="chips">${tp.installed.map(chip).join("")}</div></td></tr>` : ""}`).join("")}
@@ -1357,7 +1359,7 @@ function renderJobs() {
 
 function renderIntro() {
   if (S.tab === "overview") { $("#intro").innerHTML = hero(); return; }
-  const plugin = S.tab.startsWith(PLUGIN_TAB) ? { name: esc(tabLabel(S.tab)) } : null;
+  const plugin = S.tab.startsWith(PLUGIN_TAB) ? { name: esc(pluginOf(S.tab)?.name ?? tabLabel(S.tab)) } : null;
   const what = `<p>${plugin ? t("intro.plugin.what", plugin) : t(`intro.${S.tab}.what`)}</p>`;
   const todo = `<p><b>${t("intro.what_to_do")}</b> ${plugin ? t("intro.plugin.todo", plugin) : t(`intro.${S.tab}.todo`)}</p>`;
   $("#intro").innerHTML = macWindow
@@ -1372,7 +1374,7 @@ function hero() {
       <ul>
         <li>${t("hero.understand")}</li>
         <li>${t("hero.clean")}</li>
-        <li>${t("hero.safe", { link: `<a href="https://github.com/lemiorhan/brewdash-plugin-security" target="_blank" rel="noopener">secure-it</a>` })}</li>
+        <li>${t("hero.safe", { link: `<a href="https://github.com/lemiorhan/brewdash-plugin-security" target="_blank" rel="noopener">brewdash security plugin</a>` })}</li>
         <li>${t("hero.move")}</li>
       </ul></div>
     <div class="hero-side"><h4>${t("hero.how")}</h4>

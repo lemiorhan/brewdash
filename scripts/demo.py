@@ -169,7 +169,7 @@ def demo_sysrun(argv, timeout=60):
 
 
 def setup(root):
-    """The files brewdash reads besides brew: sizes on disk, apps, shell files, secure-it's report."""
+    """The files brewdash reads besides brew: sizes on disk, apps, shell files, the brewdash security plugin's report."""
     brew = DemoBrew(root)
     sizes = {"node": 190, "postgresql@16": 88, "ffmpeg": 61, "python@3.12": 74, "awscli": 120, "php@8.1": 96,
              "openssl@3": 34, "icu4c@76": 76, "gh": 52, "git": 58, "redis": 9, "icu4c@74": 72}

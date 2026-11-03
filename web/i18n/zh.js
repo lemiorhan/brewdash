@@ -244,7 +244,7 @@ I18N.zh = {
   "intro.services.what": "可以通过 <b>brew services</b> 在后台运行的 formula（数据库、队列、Web 服务器），以及它们的状态和监听的端口。",
   "intro.services.todo": "启动、停止或重启服务。标为琥珀色的端口在所有网络接口上监听，你所在网络中的其他机器都能访问它；如果这不是你想要的，请停止服务或将其绑定到 127.0.0.1。",
   "intro.taps.what": "brew 读取 formula 和 cask 的仓库。<b>homebrew/core</b> 和 <b>homebrew/cask</b> 是 Homebrew 自己的；其他每个 tap 都是第三方代码，brew 会以你的身份运行它。",
-  "intro.taps.todo": "移除没有安装任何软件包的 tap。只有在信任其所有者时才保留第三方 tap；<b>secure-it</b> 标记表示扫描器标记了它。",
+  "intro.taps.todo": "移除没有安装任何软件包的 tap。只有在信任其所有者时才保留第三方 tap；<b>Security</b> 标记表示 brewdash security plugin 标记了它。",
   "intro.health.what": "brew 自身报告的内容：缺少的依赖、已弃用或已停用的软件包、孤立软件包、cleanup 可释放的缓存，以及完整的 <b>brew doctor</b> 输出。",
   "intro.health.todo": "从上往下处理：缺少的依赖现在就会让软件包无法运行，已弃用的将来也会。然后自动移除并清理，以回收磁盘空间。",
   "intro.plugin.what": "来自 <b>{name}</b> 的发现。{name} 是一个独立的工具，brewdash 只读取它留给 brewdash 的报告。",

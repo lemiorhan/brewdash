@@ -23,7 +23,8 @@ Only the latest commit on `master` gets security fixes.
   brewdash run a command the person at the keyboard did not confirm.
 - Bypasses of the token or `Host` checks on the local API.
 - Script injection into the page through data brewdash reads: package
-  metadata, app names, shell files, or secure-it's `report.json`.
+  metadata, app names, shell files, or the brewdash security plugin's
+  `report.json`.
 - Reading files outside `web/` through the static file server.
 
 ## Design notes
@@ -31,7 +32,7 @@ Only the latest commit on `master` gets security fixes.
 - The server binds to `127.0.0.1` only. Every API call needs the random token
   generated at start, and a `Host` of `127.0.0.1:<port>` or `localhost:<port>`.
 - Every brew action goes through a confirmation dialog that shows the exact
-  commands. Commands from secure-it's report are shown for you to copy and are
-  never run by brewdash.
+  commands. Commands from the brewdash security plugin's report are shown for
+  you to copy and are never run by brewdash.
 - Data from brew, the file system and other tools is escaped with `esc()`
   before it goes into the page.
