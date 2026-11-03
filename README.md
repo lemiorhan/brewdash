@@ -76,46 +76,68 @@ brewdash needs macOS, [Homebrew](https://brew.sh) and Python 3.9 or newer. The
 standard library only; Cytoscape.js is vendored in `web/vendor/`.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash
-# or
-wget -qO- https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash
+brew trust lemiorhan/brewdash && brew install --cask lemiorhan/brewdash/brewdash
 ```
 
-The script builds `brewdash.app` on your Mac with the Command Line Tools,
-puts it in `/Applications` (or `~/Applications` when you cannot write to
-`/Applications`), and opens it. brewdash comes in two kinds:
+The cask comes from brewdash's own tap,
+[lemiorhan/homebrew-brewdash](https://github.com/lemiorhan/homebrew-brewdash).
+Homebrew loads a cask from a tap that is not its own only after
+`brew trust`. That command came with Homebrew 5.1.15, so an older Homebrew
+stops there; run `brew update` first. The cask puts the latest release of
+`brewdash.app` in `/Applications`, signed with a Developer ID and notarized
+by Apple. You can also
+[download the app](https://github.com/lemiorhan/brewdash/releases/latest/download/brewdash-macos.zip),
+unzip it and move it to your Applications folder.
 
-- **Mac app** (the default): the dashboard in its own window, with a menu bar,
-  ⌘, for Settings, ⌘R to reload, ⌘W to close the window, zoom and full
-  screen, and a save dialog for the Brewfile. Links to other sites open in
-  your browser. It is built with `swiftc` from the Command Line Tools.
-- **Browser**: an app that opens the dashboard in your default browser. Add
-  `--browser`:
+If a `brewdash.app` is already in `/Applications`, for instance one that
+`install.sh` built, Homebrew stops with *It seems there is already an App*.
+Add `--force` to replace it. Your settings stay in `~/.local/state/brewdash`.
 
-  ```sh
-  curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --browser
-  ```
+```sh
+brew install --cask --force lemiorhan/brewdash/brewdash
+```
 
-Both are `brewdash.app` with the same bundle id, so only one is installed at
-a time: installing one kind replaces the other, also when the other is in the
-other Applications folder. To switch, run the install command with `--app` or
-`--browser`. An update keeps the kind you have. From then on:
+brewdash opens in its own window, with a menu bar, ⌘, for Settings, ⌘R to
+reload, ⌘W to close the window, zoom and full screen, and a save dialog for
+the Brewfile. Links to other sites open in your browser. From then on:
 
 - **Open** brewdash from Launchpad, Spotlight or the Dock. It starts the
   server and opens the dashboard.
 - **Click its Dock icon** to open the dashboard again, also after you closed
-  the Mac app's window.
+  the window.
 - **Quit** it (⌘Q) to stop the server. If the app stops without quitting, the
   server notices and stops as well.
 
-To remove the app, run the install command with `--uninstall`; your settings
-and Brewfile snapshots stay in `~/.local/state/brewdash`:
+To remove it:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall
+brew uninstall --cask brewdash          # keeps your settings and Brewfile snapshots in ~/.local/state/brewdash
+brew uninstall --cask --zap brewdash    # deletes them too
 ```
 
-The top of [`install.sh`](install.sh) lists the settings it reads, such as
+### With the install script
+
+[`install.sh`](install.sh) builds `brewdash.app` on your Mac instead, with
+`swiftc` from the Command Line Tools, and signs it ad-hoc. It puts the app in
+`/Applications` (or `~/Applications` when you cannot write to
+`/Applications`) and opens it. It also builds a second kind of brewdash:
+
+- **Mac app** (the default): the kind the cask installs.
+- **Browser**: an app that opens the dashboard in your default browser.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash                  # Mac app
+curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --browser   # Browser
+curl -fsSL https://raw.githubusercontent.com/lemiorhan/brewdash/master/install.sh | bash -s -- --uninstall # remove it
+```
+
+Both kinds are `brewdash.app` with the same bundle id, so only one is
+installed at a time: installing one kind replaces the other, also when the
+other is in the other Applications folder. To switch, run the script with
+`--app` or `--browser`. An update keeps the kind you have. `--uninstall`
+keeps your settings and Brewfile snapshots, like the cask.
+
+The top of `install.sh` lists the settings it reads, such as
 `BREWDASH_APP_DIR` for another folder and `BREWDASH_REF` for a tag, branch or
 commit other than the latest release.
 
@@ -147,7 +169,8 @@ only in that log. Your choices are kept in
 
 An app installed before brewdash could update itself, an app built from
 `BREWDASH_TARBALL`, and a copy run from a git checkout do not update
-themselves. Run the install command once more to get an app that does.
+themselves. Install the cask to get an app that does, with `--force` when a
+`brewdash.app` is already there.
 
 ### From the source
 

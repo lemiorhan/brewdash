@@ -1,10 +1,18 @@
 # Changelog
 
 All notable changes to brewdash are listed here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). brewdash has no
-numbered releases yet; changes are listed by date.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases are
+tagged `vX.Y.Z`; changes from before the first one are listed by date.
 
 ## Unreleased
+
+### Fixed
+- The install command trusts brewdash's tap first, with
+  `brew trust lemiorhan/brewdash`: Homebrew refuses a cask from a tap you have
+  not trusted. The README installs with the cask too, and keeps `install.sh`
+  for building the app on your Mac.
+
+## [0.1.0] - 2026-11-03
 
 ### Added
 - brewdash as a Mac app: the dashboard in its own window, with a menu bar,
@@ -14,8 +22,8 @@ numbered releases yet; changes are listed by date.
 - The Mac app signed with a Developer ID and notarized by Apple, published on
   GitHub Releases as `brewdash-macos.zip`: a `vX.Y.Z` tag gets its own
   release, any other ref replaces the one `beta` prerelease. Install it with
-  `brew trust lemiorhan/brewdash && brew install --cask lemiorhan/brewdash/brewdash`,
-  or download it from the latest release.
+  the `lemiorhan/brewdash/brewdash` cask, or download it from the latest
+  release.
 - The app updates itself from those releases. Stable is the latest release
   and beta the `beta` prerelease, no longer every commit on master. The Mac
   app installs the release's ZIP once Gatekeeper accepts it, instead of being
@@ -54,3 +62,5 @@ numbered releases yet; changes are listed by date.
 ### Fixed
 - Uninstalling a package other packages still need now offers to remove them
   too, or to uninstall anyway and name what breaks.
+
+[0.1.0]: https://github.com/lemiorhan/brewdash/releases/tag/v0.1.0

@@ -1268,6 +1268,8 @@ class ProjectPageInstallTest(unittest.TestCase):
                 self.assertEqual(page.inner_text("#install-command"), self.COMMAND)
                 self.assertEqual(page.locator("#install a").evaluate_all("as => as.map((a) => a.href)"), [self.ZIP])
                 self.assertEqual(page.inner_text("#details .snippet >> nth=0"), "brew uninstall --cask brewdash")
+                # Homebrew refuses to install over a brewdash.app the install script built until it is given --force.
+                self.assertIn("--force", page.inner_text("[data-i18n='app.install.body']"))
         self.assertEqual(re.findall(r"install\.sh|curl |wget ", self.FILE.read_text()), [])
 
     def test_no_language_talks_about_a_browser_or_a_server_outside_the_developer_snippets(self):

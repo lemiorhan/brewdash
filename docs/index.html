@@ -327,7 +327,7 @@ footer a { color: var(--muted); }
         <pre id="install-command" tabindex="0">brew trust lemiorhan/brewdash &amp;&amp; brew install --cask lemiorhan/brewdash/brewdash</pre>
         <button type="button" class="copy" data-copy="install-command" data-i18n="copy.button">Copy</button>
       </div>
-      <p class="install-note" data-i18n="install.note">Paste it in Terminal. Homebrew puts brewdash in your Applications folder.</p>
+      <p class="install-note" data-i18n="install.note">Paste it in Terminal. The first command lets Homebrew load casks from brewdash's own tap. The second puts brewdash in your Applications folder.</p>
       <p class="install-note" data-i18n-html="install.download">Or <a class="download" href="https://github.com/lemiorhan/brewdash/releases/latest/download/brewdash-macos.zip">download the app</a>, unzip it and move brewdash.app to your Applications folder.</p>
       <p class="install-note" role="status" aria-live="polite" id="copy-status"></p>
     </div>
@@ -402,7 +402,7 @@ footer a { color: var(--muted); }
       <ol class="steps">
         <li>
           <h3 data-i18n="app.install.title">Install</h3>
-          <p data-i18n="app.install.body">Paste the command above in Terminal, or download the app. It updates itself; pick stable or beta in its Settings.</p>
+          <p data-i18n="app.install.body">Paste the command above in Terminal, or download the app. If an older brewdash.app is already there, add --force to brew install. It updates itself; pick stable or beta in its Settings.</p>
         </li>
         <li>
           <h3 data-i18n="app.open.title">Open</h3>
@@ -477,7 +477,7 @@ window.brewdashI18n = (() => {
       "copy.done": "Copied",
       "copy.status": "The install command is on your clipboard. Paste it in Terminal.",
       "copy.fallback": "Press ⌘C to copy the selected command.",
-      "install.note": "Paste it in Terminal. Homebrew puts brewdash in your Applications folder.",
+      "install.note": "Paste it in Terminal. The first command lets Homebrew load casks from brewdash's own tap. The second puts brewdash in your Applications folder.",
       "install.download": `Or <a ${ZIP}>download the app</a>, unzip it and move brewdash.app to your Applications folder.`,
       "terminal.aria": "brew list output with what brewdash tells you about each package",
       "terminal.caption": "Each comment is something brewdash tells you about that package. These come from its demo data.",
@@ -514,7 +514,7 @@ window.brewdashI18n = (() => {
       "app.title": "Opens like any other Mac app",
       "app.intro": "brewdash.app is signed by its developer and notarized by Apple. It opens in its own window, with a menu bar and a Dock icon.",
       "app.install.title": "Install",
-      "app.install.body": "Paste the command above in Terminal, or download the app. It updates itself; pick stable or beta in its Settings.",
+      "app.install.body": "Paste the command above in Terminal, or download the app. If an older brewdash.app is already there, add --force to brew install. It updates itself; pick stable or beta in its Settings.",
       "app.open.title": "Open",
       "app.open.body": "Start brewdash from Launchpad, Spotlight or the Dock. Click its Dock icon to bring the dashboard back.",
       "app.quit.title": "Quit",
@@ -547,7 +547,7 @@ window.brewdashI18n = (() => {
       "copy.done": "Kopyalandı",
       "copy.status": "Kurulum komutu panoda. Terminal'e yapıştır.",
       "copy.fallback": "Seçili komutu kopyalamak için ⌘C'ye bas.",
-      "install.note": "Terminal'e yapıştır. Homebrew, brewdash'i Uygulamalar klasörüne koyuyor.",
+      "install.note": "Terminal'e yapıştır. İlk komut, Homebrew'un brewdash'in kendi tap'inden cask yüklemesine izin veriyor. İkincisi brewdash'i Uygulamalar klasörüne koyuyor.",
       "install.download": `Ya da <a ${ZIP}>uygulamayı indir</a>, ZIP'i aç ve brewdash.app'i Uygulamalar klasörüne taşı.`,
       "terminal.aria": "brewdash'in her paket için söyledikleriyle birlikte brew list çıktısı",
       "terminal.caption": "Her yorum, brewdash'in o paket hakkında sana söylediği bir şey. Bunlar demo verisinden geliyor.",
@@ -584,7 +584,7 @@ window.brewdashI18n = (() => {
       "app.title": "Diğer Mac uygulamaları gibi açılır",
       "app.intro": "brewdash.app'i geliştiricisi imzaladı, Apple da notarize etti. Uygulama kendi penceresinde, menü bar'ı ve Dock ikonuyla açılıyor.",
       "app.install.title": "Kur",
-      "app.install.body": "Yukarıdaki komutu Terminal'e yapıştır ya da uygulamayı indir. Uygulama kendini güncelliyor; stable ya da beta'yı Ayarlar'dan seç.",
+      "app.install.body": "Yukarıdaki komutu Terminal'e yapıştır ya da uygulamayı indir. Orada eski bir brewdash.app varsa brew install'a --force ekle. Uygulama kendini güncelliyor; stable ya da beta'yı Ayarlar'dan seç.",
       "app.open.title": "Aç",
       "app.open.body": "brewdash'i Launchpad'den, Spotlight'tan ya da Dock'tan başlat. Dashboard'u geri getirmek için Dock'taki ikonuna tıkla.",
       "app.quit.title": "Kapat",
@@ -617,7 +617,7 @@ window.brewdashI18n = (() => {
       "copy.done": "Copiado",
       "copy.status": "El comando de instalación está en tu portapapeles. Pégalo en Terminal.",
       "copy.fallback": "Pulsa ⌘C para copiar el comando seleccionado.",
-      "install.note": "Pégalo en Terminal. Homebrew instala brewdash en tu carpeta Aplicaciones.",
+      "install.note": "Pégalo en Terminal. El primer comando permite que Homebrew cargue casks del tap propio de brewdash. El segundo instala brewdash en tu carpeta Aplicaciones.",
       "install.download": `O <a ${ZIP}>descarga la app</a>, descomprímela y mueve brewdash.app a tu carpeta Aplicaciones.`,
       "terminal.aria": "Salida de brew list con lo que brewdash te dice de cada paquete",
       "terminal.caption": "Cada comentario es algo que brewdash te dice sobre ese paquete. Salen de sus datos de demostración.",
@@ -654,7 +654,7 @@ window.brewdashI18n = (() => {
       "app.title": "Se abre como cualquier otra app del Mac",
       "app.intro": "brewdash.app está firmada por su desarrollador y notarizada por Apple. Se abre en su propia ventana, con barra de menús e icono en el Dock.",
       "app.install.title": "Instala",
-      "app.install.body": "Pega el comando de arriba en Terminal o descarga la app. Se actualiza sola; elige stable o beta en sus Ajustes.",
+      "app.install.body": "Pega el comando de arriba en Terminal o descarga la app. Si ya hay una brewdash.app anterior, añade --force a brew install. Se actualiza sola; elige stable o beta en sus Ajustes.",
       "app.open.title": "Abre",
       "app.open.body": "Abre brewdash desde Launchpad, Spotlight o el Dock. Haz clic en su icono del Dock para volver al panel.",
       "app.quit.title": "Cierra",
@@ -687,7 +687,7 @@ window.brewdashI18n = (() => {
       "copy.done": "已复制",
       "copy.status": "安装命令已复制到剪贴板，粘贴到“终端”即可。",
       "copy.fallback": "按 ⌘C 复制选中的命令。",
-      "install.note": "粘贴到“终端”中运行。Homebrew 会把 brewdash 放进“应用程序”文件夹。",
+      "install.note": "粘贴到“终端”中运行。第一条命令让 Homebrew 可以从 brewdash 自己的 tap 加载 cask。第二条命令会把 brewdash 放进“应用程序”文件夹。",
       "install.download": `也可以<a ${ZIP}>下载应用</a>，解压后把 brewdash.app 移到“应用程序”文件夹。`,
       "terminal.aria": "brew list 的输出，以及 brewdash 对每个包的说明",
       "terminal.caption": "每条注释都是 brewdash 对该包给出的提示，来自它的演示数据。",
@@ -724,7 +724,7 @@ window.brewdashI18n = (() => {
       "app.title": "和其他 Mac 应用一样打开",
       "app.intro": "brewdash.app 由开发者签名，并经过 Apple 公证。它在自己的窗口中打开，带菜单栏和程序坞图标。",
       "app.install.title": "安装",
-      "app.install.body": "把上面的命令粘贴到“终端”运行，或者下载应用。它会自动更新；在它的“设置”里选择 stable 或 beta。",
+      "app.install.body": "把上面的命令粘贴到“终端”运行，或者下载应用。如果那里已经有旧的 brewdash.app，给 brew install 加上 --force。它会自动更新；在它的“设置”里选择 stable 或 beta。",
       "app.open.title": "打开",
       "app.open.body": "从启动台、Spotlight 或程序坞启动 brewdash。点击程序坞中的图标即可重新调出仪表盘。",
       "app.quit.title": "退出",
