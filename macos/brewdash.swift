@@ -323,7 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 }
 
-// tests/window_check.swift brings its own main.
+// A program built with -D BREWDASH_CHECK brings its own main.
 #if !BREWDASH_CHECK
 @main
 enum Main {

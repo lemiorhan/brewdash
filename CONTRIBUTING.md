@@ -18,7 +18,7 @@ python3 brewdash.py                  # run it against your own Homebrew
 python3 scripts/demo.py              # or against made-up data
 ```
 
-For the browser tests and the screenshots you need Playwright:
+For the browser tests and the icons you need Playwright:
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install playwright
@@ -49,7 +49,8 @@ python3 -m venv .venv && .venv/bin/pip install playwright
    should fail if the line it protects is removed.
 3. Run the whole suite, including the browser tests, before you push.
 4. If the change is visible, run `scripts/screenshots.py` and include the
-   updated screenshots.
+   updated screenshots. It opens the Mac app on the demo and needs `swiftc`
+   and Screen Recording for the app you run it from.
 5. Add a line under *Unreleased* in [CHANGELOG.md](CHANGELOG.md).
 6. Fill in the pull request template.
 

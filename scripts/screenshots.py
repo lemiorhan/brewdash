@@ -1,53 +1,45 @@
-"""Takes the README screenshots from the demo (scripts/demo.py), in light and dark.
+"""Takes the README and Pages screenshots of the Mac app on the demo (scripts/demo.py), in light and dark.
 
-    .venv/bin/python scripts/screenshots.py
+    python3 scripts/screenshots.py
 
-Needs Playwright for Python (see CONTRIBUTING.md). Writes docs/screenshots/*.png.
+Builds scripts/screenshots.swift with swiftc, which opens the app's own window on the demo and saves it with
+screencapture, so the app you run this from needs Screen Recording (System Settings > Privacy & Security).
+Writes docs/screenshots/*.png at the scale of the sharpest screen that holds a 1440x900 window.
 """
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
 import demo  # noqa: E402
 
-OUT = Path(__file__).resolve().parent.parent / "docs" / "screenshots"
-
-# (file name, tab, row to open in the detail panel or None)
-SHOTS = [
-    ("overview", "overview", None),
-    ("packages", "requested", "f:node"),
-    ("security", "security", None),
-    ("services", "services", None),
-    ("apps", "apps", None),
-    ("shell", "shell", None),
-]
+OUT = ROOT / "docs" / "screenshots"
 
 
 def main():
-    OUT.mkdir(parents=True, exist_ok=True)
-    server, url, _ = demo.start()
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch()
-        for scheme in ("light", "dark"):
-            page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=2, color_scheme=scheme)
-            page.goto(url)
-            page.wait_for_selector('.tile:has-text("on disk") .tile-value:not(:text-is("…"))')
-            page.wait_for_selector('.att:has-text("apps without a real signature")')
-            for name, tab, row in SHOTS:
-                page.click(f'nav button[data-tab="{tab}"]')
-                if row:
-                    page.click(f'tr.row[data-id="{row}"] td:nth-child(2)')
-                    page.wait_for_selector("#graph canvas")
-                    page.wait_for_timeout(600)
-                page.screenshot(path=str(OUT / f"{name}-{scheme}.png"))
-                if row:
-                    page.click("#detail [data-close]")
-            page.close()
-        browser.close()
-    server.shutdown()
-    print("\n".join(sorted(str(p.relative_to(OUT.parent.parent)) for p in OUT.glob("*.png"))))
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = Path(tmp) / "screenshots"
+        subprocess.run(["swiftc", "-swift-version", "5", "-parse-as-library", "-D", "BREWDASH_CHECK", "-o", str(exe),
+                        str(ROOT / "scripts" / "screenshots.swift"), str(ROOT / "macos" / "brewdash.swift"),
+                        str(ROOT / "macos" / "policy.swift")], check=True)
+        shots = Path(tmp) / "shots"
+        server, url, _ = demo.start()
+        try:
+            subprocess.run([str(exe), url, str(shots)], check=True)
+        finally:
+            server.shutdown()
+        # A run that stops halfway leaves docs/screenshots as it was, not half old and half new.
+        made = sorted(p.name for p in shots.glob("*.png"))
+        missing = sorted({p.name for p in OUT.glob("*.png")} - set(made))
+        if not made or missing:
+            sys.exit("screenshots: the harness did not write " + (", ".join(missing) or "any image"))
+        OUT.mkdir(parents=True, exist_ok=True)
+        for name in made:
+            shutil.copyfile(shots / name, OUT / name)
+    print("\n".join(str((OUT / name).relative_to(ROOT)) for name in made))
 
 
 if __name__ == "__main__":

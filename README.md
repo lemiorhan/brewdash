@@ -316,7 +316,7 @@ python3 -m unittest discover -s tests          # unit tests; the UI tests skip w
 python3 -m venv .venv && .venv/bin/pip install playwright
 .venv/bin/playwright install chromium          # only if no matching Chromium is cached
 .venv/bin/python -m unittest discover -s tests # unit and browser tests
-.venv/bin/python scripts/screenshots.py        # regenerate docs/screenshots from the demo
+python3 scripts/screenshots.py                 # regenerate docs/screenshots: the Mac app on the demo
 .venv/bin/python scripts/icons.py              # regenerate the favicons and app icon from web/logo.svg
 ```
 
