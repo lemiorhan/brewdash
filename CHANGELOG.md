@@ -14,8 +14,8 @@ numbered releases yet; changes are listed by date.
 - The Mac app signed with a Developer ID and notarized by Apple, published on
   GitHub Releases as `brewdash-macos.zip`: a `vX.Y.Z` tag gets its own
   release, any other ref replaces the one `beta` prerelease. Install it with
-  `brew install --cask lemiorhan/brewdash/brewdash`, or download it from the
-  latest release.
+  `brew trust lemiorhan/brewdash && brew install --cask lemiorhan/brewdash/brewdash`,
+  or download it from the latest release.
 - The app updates itself from those releases. Stable is the latest release
   and beta the `beta` prerelease, no longer every commit on master. The Mac
   app installs the release's ZIP once Gatekeeper accepts it, instead of being

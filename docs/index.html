@@ -324,7 +324,7 @@ footer a { color: var(--muted); }
 
     <div class="install" id="install">
       <div class="command">
-        <pre id="install-command" tabindex="0">brew install --cask lemiorhan/brewdash/brewdash</pre>
+        <pre id="install-command" tabindex="0">brew trust lemiorhan/brewdash &amp;&amp; brew install --cask lemiorhan/brewdash/brewdash</pre>
         <button type="button" class="copy" data-copy="install-command" data-i18n="copy.button">Copy</button>
       </div>
       <p class="install-note" data-i18n="install.note">Paste it in Terminal. Homebrew puts brewdash in your Applications folder.</p>

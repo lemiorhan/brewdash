@@ -1245,7 +1245,7 @@ class ProjectPageInstallTest(unittest.TestCase):
     """docs/index.html, the page that hands out the install command."""
     FILE = Path(brewdash.__file__).resolve().parent / "docs" / "index.html"
     PAGE = FILE.as_uri()
-    COMMAND = "brew install --cask lemiorhan/brewdash/brewdash"
+    COMMAND = "brew trust lemiorhan/brewdash && brew install --cask lemiorhan/brewdash/brewdash"
     ZIP = "https://github.com/lemiorhan/brewdash/releases/latest/download/brewdash-macos.zip"
 
     @classmethod
