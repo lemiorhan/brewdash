@@ -238,7 +238,8 @@ def start(port=0):
     (root / "secure-it").write_text("")
     catalog = ({**brewdash.PLUGIN_CATALOG[0], "exe": str(root / "secure-it")},)
     server, url, _ = brewdash.serve(port=port, open_browser=False, brew=brew, state_dir=str(root / "state"),
-                                    home=str(home), app_dirs=[str(apps)], sysrun=demo_sysrun, catalog=catalog)
+                                    home=str(home), app_dirs=[str(apps)], sysrun=demo_sysrun, catalog=catalog,
+                                    unprotected=lambda path: None)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, url, root
 

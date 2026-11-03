@@ -1,10 +1,12 @@
 import contextlib
 import http.client
+import inspect
 import io
 import json
 import os
 import plistlib
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,7 @@ import time
 import unittest
 import urllib.error
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -654,15 +657,18 @@ def no_listeners_unsigned(argv, timeout=60):
 EMPTY_HOME = tempfile.TemporaryDirectory()
 
 
+SCAN_REFUSED = "only a plugin from brewdash's catalog, installed where only root can change it, can be scanned"
+
+
 def catalog(exe="/nonexistent/secure-it", **kw):
-    """brewdash's catalog with secure-it's executable moved, so no test asks whether this Mac has secure-it."""
-    return ({**brewdash.PLUGIN_CATALOG[0], "exe": exe, **kw},)
+    """brewdash's catalog with secure-it's paths moved, so a test that passes it does not read this Mac's secure-it."""
+    return ({**brewdash.PLUGIN_CATALOG[0], "exe": exe, "protect": (exe,), **kw},)
 
 
 def store_of(*args, **kw):
     """A Store that reads none of this Mac's home, apps, processes, signatures or installed plugins."""
     return brewdash.Store(*args, **{"sysrun": no_listeners_unsigned, "home": EMPTY_HOME.name, "app_dirs": [],
-                                    "catalog": catalog(), **kw})
+                                    "catalog": catalog(), "unprotected": lambda path: None, **kw})
 
 
 def wait_for(fn, timeout=10):
@@ -1739,10 +1745,12 @@ class ServerWiringTest(unittest.TestCase):
         (root / "state" / "plugins" / "acme.json").write_text(json.dumps({"schema": 1, "name": "Acme", "report": "~/acme.json"}))
         (root / "home" / "acme.json").write_text(json.dumps(report(alert(subject={"kind": "tap", "name": "me/tap"}))))
         brew = FakeBrew(cache=str(root / "cache"), casks=APP_CASKS)
+        cls.unprotected = {}
         cls.server, url, cls.token = brewdash.serve(port=0, open_browser=False, brew=brew, state_dir=str(root / "state"),
                                                     home=str(root / "home"), app_dirs=[str(root / "Applications")],
                                                     sysrun=no_listeners_unsigned,
-                                                    catalog=catalog(str(root / "secure-it"), report="~/scans/secure-it.json"))
+                                                    catalog=catalog(str(root / "secure-it"), report="~/scans/secure-it.json"),
+                                                    unprotected=cls.unprotected.get)
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 
@@ -1878,10 +1886,25 @@ class ServerWiringTest(unittest.TestCase):
             for path in ("/api/plan", "/api/jobs"):
                 with self.subTest(path=path):
                     status, data = self.request("POST", path, {"action": "plugin_scan", "plugin": "secure-it"})
-                    self.assertEqual((status, json.loads(data)["error"]),
-                                     (400, "only an installed plugin from brewdash's catalog can be scanned"))
+                    self.assertEqual((status, json.loads(data)["error"]), (400, SCAN_REFUSED))
         finally:
             exe.write_text("")
+
+    def test_a_catalog_plugin_someone_other_than_root_can_change_is_not_offered_or_scanned_over_http(self):
+        wait_for(self.state)
+        exe = str(Path(self.tmp.name) / "secure-it")
+        self.unprotected[exe] = "/usr/local/bin"
+        try:
+            [secure_it] = [p for p in self.state()["plugins"] if p["id"] == "secure-it"]
+            self.assertEqual((secure_it["installed"], secure_it["scan"], secure_it["unprotected"]), (True, False, "/usr/local/bin"))
+            for path in ("/api/plan", "/api/jobs"):
+                with self.subTest(path=path):
+                    status, data = self.request("POST", path, {"action": "plugin_scan", "plugin": "secure-it"})
+                    self.assertEqual((status, json.loads(data)["error"]), (400, SCAN_REFUSED))
+        finally:
+            self.unprotected.clear()
+        status, data = self.request("POST", "/api/plan", {"action": "plugin_scan", "plugin": "secure-it"})
+        self.assertEqual(status, 200)
 
     def test_export_list_add_download_and_remove(self):
         wait_for(self.apps_ready)
@@ -2073,13 +2096,32 @@ class PluginCatalogTest(unittest.TestCase):
     def test_the_catalog_offers_a_scan_only_when_its_executable_is_there(self):
         exe = self.root / "secure-it"
         [missing] = self.plugins(catalog=catalog(str(exe)))
+        [nowhere_safe] = self.plugins(catalog=catalog(str(exe)), unprotected={str(exe): "/usr/local/bin"}.get)
+        self.assertEqual((nowhere_safe["installed"], nowhere_safe["scan"], nowhere_safe["unprotected"], missing["unprotected"]),
+                         (False, False, "/usr/local/bin", None))
         exe.write_text("")
         [there] = self.plugins(catalog=catalog(str(exe)))
         self.assertEqual((missing["installed"], missing["scan"], there["installed"], there["scan"]), (False, False, True, True))
+        [guarded] = self.plugins(catalog=catalog(str(exe)), unprotected={str(exe): "/usr/local/bin"}.get)
+        self.assertEqual((guarded["installed"], guarded["scan"], guarded["unprotected"], there["unprotected"]),
+                         (True, False, "/usr/local/bin", None))
         self.assertEqual((there["source"], there["install"], there["update"]),
                          ("catalog", brewdash.PLUGIN_CATALOG[0]["install"], brewdash.PLUGIN_CATALOG[0]["update"]))
         self.assertEqual((there["about"], there["about_msg"]),
                          (brewdash.MESSAGES["plugin.about.secure_it"], ["plugin.about.secure_it", {}]))
+
+    def test_every_path_the_catalog_names_is_checked(self):
+        exe = self.root / "secure-it"
+        exe.write_text("")
+        lib, state = str(self.root / "libexec"), str(self.root / "state")
+        cat, unprotected = catalog(str(exe), protect=(str(exe), lib, state)), {lib: lib + "/cli.py"}.get
+        [plugin] = self.plugins(catalog=cat, unprotected=unprotected)
+        store = store_of(FakeBrew(), catalog=cat, unprotected=unprotected)
+        self.assertEqual((plugin["scan"], plugin["unprotected"], store.scannable()), (False, lib + "/cli.py", {}))
+
+    def test_secure_it_is_checked_where_its_installer_puts_it(self):
+        self.assertEqual(brewdash.PLUGIN_CATALOG[0]["protect"],
+                         ("/usr/local/bin/secure-it", "/usr/local/libexec/secure-it", "/Library/Application Support/secure-it"))
 
     def test_a_manifest_adds_a_plugin_after_the_catalog_and_only_https_is_a_link(self):
         self.manifest("zeta", {"schema": 1, "name": " Zeta ", "report": "~/zeta/out.json", "homepage": "https://zeta.example"})
@@ -2130,6 +2172,98 @@ class PluginCatalogTest(unittest.TestCase):
         self.assertEqual([p["id"] for p in store_of(FakeBrew()).plugins()], ["secure-it"])
 
 
+class FirstUnprotectedTest(unittest.TestCase):
+    EXE = "/usr/local/bin/secure-it"
+    LIB = "/usr/local/libexec/secure-it"
+    MOD = "/usr/local/libexec/secure-it/secure_it/cli.py"
+
+    @staticmethod
+    def entry(kind=stat.S_IFDIR, mode=0o755, uid=0, gid=0):
+        return SimpleNamespace(st_mode=kind | mode, st_uid=uid, st_gid=gid)
+
+    def first_unprotected(self, changed, path=EXE, unlistable=None):
+        file = self.entry(stat.S_IFREG)
+        tree = {"/": self.entry(), "/usr": self.entry(), "/usr/local": self.entry(), "/usr/local/bin": self.entry(),
+                self.EXE: file, "/usr/local/libexec": self.entry(), self.LIB: self.entry(),
+                self.LIB + "/secure-it.py": file, self.LIB + "/secure_it": self.entry(), self.MOD: file, **changed}
+
+        def lstat(p):
+            if tree[str(p)] is None:
+                raise FileNotFoundError(p)
+            if tree[str(p)] == "denied":
+                raise PermissionError(p)
+            return tree[str(p)]
+
+        def listdir(p):
+            if str(p) in (unlistable or {}):
+                raise unlistable[str(p)](p)
+            return [Path(k).name for k, v in tree.items() if v is not None and k != "/" and str(Path(k).parent) == str(p)]
+        return brewdash.first_unprotected(path, lstat, listdir)
+
+    def test_in_a_folder_names_the_first_path_inside_or_above_it_that_someone_other_than_root_can_change(self):
+        lib, mod, pkg, folder = self.LIB, self.MOD, self.LIB + "/secure_it", self.entry
+
+        def file(**kw):
+            return self.entry(stat.S_IFREG, **kw)
+        cases = [
+            ("root owns all of it", {}, None, None),
+            ("the user owns a module two folders down", {mod: file(uid=501)}, None, mod),
+            ("wheel can write a module", {mod: file(mode=0o775)}, None, mod),
+            ("wheel can write a folder inside", {pkg: folder(mode=0o775)}, None, pkg),
+            ("wheel can write the folder itself", {lib: folder(mode=0o775)}, None, lib),
+            ("a symlink inside", {lib + "/secure-it.py": self.entry(stat.S_IFLNK)}, None, lib + "/secure-it.py"),
+            ("a pipe inside", {pkg + "/fifo": self.entry(stat.S_IFIFO, mode=0o644)}, None, pkg + "/fifo"),
+            ("the user owns a folder above", {"/usr/local/libexec": folder(uid=501)}, None, "/usr/local/libexec"),
+            ("only root can open the folder, so it is not walked", {lib: folder(mode=0o700), mod: file(uid=501)},
+             {lib: PermissionError}, None),
+            ("others may enter the folder but not list it", {lib: folder(mode=0o711)}, {lib: PermissionError}, lib),
+            ("its group may read the folder", {lib: folder(mode=0o750, gid=20)}, {lib: PermissionError}, lib),
+            ("anyone may read the folder", {lib: folder(mode=0o705)}, {lib: PermissionError}, lib),
+            ("the folder cannot be listed for another reason", {lib: folder(mode=0o700)}, {lib: OSError}, lib),
+            ("not installed yet", {lib: None}, None, None),
+        ]
+        for label, changed, unlistable, expected in cases:
+            with self.subTest(label):
+                self.assertEqual(self.first_unprotected(changed, self.LIB, unlistable), expected)
+
+    def test_the_real_lstat_and_listdir_are_the_defaults(self):
+        defaults = inspect.signature(brewdash.first_unprotected).parameters
+        self.assertEqual((defaults["lstat"].default, defaults["listdir"].default), (os.lstat, os.listdir))
+
+    def test_names_the_first_path_from_the_file_up_that_someone_other_than_root_can_change(self):
+        exe, folder = self.EXE, self.entry
+
+        def file(**kw):
+            return self.entry(stat.S_IFREG, **kw)
+        cases = [
+            ("root owns all of it", {}, None),
+            ("the user owns the file", {exe: file(uid=501)}, exe),
+            ("Homebrew on an Intel Mac owns the folder", {"/usr/local/bin": folder(uid=501)}, "/usr/local/bin"),
+            ("the walk reaches /", {"/": folder(uid=501)}, "/"),
+            ("the file is group-writable, even by wheel", {exe: file(mode=0o775)}, exe),
+            ("anyone can write the file", {exe: file(mode=0o757)}, exe),
+            ("only wheel, that is root, can write the folder", {"/usr/local": folder(mode=0o775)}, None),
+            ("admin can write the folder", {"/usr/local": folder(mode=0o775, gid=80)}, "/usr/local"),
+            ("anyone can write the folder, sticky or not", {"/usr": folder(mode=0o1777)}, "/usr"),
+            ("the file is a symlink", {exe: self.entry(stat.S_IFLNK)}, exe),
+            ("a folder is a symlink", {"/usr/local": self.entry(stat.S_IFLNK)}, "/usr/local"),
+            ("a device is where the file should be", {exe: self.entry(stat.S_IFCHR)}, exe),
+            ("not installed yet, and only root could put it there", {exe: None, "/usr/local/bin": None}, None),
+            ("not installed yet, on an Intel Mac", {exe: None, "/usr/local/bin": folder(uid=501)}, "/usr/local/bin"),
+            ("a folder cannot be read", {"/usr/local": "denied"}, "/usr/local"),
+            ("the nearest of two is named", {exe: file(uid=501), "/usr/local/bin": folder(uid=501)}, exe),
+        ]
+        for label, changed, expected in cases:
+            with self.subTest(label):
+                self.assertEqual(self.first_unprotected(changed), expected)
+
+    def test_reads_this_macs_files_and_follows_no_symlink(self):
+        with tempfile.NamedTemporaryFile() as mine:
+            self.assertEqual((brewdash.first_unprotected("/usr/bin/true"), brewdash.first_unprotected("/etc/hosts"),
+                              brewdash.first_unprotected(mine.name), brewdash.first_unprotected("/nonexistent/x")),
+                             (None, "/etc", mine.name, None))
+
+
 class PluginScanTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -2156,6 +2290,20 @@ class PluginScanTest(unittest.TestCase):
         self.assertEqual(store.scannable(), {})
         exe.write_text("")
         self.assertEqual(list(store.scannable()), ["secure-it"])
+
+    def test_an_executable_someone_other_than_root_can_change_is_not_scannable(self):
+        exe = self.state / "secure-it"
+        exe.write_text("")
+        store = store_of(FakeBrew(), catalog=catalog(str(exe)), unprotected={str(exe): "/usr/local/bin"}.get)
+        self.assertEqual(store.scannable(), {})
+
+    def test_a_store_and_the_server_check_who_can_change_the_executable_unless_told_otherwise(self):
+        exe = self.state / "secure-it"
+        exe.write_text("")
+        store = brewdash.Store(FakeBrew(), home=EMPTY_HOME.name, app_dirs=[], sysrun=no_listeners_unsigned,
+                               catalog=catalog(str(exe)))
+        self.assertEqual((store.scannable(), store.plugins()[0]["unprotected"]), ({}, str(exe)))
+        self.assertIs(inspect.signature(brewdash.serve).parameters["unprotected"].default, brewdash.first_unprotected)
 
     def run_scan(self, script):
         brew = FakeBrew({("-A",): script})

@@ -308,6 +308,24 @@ scan on its own; it scans when you start a scan.
 Only a plugin in the catalog can be started from brewdash. The command is in
 `brewdash.py`, not in a file anyone else can write.
 
+brewdash also runs it only when root alone can change secure-it's files. The
+catalog names them, the same three paths that secure-it's own integrity check
+covers: `/usr/local/bin/secure-it`, which only hands over to
+`/usr/local/libexec/secure-it`, where secure-it's code is, and
+`/Library/Application Support/secure-it`, where it keeps its state. Each of
+them, everything inside them, and every folder above them must belong to root,
+with no write access for other users, and none of them may be a symlink. A
+folder above may be writable by the `wheel` group, whose only member on macOS
+is root. A folder that gives other users no access at all is not looked into,
+because only root can reach inside. brewdash checks this when it shows the tab
+and again when you start a scan. Otherwise the tab names the path someone else
+can change, and offers no **Scan now**. Before an install, the same check
+covers the folders secure-it would go into. On an Intel Mac, Homebrew gives
+`/usr/local/bin` to your user, so there the tab says secure-it cannot be
+installed safely and shows no install commands. The check does not cover
+`/usr/bin/python3`, which secure-it runs, or the Xcode or Command Line Tools
+Python that it hands over to.
+
 ### Adding a plugin
 
 Put a manifest at `~/.local/state/brewdash/plugins/<id>.json`. The `<id>` is

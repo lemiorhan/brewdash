@@ -10,6 +10,7 @@ import re
 import secrets
 import shlex
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -474,7 +475,7 @@ def plan_job_msg(req, pkgs, apps=None, taps=None, plugins=None):
     if action == "plugin_scan":
         plugin = lookup(plugins, req.get("plugin"))
         if not plugin:
-            raise ValueError("only an installed plugin from brewdash's catalog can be scanned")
+            raise ValueError("only a plugin from brewdash's catalog, installed where only root can change it, can be scanned")
         return msg("plan.plugin_scan", name=plugin["name"]), [list(plugin["scan"])], False
     if action == "untap":
         names = req.get("taps")
@@ -567,6 +568,8 @@ SECURE_IT = "/usr/local/bin/secure-it"
 PLUGIN_CATALOG = (
     {"id": "secure-it", "name": "secure-it", "homepage": "https://github.com/lemiorhan/brewdash-plugin-security",
      "about": "plugin.about.secure_it", "report": "~/secure-it/report.json", "exe": SECURE_IT,
+     # secure-it's paths.py WRAPPER, INSTALL_DIR and STATE_DIR: the wrapper only execs what is in INSTALL_DIR.
+     "protect": (SECURE_IT, "/usr/local/libexec/secure-it", "/Library/Application Support/secure-it"),
      "scan": ["/usr/bin/sudo", "-A", SECURE_IT, "scan", "--exit-zero"],
      "install": ["git clone https://github.com/lemiorhan/brewdash-plugin-security.git",
                  "cd brewdash-plugin-security && sudo ./install.sh"],
@@ -629,19 +632,59 @@ def under_home(path, home):
     return str(Path(home) / path[2:]) if path.startswith("~/") else path
 
 
-def catalog_plugin(entry, home):
+def first_unprotected(path, lstat=os.lstat, listdir=os.listdir):
+    """The first that someone other than root can change of path, everything beneath it when it is a
+    folder, and the folders above it; None when there is none. brewdash runs a catalog plugin with sudo,
+    so whoever can change what root runs, or rename a folder on the way to it, runs their own code as root.
+    The rules follow secure-it's self.integrity check: no symlink, no owner but root, no write for group
+    or others, except that a folder above may be writable by wheel, whose only member on macOS is root.
+    Two are brewdash's own and stricter: only a regular file or a folder passes, and a folder that
+    cannot be listed passes only when it gives group and others no access, so only root can reach inside.
+    A missing path is skipped, so the answer also tells, before an install, whether the place is safe."""
+    def problem(p, above):
+        try:
+            st = lstat(p)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return str(p)
+        is_dir = stat.S_ISDIR(st.st_mode)
+        kind_ok = is_dir or (not above and stat.S_ISREG(st.st_mode))
+        group_writes = st.st_mode & stat.S_IWGRP and not (above and st.st_gid == 0)
+        if st.st_uid != 0 or not kind_ok or st.st_mode & stat.S_IWOTH or group_writes:
+            return str(p)
+        if above or not is_dir:
+            return None
+        try:
+            names = sorted(listdir(p))
+        except PermissionError:
+            return str(p) if st.st_mode & 0o077 else None
+        except OSError:
+            return str(p)
+        return next(filter(None, (problem(p / name, False) for name in names)), None)
+
+    top = Path(path)
+    return problem(top, False) or next(filter(None, (problem(p, True) for p in top.parents)), None)
+
+
+def entry_unprotected(entry, unprotected):
+    return next(filter(None, map(unprotected, entry["protect"])), None)
+
+
+def catalog_plugin(entry, home, unprotected):
     installed = os.path.exists(entry["exe"])
+    problem = entry_unprotected(entry, unprotected)
     about = msg(entry["about"])
     return {"id": entry["id"], "name": entry["name"], "homepage": entry["homepage"], "about": render(about), "about_msg": about,
             "source": "catalog", "path": under_home(entry["report"], home), "error": None, "installed": installed,
-            "scan": installed, "install": entry["install"], "update": entry["update"]}
+            "scan": installed and not problem, "unprotected": problem, "install": entry["install"], "update": entry["update"]}
 
 
 def load_manifest(path, home):
     """A plugin from outside the catalog. Its installer wrote this file into the user's home, so it is as
     untrusted as a report: brewdash reads no command from it, and links only an https homepage."""
     out = {"id": path.stem, "name": path.stem, "homepage": None, "about": None, "about_msg": None, "source": "manifest", "path": None,
-           "error": None, "installed": True, "scan": False, "install": [], "update": []}
+           "error": None, "installed": True, "scan": False, "unprotected": None, "install": [], "update": []}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError) as e:
@@ -796,13 +839,15 @@ class Brew:
 
 
 class Store:
-    def __init__(self, brew, home=None, app_dirs=None, sysrun=run_command, plugins_dir=None, catalog=PLUGIN_CATALOG):
+    def __init__(self, brew, home=None, app_dirs=None, sysrun=run_command, plugins_dir=None, catalog=PLUGIN_CATALOG,
+                 unprotected=first_unprotected):
         self.brew = brew
         self.home = home or str(Path.home())
         self.app_dirs = APP_DIRS if app_dirs is None else app_dirs
         self.sysrun = sysrun
         self.plugins_dir = plugins_dir
         self.catalog = catalog
+        self.unprotected = unprotected
         self._reports = {}
         self.apps = None
         self.shell = None
@@ -967,7 +1012,7 @@ class Store:
     def plugins(self):
         """The catalog's plugins, then the manifests in plugins_dir. Links are made on
         every call, against the packages and taps brewdash has now."""
-        entries = [catalog_plugin(c, self.home) for c in self.catalog]
+        entries = [catalog_plugin(c, self.home, self.unprotected) for c in self.catalog]
         if self.plugins_dir:
             entries += manifests(self.plugins_dir, self.home, {e["id"] for e in entries})
         with self.lock:
@@ -983,7 +1028,7 @@ class Store:
         return out
 
     def scannable(self):
-        return {c["id"]: c for c in self.catalog if os.path.exists(c["exe"])}
+        return {c["id"]: c for c in self.catalog if os.path.exists(c["exe"]) and not entry_unprotected(c, self.unprotected)}
 
     def snapshot(self):
         plugins = self.plugins()
@@ -1650,10 +1695,11 @@ def make_handler(store, runner, brew, token, port_ref, export, updater):
 
 
 def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True, home=None, app_dirs=None,
-          sysrun=run_command, updater=None, catalog=PLUGIN_CATALOG):
+          sysrun=run_command, updater=None, catalog=PLUGIN_CATALOG, unprotected=first_unprotected):
     brew = brew or Brew(askpass=write_askpass(state_dir))
     updater = updater or Updater(state_dir, read_installed())
-    store = Store(brew, home, app_dirs, sysrun, plugins_dir=Path(state_dir) / "plugins", catalog=catalog)
+    store = Store(brew, home, app_dirs, sysrun, plugins_dir=Path(state_dir) / "plugins", catalog=catalog,
+                  unprotected=unprotected)
     runner = Runner(brew, store, state_dir)
     token = secrets.token_urlsafe(24)
     port_ref = [port]

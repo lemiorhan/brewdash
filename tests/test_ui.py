@@ -122,10 +122,11 @@ class UiFixture(unittest.TestCase):
         cls.plugins_dir = root / "state" / "plugins"
         cls.plugins_dir.mkdir(parents=True)
         cls.home = root / "home"
+        cls.unprotected = {}
         cls.server, cls.url, _ = brewdash.serve(port=0, open_browser=False, brew=cls.brew, state_dir=str(root / "state"),
                                                 home=str(root / "home"), app_dirs=[str(root / "Applications")],
                                                 sysrun=ui_sysrun, updater=cls.updater(root / "state"),
-                                                catalog=catalog(str(cls.exe)))
+                                                catalog=catalog(str(cls.exe)), unprotected=cls.unprotected.get)
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.pw = sync_playwright().start()
         cls.browser = cls.pw.chromium.launch()
@@ -878,6 +879,40 @@ class UiSmokeTest(UiFixture):
             self.exe.write_text("")
             self.page.wait_for_selector('#content [data-plugin-scan="secure-it"]')
         finally:
+            self.exe.write_text("")
+            self.cls_report(REPORT)
+        self.page.wait_for_selector("#content .alert")
+
+    def test_a_plugin_someone_other_than_root_can_change_says_why_scan_now_is_off(self):
+        self.tab(SECURE_IT)
+        self.page.wait_for_selector('#content [data-plugin-scan="secure-it"]')
+        self.unprotected[str(self.exe)] = "/usr/local/bin"
+        try:
+            self.page.wait_for_selector('#content .warn:has-text("Scan now is off: secure-it runs as root, '
+                                        'and someone other than root can change /usr/local/bin.")')
+            self.assertEqual(self.page.locator("#content [data-plugin-scan]").count(), 0)
+        finally:
+            self.unprotected.clear()
+        self.page.wait_for_selector('#content [data-plugin-scan="secure-it"]')
+
+    def test_where_the_plugin_cannot_be_installed_safely_the_page_says_so_instead_of_how_to_install_it(self):
+        self.report.unlink()
+        self.exe.unlink()
+        self.unprotected[str(self.exe)] = "/usr/local/bin"
+        try:
+            self.tab(SECURE_IT)
+            self.page.wait_for_selector('#content .warn:has-text("secure-it cannot be installed safely on this Mac. '
+                                        'It runs as root, and its files would go under /usr/local/bin, '
+                                        'which someone other than root can change. '
+                                        'On an Intel Mac, Homebrew gives /usr/local/bin to your user.")')
+            self.assertNotIn("git clone", self.page.inner_text("#content"))
+            self.unprotected[str(self.exe)] = "/Library/Application Support"
+            self.page.wait_for_selector('#content .warn:has-text("would go under /Library/Application Support")')
+            self.assertNotIn("Intel", self.page.inner_text("#content"))
+            self.unprotected.clear()
+            self.page.wait_for_selector('#content pre:has-text("git clone")')
+        finally:
+            self.unprotected.clear()
             self.exe.write_text("")
             self.cls_report(REPORT)
         self.page.wait_for_selector("#content .alert")

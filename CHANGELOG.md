@@ -14,7 +14,10 @@ tagged `vX.Y.Z`; changes from before the first one are listed by date.
   README's "Plugins" section has the manifest and report formats.
 - **Scan now** on the secure-it tab runs `/usr/bin/sudo -A
   /usr/local/bin/secure-it scan --exit-zero` after you confirm. Only a plugin
-  in brewdash's catalog can be started this way.
+  in brewdash's catalog can be started this way, and only when root alone can
+  change secure-it's files and every folder above them. On an Intel Mac, where
+  Homebrew gives `/usr/local/bin` to your user, the tab says secure-it cannot
+  be installed safely.
 
 ### Changed
 - The Security tab is now the secure-it tab. brewdash reads secure-it's

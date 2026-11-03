@@ -603,17 +603,21 @@ function renderPlugin() {
   const p = pluginOf(S.tab);
   const name = esc(p.name);
   const path = `<span class="mono">${esc(p.path || "")}</span>`;
+  const unprotected = `<span class="mono">${esc(p.unprotected || "")}</span>`;
   if (!p.found && !p.installed) {
     const link = p.homepage ? `<a href="${esc(p.homepage)}" target="_blank" rel="noopener">${name}</a>` : name;
+    const intel = /^\/usr\/local(\/|$)/.test(p.unprotected || "") ? ` ${t("plugin.intel_homebrew")}` : "";
+    const how = p.unprotected ? `<div class="warn">${t("plugin.cannot_install", { name, path: unprotected })}${intel}</div>`
+      : `<p>${t("plugin.not_installed_text", { link, path })}</p>${commandLines(p.install)}`;
     $("#content").innerHTML = `<div class="card"><h3>${t("plugin.not_installed", { name })}</h3>
-      ${p.about ? `<p>${tm(p.about_msg, p.about)}</p>` : ""}
-      <p>${t("plugin.not_installed_text", { link, path })}</p>${commandLines(p.install)}</div>`;
+      ${p.about ? `<p>${tm(p.about_msg, p.about)}</p>` : ""}${how}</div>`;
     return;
   }
   const by = (s) => p.alerts.filter((a) => a.severity === s).length;
   const from = !p.path ? "" : p.found ? t("plugin.from", { path, time: esc(p.generated_at || t("sec.unknown_time")) }) : t("plugin.no_report", { name, path });
   $("#content").innerHTML = `
     ${pluginProblem(p)}
+    ${p.unprotected ? `<div class="warn">${t("plugin.unprotected", { name, path: unprotected })}</div>` : ""}
     <div class="btnrow"><p class="muted">${from}
       ${p.homepage ? `<a href="${esc(p.homepage)}" target="_blank" rel="noopener">${t("detail.homepage")}</a>` : ""}
       ${SEVERITIES.map((s) => by(s) ? `<span class="sev-count sev-${s}">${by(s)} ${sevLabel(s)}</span>` : "").join(" ")}</p>
