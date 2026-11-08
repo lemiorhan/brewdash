@@ -49,6 +49,8 @@ tagged `vX.Y.Z`; changes from before the first one are listed by date.
   `brew trust lemiorhan/brewdash`: Homebrew refuses a cask from a tap you have
   not trusted. The README installs with the cask too, and keeps `install.sh`
   for building the app on your Mac.
+- The app no longer fails to open where looking up 127.0.0.1's name in DNS is
+  slow: the server starts without that lookup.
 
 ### Removed
 - The `brewdash.app` that opens the dashboard in your browser, and

@@ -18,6 +18,7 @@ import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import brewdash  # noqa: E402
@@ -1470,6 +1471,24 @@ class AskpassTest(unittest.TestCase):
         server.server_close()
         self.assertEqual(made, [{"askpass": str(self.state / "askpass")}])
         self.assertTrue((self.state / "askpass").exists())
+
+
+class ServeTest(unittest.TestCase):
+    def test_the_server_starts_and_answers_without_asking_dns_for_its_own_name(self):
+        lookup = AssertionError("reverse DNS lookup")
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch("socket.getfqdn", side_effect=lookup), mock.patch("socket.gethostbyaddr", side_effect=lookup):
+            server, url, _ = brewdash.serve(port=0, open_browser=False, brew=FakeBrew(), state_dir=tmp, refresh=False)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            port = server.server_address[1]
+            self.assertEqual(urlparse(url).port, port)
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.request("GET", "/", headers={"Host": f"127.0.0.1:{port}"})
+            r = conn.getresponse()
+            self.assertEqual((r.status, b"brewdash" in r.read()), (200, True))
+            conn.close()
 
 
 SHA_A, SHA_B, SHA_C, SHA_D = ("a" * 40, "b" * 40, "c" * 40, "d" * 40)

@@ -10,6 +10,7 @@ import re
 import secrets
 import shlex
 import shutil
+import socketserver
 import stat
 import subprocess
 import threading
@@ -1865,6 +1866,14 @@ def make_handler(store, runner, brew, token, port_ref, export, updater):
     return Handler
 
 
+class LocalServer(ThreadingHTTPServer):
+    def server_bind(self):
+        """HTTPServer's own server_bind asks DNS for 127.0.0.1's name to fill server_name, which nothing here reads.
+        Where reverse DNS is slow that lookup took 35 s and kept the server past launch.sh's wait."""
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=True, home=None, app_dirs=None,
           sysrun=run_command, updater=None, catalog=PLUGIN_CATALOG, unprotected=first_unprotected):
     brew = brew or Brew(askpass=write_askpass(state_dir))
@@ -1874,8 +1883,8 @@ def serve(port=0, open_browser=True, brew=None, state_dir=STATE_DIR, refresh=Tru
     runner = Runner(brew, store, state_dir)
     token = secrets.token_urlsafe(24)
     port_ref = [port]
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, runner, brew, token, port_ref,
-                                                                   ExportList(state_dir), updater))
+    server = LocalServer(("127.0.0.1", port), make_handler(store, runner, brew, token, port_ref,
+                                                           ExportList(state_dir), updater))
     port_ref[0] = server.server_address[1]
     if refresh:
         threading.Thread(target=store.refresh, daemon=True).start()
