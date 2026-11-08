@@ -97,6 +97,7 @@ async function loadList(change) {
 
 const pluginsKey = (snap) => JSON.stringify(snap?.plugins || []);
 const appsList = () => S.snap?.apps?.apps || [];
+const canAdopt = (a) => a.source === "manual" && a.cask && !a.newer_than_cask;
 const portsOf = (id) => S.snap?.ports?.by_id?.[id] || [];
 const linkedTo = (list, type, key) => list.filter((a) => a.link?.type === type && (a.link.id === key || a.link.name === key));
 
@@ -523,12 +524,13 @@ function renderApps() {
   const env = S.snap?.apps;
   if (!env) { $("#content").innerHTML = `<p class="loading">${t("apps.scanning")}</p>`; return; }
   const apps = appsList();
-  const adoptable = apps.filter((a) => a.source === "manual" && a.cask);
+  const adoptable = apps.filter(canAdopt);
   const row = (a) => {
     const sel = a.source === "brew" ? a.brew_id : a.cask ? a.id : null;
     const newer = a.cask_version && a.version && !a.cask_version.startsWith(a.version) ? ` <span class="muted">${t("apps.cask_has", { version: esc(a.cask_version.split(",")[0]) })}</span>` : "";
     const action = a.source === "brew" ? `<span class="chip" data-goto="${esc(a.brew_id)}"${descTitle(S.pkgs.get(a.brew_id))}>${esc(S.pkgs.get(a.brew_id)?.name || a.brew_id)}</span> <span class="muted">${t("apps.in_casks")}</span>`
       : a.source === "appstore" ? `<span class="muted">${t("apps.via_store")}</span>`
+      : a.newer_than_cask ? `<span class="mono">${esc(a.cask)}</span> <span class="muted">${t("apps.newer_than_cask", { version: esc(a.cask_version.split(",")[0]) })}</span>`
       : a.cask ? `<button class="small accent" data-adopt="${esc(a.id)}">${t("apps.adopt")}</button> <span class="mono">${esc(a.cask)}</span>${newer}${a.auto_updates ? ` <span class="muted">${t("apps.auto_updates")}</span>` : ""}`
       : `<button class="small" data-findcask="${esc(a.name)}">${t("apps.search_cask")}</button>`;
     // Apple's own apps ship with macOS, and trashing brewdash would pull the app out from under itself.
@@ -882,7 +884,7 @@ function attention() {
   const orphans = all.filter((p) => p.orphan);
   add("info", orphans.length, t("att.orphans", { n: orphans.length }), t("att.orphans_text"), "health");
   add("info", !!h?.cleanup_reclaim, t("att.cleanup"), t("att.cleanup_text", { size: h?.cleanup_reclaim }), "health");
-  const adoptable = appsList().filter((a) => a.source === "manual" && a.cask);
+  const adoptable = appsList().filter(canAdopt);
   add("info", adoptable.length, t("att.adoptable", { n: adoptable.length }), t("att.adoptable_text", { names: names(adoptable) }), "apps");
   const unusedTaps = (S.snap?.model?.taps || []).filter((tp) => !tp.official && !tp.installed.length);
   add("info", unusedTaps.length, t("att.unused_taps", { n: unusedTaps.length }), t("att.unused_taps_text", { names: names(unusedTaps) }), "taps");
@@ -1260,10 +1262,12 @@ async function confirmAction(req, { impact = false, breaks = [] } = {}) {
   } catch (e) { alertBox(e.message); return; }
   const names = (req.targets || []).map((id) => S.pkgs.get(id)?.name || id);
   const blocked = req.action === "uninstall" && imp?.blockers.length > 0;
+  const adopted = req.action === "adopt" && appsList().find((a) => a.id === req.app);
   $("#modal-card").innerHTML = `
     <h2>${esc(tm(plan.title_msg, plan.title))}</h2>
     ${names.length > 1 ? `<div class="chips">${names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div>` : ""}
     <p class="muted">${t("modal.will_run")}</p><pre>${plan.commands.map(esc).join("\n")}</pre>
+    ${adopted ? `<div class="warn">${t("modal.quit_app", { name: esc(adopted.name) })}</div>` : ""}
     ${blocked ? `<div class="warn">${t("modal.blocked", { n: imp.blockers.length })}<div class="chips" style="margin-top:6px">${imp.blockers.map(chip).join("")}</div>
       <div class="btnrow" style="margin-top:8px"><button class="small" id="add-blockers">${t("modal.uninstall_too")}</button><button class="small danger" id="force-uninstall">${t("modal.force")}</button></div></div>` : ""}
     ${breaks.length ? `<div class="warn"><b>${t("modal.breaks")}</b><div class="chips" style="margin-top:6px">${breaks.map(chip).join("")}</div></div>` : ""}

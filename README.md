@@ -50,8 +50,8 @@ line of its **Needs attention** list opens the page where you can act on it.
   the [brewdash security plugin](https://github.com/lemiorhan/brewdash-plugin-security), one tab each, shown next
   to the packages, taps and shell files they concern (see below).
 - **Apps**: every app in `/Applications` and `~/Applications`, how it got there
-  (brew, App Store or by hand), and who signed it. **Bring into brew** lets
-  Homebrew take over an app you installed by hand. Uninstall a brew app, or
+  (brew, App Store or by hand), and who signed it. **Bring into brew** replaces
+  an app you installed by hand with the same app from its cask. Uninstall a brew app, or
   move an app you installed by hand to the Trash.
 - **Shell**: the `PATH` lines and tools set up in your shell startup files.
   brewdash flags entries that are missing, duplicated, pinned to one version,
@@ -247,8 +247,27 @@ brew bundle --file=Brewfile
 
 An app installed by hand is matched to a cask only when the cask's name is the
 app's name and `brew info --cask` shows that the cask installs exactly that
-`.app`. **Bring into brew** runs `brew install --cask --adopt <cask>`; from
-then on the app upgrades and uninstalls like any other cask.
+`.app`. **Bring into brew** renames the app in its own folder to
+`.<name>.app.brewdash-backup`, then runs
+`brew install --cask --appdir=<that folder> <cask>`. The backup is removed only
+when brew succeeds and an app is at the old path again: brew also succeeds
+without installing anything for a cask it counts as installed. Otherwise the
+backup is renamed back; when brew left something at the app's path, brewdash
+overwrites nothing and the job log says where the backup is. The confirm
+dialog asks you to quit the app first. From then on the app upgrades and
+uninstalls like any other cask. `brew install --adopt` is not used: unless the
+cask updates itself, it refuses an app whose version is not the cask's. Only
+the `.app` moves; the app's settings in `~/Library` are not touched.
+
+An app whose version is newer than its cask's is not offered, and the server
+refuses it: brew would install the older version over it, and settings the
+newer version already converted may not open in the older one. Versions are
+compared by their leading numbers (`2.10` is newer than `2.9`, `1.0` equals
+`1`, the cask's `,build` part is ignored). An app with no version or one its
+Info.plist stores as a number, or a cask that is always `latest`, counts as
+not newer. The check uses the last app
+scan, so an app that updated itself after it is not seen until the next
+refresh.
 
 The signature column comes from `codesign -dv`: who signed the app, as the app
 declares it. brewdash does not verify the signature and does not check

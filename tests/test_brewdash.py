@@ -6,6 +6,7 @@ import json
 import os
 import plistlib
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -603,6 +604,7 @@ class AuthorizeTest(unittest.TestCase):
 
 class FakeBrew:
     """Answers brew calls from the fixtures; `scripts` maps a command prefix to a shell script for popen."""
+    exe = "/fake/bin/brew"
 
     def __init__(self, scripts=None, prefix="/nonexistent", info=INFO, raises=(), cache="/nonexistent", casks=()):
         self.scripts = scripts or {}
@@ -960,7 +962,8 @@ UNSIGNED = {"kind": "unsigned", "signer": None}
 
 def app_record(path, name, source, version=None, bundle_id=None, brew_id=None, **extra):
     rec = {"id": "a:" + path, "name": name, "path": path, "version": version, "bundle_id": bundle_id,
-           "source": source, "brew_id": brew_id, "cask": None, "cask_version": None, "auto_updates": None}
+           "source": source, "brew_id": brew_id, "cask": None, "cask_version": None, "auto_updates": None,
+           "newer_than_cask": None}
     rec.update(extra)
     return rec
 
@@ -1042,7 +1045,35 @@ class AppsTest(unittest.TestCase):
         # gui is in cask_names but not in APP_CASKS: asking brew about it would set an error.
         self.assertEqual(wait_for(lambda: store.apps), {"error": None, "names_known": True, "apps": [
             app_record(gui, "Gui", "brew", "2.0", brew_id="c:gui", signature=UNSIGNED),
-            app_record(zed, "Zed", "manual", "0.8", cask="zed", cask_version="0.9", auto_updates=True, signature=UNSIGNED)]})
+            app_record(zed, "Zed", "manual", "0.8", cask="zed", cask_version="0.9", auto_updates=True,
+                       newer_than_cask=False, signature=UNSIGNED)]})
+
+    def test_an_app_newer_than_its_cask_is_marked_and_cannot_be_adopted(self):
+        cache = Path(self.dir) / "cache"
+        (cache / "api").mkdir(parents=True)
+        (cache / "api" / "cask_names.txt").write_text("zed\n")
+        apps_dir = Path(self.dir) / "Applications"
+        zed = make_app(apps_dir, "Zed", "0.10")
+        store = store_of(FakeBrew(cache=str(cache), casks=APP_CASKS), home=self.dir, app_dirs=[str(apps_dir)])
+        store.refresh()
+        [app] = wait_for(lambda: store.apps)["apps"]
+        self.assertEqual((app["version"], app["cask_version"], app["newer_than_cask"]), ("0.10", "0.9", True))
+        with self.assertRaisesRegex(ValueError, r"^Zed 0\.10 is newer than the zed cask's 0\.9; brew would install"):
+            brewdash.plan_job({"action": "adopt", "app": "a:" + zed}, by_id(), store.apps_by_id())
+
+
+class NewerThanCaskTest(unittest.TestCase):
+    def test_only_a_version_read_on_both_sides_and_higher_on_the_apps_is_newer(self):
+        for version, cask_version, newer in (
+                ("0.9", "0.8", True), ("0.8", "0.9", False), ("0.8", "0.8", False),
+                ("1.10", "1.9", True), ("1.9", "1.10", False),
+                ("2.0", "1.9,42", True), ("1.9", "1.9,42", False), ("1.9.1", "1.9,42", True),
+                ("1.0", "1", False), ("1", "1.0.0", False), ("1.0.1", "1", True),
+                ("6.2.11 (43613)", "6.2.11.43613", False), ("2.0 beta", "1.9", True),
+                (None, "1.0", False), ("1.0", "latest", False), ("beta", "1.0", False), ("1.0", None, False),
+                (5, "1.0", False), (5.1, "1.0", False)):
+            with self.subTest(version=version, cask_version=cask_version):
+                self.assertIs(brewdash.newer_than_cask(version, cask_version), newer)
 
 
 class ShellTest(unittest.TestCase):
@@ -1212,14 +1243,18 @@ class ExportListTest(unittest.TestCase):
 
 
 class AdoptTest(unittest.TestCase):
-    APPS = {"a:/A/Zed.app": {"name": "Zed", "source": "manual", "cask": "zed"},
-            "a:/A/Shop.app": {"name": "Shop", "source": "appstore", "cask": "shop"},
-            "a:/A/Bare.app": {"name": "Bare", "source": "manual", "cask": None},
-            "a:/A/Gui.app": {"name": "Gui", "source": "brew", "cask": None}}
+    APPS = {"a:/A/Zed.app": {"name": "Zed", "path": "/A/Zed.app", "source": "manual", "cask": "zed",
+                             "newer_than_cask": False},
+            "a:/A/Ahead.app": {"name": "Ahead", "path": "/A/Ahead.app", "source": "manual", "cask": "ahead",
+                               "version": "2.0", "cask_version": "1.9,42", "newer_than_cask": True},
+            "a:/A/Shop.app": {"name": "Shop", "path": "/A/Shop.app", "source": "appstore", "cask": "shop"},
+            "a:/A/Bare.app": {"name": "Bare", "path": "/A/Bare.app", "source": "manual", "cask": None},
+            "a:/A/Gui.app": {"name": "Gui", "path": "/A/Gui.app", "source": "brew", "cask": None}}
 
-    def test_adopt_hands_a_verified_hand_installed_app_to_brew(self):
-        self.assertEqual(brewdash.plan_job({"action": "adopt", "app": "a:/A/Zed.app"}, by_id(), self.APPS),
-                         ("bring Zed into brew", [["brew", "install", "--cask", "--adopt", "zed"]], False))
+    def test_adopt_hands_the_app_its_backup_brew_and_the_cask_to_the_script_as_arguments(self):
+        self.assertEqual(brewdash.plan_job({"action": "adopt", "app": "a:/A/Zed.app"}, by_id(), self.APPS, brew="/b/brew"),
+                         ("bring Zed into brew", [["/bin/sh", "-c", brewdash.ADOPT_SCRIPT, "sh",
+                                                   "/A/Zed.app", "/A/.Zed.app.brewdash-backup", "/b/brew", "zed"]], False))
 
     def test_adopt_refuses_app_store_unmatched_brew_and_unknown_apps(self):
         for app in ("a:/A/Shop.app", "a:/A/Bare.app", "a:/A/Gui.app", "a:/A/Nope.app", None, ["a:/A/Zed.app"]):
@@ -1227,6 +1262,119 @@ class AdoptTest(unittest.TestCase):
                 brewdash.plan_job({"action": "adopt", "app": app}, by_id(), self.APPS)
         with self.assertRaises(ValueError):
             brewdash.plan_job({"action": "adopt", "app": "a:/A/Zed.app"}, by_id())
+
+    def test_adopt_refuses_an_app_newer_than_its_cask_and_names_both_versions(self):
+        with self.assertRaisesRegex(ValueError, r"^Ahead 2\.0 is newer than the ahead cask's 1\.9,42; brew would install "
+                                                r"the older one over it$"):
+            brewdash.plan_job({"action": "adopt", "app": "a:/A/Ahead.app"}, by_id(), self.APPS)
+
+
+class AdoptScriptTest(unittest.TestCase):
+    """Runs the planned adopt command for real, on a hand-installed app in a temporary folder, with a fake brew
+    that logs its arguments and then runs `body`."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = self.home = Path(tmp.name)
+        # Some tests take write access away to make a step fail; the cleanup cannot remove the folder without it.
+        self.addCleanup(lambda: [p.chmod(0o755) for p in (root, *root.rglob("*")) if p.is_dir()])
+        self.app = root / "Applications" / "Zed.app"
+        (self.app / "Contents").mkdir(parents=True)
+        (self.app / "Contents" / "version").write_text("0.8")
+        self.backup = root / "Applications" / ".Zed.app.brewdash-backup"
+        self.library = root / "Library"
+        (self.library / "Preferences").mkdir(parents=True)
+        (self.library / "Preferences" / "dev.zed.plist").write_text("theme=dark")
+        (self.library / "Application Support" / "Zed").mkdir(parents=True)
+        (self.library / "Application Support" / "Zed" / "settings.json").write_text('{"font": 14}')
+        self.settings = self.files(self.library)
+        self.brew, self.calls, self.seen_home = root / "brew", root / "calls", root / "seen_home"
+
+    @staticmethod
+    def files(folder):
+        return {str(p.relative_to(folder)): p.read_text() for p in sorted(folder.rglob("*")) if p.is_file()}
+
+    def adopt(self, body, brew=None):
+        self.brew.write_text(f'#!/bin/sh\necho "$@" >> "{self.calls}"\necho "$HOME" > "{self.seen_home}"\n{body}\n')
+        self.brew.chmod(0o755)
+        apps = {"a:z": {"name": "Zed", "path": str(self.app), "source": "manual", "cask": "zed", "newer_than_cask": False}}
+        _, [cmd], _ = brewdash.plan_job({"action": "adopt", "app": "a:z"}, by_id(), apps, brew=str(brew or self.brew))
+        # Only a write made through $HOME or ~ is kept off the real home by this; one to an absolute path is not.
+        p = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                           env={**os.environ, "HOME": str(self.home)})
+        self.assertEqual(self.files(self.library), self.settings)
+        return p.returncode, p.stdout
+
+    def test_brew_installs_with_the_app_out_of_the_way_and_the_backup_is_removed(self):
+        install = f'test -e "{self.app}" && exit 9\nmkdir -p "{self.app}/Contents" && echo 0.9 > "{self.app}/Contents/version"'
+        rc, _ = self.adopt(install)
+        self.assertEqual((rc, self.calls.read_text()), (0, f"install --cask --appdir={self.app.parent} zed\n"))
+        self.assertEqual(self.seen_home.read_text(), f"{self.home}\n")
+        self.assertEqual(self.files(self.app), {"Contents/version": "0.9\n"})
+        self.assertFalse(self.backup.exists())
+
+    def test_the_app_comes_back_when_brew_succeeds_without_putting_an_app_at_its_path(self):
+        rc, out = self.adopt("exit 0")
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.files(self.app), {"Contents/version": "0.8"})
+        self.assertFalse(self.backup.exists())
+        self.assertIn(f"brew put no app at {self.app}", out)
+
+    def test_an_app_that_cannot_be_moved_aside_stops_it_before_brew_runs(self):
+        self.app.parent.chmod(0o555)
+        rc, _ = self.adopt("exit 0")
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.calls.exists())
+        self.assertEqual(self.files(self.app), {"Contents/version": "0.8"})
+        self.assertFalse(self.backup.exists())
+
+    def test_a_backup_that_cannot_be_removed_fails_the_job_and_says_where_it_is(self):
+        rc, out = self.adopt(f'mkdir -p "{self.app}/Contents" && echo 0.9 > "{self.app}/Contents/version"\n'
+                             f'chmod 555 "{self.backup}/Contents"')
+        self.assertEqual(rc, 1)
+        self.assertEqual((self.files(self.app), self.files(self.backup)), ({"Contents/version": "0.9\n"}, {"Contents/version": "0.8"}))
+        self.assertIn(f"zed is installed, but {self.backup} could not be removed", out)
+
+    def test_a_restore_that_fails_says_where_the_backup_is(self):
+        rc, out = self.adopt(f'chmod 555 "{self.app.parent}"; exit 3')
+        self.assertEqual(rc, 3)
+        self.assertFalse(self.app.exists())
+        self.assertEqual(self.files(self.backup), {"Contents/version": "0.8"})
+        self.assertIn(f"could not put your app back; it is at {self.backup}", out)
+
+    def test_the_app_comes_back_when_brew_fails(self):
+        rc, out = self.adopt("exit 3")
+        self.assertEqual((rc, self.calls.read_text()), (3, f"install --cask --appdir={self.app.parent} zed\n"))
+        self.assertEqual(self.files(self.app), {"Contents/version": "0.8"})
+        self.assertFalse(self.backup.exists())
+        self.assertIn("is back where it was", out)
+
+    def test_the_app_comes_back_when_brew_cannot_be_started(self):
+        rc, _ = self.adopt("", brew=self.brew.with_name("missing-brew"))
+        self.assertEqual(rc, 127)
+        self.assertEqual(self.files(self.app), {"Contents/version": "0.8"})
+        self.assertFalse(self.backup.exists())
+
+    def test_what_a_failed_brew_left_in_place_is_not_overwritten_and_the_backup_is_kept(self):
+        rc, out = self.adopt(f'mkdir -p "{self.app}/Contents" && echo half > "{self.app}/Contents/version"; exit 4')
+        self.assertEqual(rc, 4)
+        self.assertEqual((self.files(self.app), self.files(self.backup)), ({"Contents/version": "half\n"}, {"Contents/version": "0.8"}))
+        self.assertIn(f"your app is kept at {self.backup}", out)
+
+    def test_a_kept_backup_is_not_listed_as_an_app(self):
+        self.adopt(f'mkdir -p "{self.app}/Contents"; exit 4')
+        self.assertEqual(len(list(self.app.parent.iterdir())), 2)
+        self.assertEqual([a["path"] for a in brewdash.scan_apps([str(self.app.parent)], {})], [str(self.app)])
+
+    def test_a_backup_left_from_an_earlier_try_stops_it_before_anything_moves(self):
+        self.backup.mkdir()
+        (self.backup / "earlier").write_text("x")
+        rc, out = self.adopt("exit 0")
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.calls.exists())
+        self.assertEqual((self.files(self.app), self.files(self.backup)), ({"Contents/version": "0.8"}, {"earlier": "x"}))
+        self.assertIn("move it away first", out)
 
 
 class TrashTest(unittest.TestCase):
@@ -1736,8 +1884,9 @@ class ServerWiringTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
         (root / "cache" / "api").mkdir(parents=True)
-        (root / "cache" / "api" / "cask_names.txt").write_text("zed\n")
+        (root / "cache" / "api" / "cask_names.txt").write_text("zed\nmy-tool\n")
         cls.zed = make_app(root / "Applications", "Zed", "0.8")
+        cls.tool = make_app(root / "Applications", "My Tool", "3.2")
         (root / "home").mkdir()
         (root / "home" / ".zshrc").write_text("export PATH=/nope/bin:$PATH\n")
         (root / "secure-it").write_text("")
@@ -1845,13 +1994,29 @@ class ServerWiringTest(unittest.TestCase):
 
     def test_state_carries_apps_and_shell_from_the_given_home_and_app_dirs(self):
         snap = wait_for(self.apps_ready)
-        self.assertEqual([(a["name"], a["cask"]) for a in snap["apps"]["apps"]], [("Zed", "zed")])
+        self.assertEqual([(a["name"], a["cask"], a["newer_than_cask"]) for a in snap["apps"]["apps"]],
+                         [("My Tool", "me/tap/my-tool", True), ("Zed", "zed", False)])
         self.assertEqual([(e["raw"], e["issue"]) for e in snap["shell"]["path"]], [("/nope/bin", "missing")])
 
-    def test_adopt_is_planned_from_the_scanned_apps(self):
+    def test_adopt_is_planned_and_submitted_from_the_scanned_apps_with_the_servers_brew(self):
         wait_for(self.apps_ready)
-        status, data = self.request("POST", "/api/plan", {"action": "adopt", "app": "a:" + self.zed})
-        self.assertEqual((status, json.loads(data)["commands"]), (200, ["brew install --cask --adopt zed"]))
+        backup = str(Path(self.zed).with_name(".Zed.app.brewdash-backup"))
+        cmd = shlex.join(["/bin/sh", "-c", brewdash.ADOPT_SCRIPT, "sh", self.zed, backup, "/fake/bin/brew", "zed"])
+        for path, code in (("/api/plan", 200), ("/api/jobs", 201)):
+            with self.subTest(path=path):
+                status, data = self.request("POST", path, {"action": "adopt", "app": "a:" + self.zed})
+                self.assertEqual((status, json.loads(data)["commands"]), (code, [cmd]))
+
+    def test_an_app_newer_than_its_cask_is_neither_planned_nor_submitted(self):
+        wait_for(self.apps_ready)
+        job_ids = lambda: [j["id"] for j in json.loads(self.request("GET", "/api/jobs")[1])]
+        jobs = job_ids()
+        for path in ("/api/plan", "/api/jobs"):
+            with self.subTest(path=path):
+                status, data = self.request("POST", path, {"action": "adopt", "app": "a:" + self.tool})
+                self.assertEqual((status, json.loads(data)), (400, {"error": "My Tool 3.2 is newer than the me/tap/my-tool "
+                                                                             "cask's 3.1,42; brew would install the older one over it"}))
+        self.assertEqual(job_ids(), jobs)
 
     def test_state_lists_the_catalog_then_the_manifests_in_the_state_dir(self):
         snap = wait_for(self.state)
@@ -2116,12 +2281,16 @@ class PluginReportTest(unittest.TestCase):
             with self.subTest(subject=bad):
                 self.assertIsNone(clean(bad))
 
-    def test_a_value_too_deep_to_encode_cannot_break_the_state(self):
-        deep = "[" * 120000 + "]" * 120000
+    def test_no_deeply_nested_value_survives_into_the_state(self):
+        # Shallow enough for every Python's json decoder: 3.9's gives up near a thousand levels, and the report is
+        # then unreadable instead of cleaned, so a deeper value would test nothing there.
+        deep = "[" * 500 + "]" * 500
         r = self.load(json.dumps(report(finding(subject={"kind": "path", "path": "X"}, detail={"en": "X"}, links="X"),
                                         scan={"facts": "X"}, history=[{"started_at": "t", "alerts": "X"}])).replace('"X"', deep))
+        nesting = lambda v: 1 + max(map(nesting, v.values() if isinstance(v, dict) else v), default=0) \
+            if isinstance(v, (dict, list)) else 0
         self.assertEqual(len(r["report"]["findings"]), 1)
-        json.dumps(r)
+        self.assertLess(nesting(r), 20)
 
     def test_alerts_link_to_where_brewdash_can_act(self):
         pkgs, taps = {"f:redis"}, {"me/tap"}

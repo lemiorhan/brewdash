@@ -34,6 +34,15 @@ tagged `vX.Y.Z`; changes from before the first one are listed by date.
   `~/secure-it/report.json`, the tab says to update it and gives the commands.
 - The Mac app's window is at least 620 points tall, so the built-in tabs
   still fit in the sidebar with the plugin group's line.
+- **Bring into brew** sets the app aside as a backup, then runs
+  `brew install --cask` into the app's own folder, instead of
+  `brew install --cask --adopt`, which refuses an app whose version is not the
+  cask's unless the cask updates itself. The backup is removed only when brew
+  succeeds and an app is back at its path; otherwise it is put back, unless
+  brew left something there. The confirm dialog asks you to quit the app first.
+  Only the `.app` moves; the app's settings in `~/Library` are not touched.
+  An app the last scan saw as newer than its cask, by the leading numbers of
+  both versions, is not offered and is refused.
 
 ### Fixed
 - The install command trusts brewdash's tap first, with

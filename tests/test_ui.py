@@ -464,11 +464,34 @@ class UiSmokeTest(UiFixture):
         self.assertIn("updates through the App Store", rows["Shop"].inner_text())
         self.assertEqual(rows["Bare"].locator("button:not([data-trash])").inner_text(), "Search cask")
         self.assertEqual(self.page.locator("[data-adopt]").count(), 1)
+        argv = ["/bin/sh", "-c", brewdash.ADOPT_SCRIPT, "sh", self.zed,
+                str(Path(self.zed).with_name(".Zed.app.brewdash-backup")), "/fake/bin/brew", "zed"]
         rows["Zed"].locator("[data-adopt]").click()
         self.page.wait_for_selector("#modal-card pre")
-        self.assertEqual(self.page.inner_text("#modal-card pre"), "brew install --cask --adopt zed")
+        self.assertEqual(self.page.inner_text("#modal-card pre"), shlex.join(argv))
+        self.assertEqual(self.page.inner_text("#modal-card .warn"),
+                         "Quit Zed before you run this. Its .app is renamed and replaced while brew installs, and an "
+                         "open copy can crash and lose unsaved work. Its settings in ~/Library are not touched.")
         self.page.click("#m-ok")
-        wait_for(lambda: ["brew", "install", "--cask", "--adopt", "zed"] in self.brew.popened)
+        wait_for(lambda: argv in self.brew.popened)
+
+    def test_an_app_newer_than_its_cask_is_listed_but_not_offered_or_counted_for_adopt(self):
+        self.page.evaluate("""() => {
+            S.snap.apps.apps.push({ ...S.snap.apps.apps.find((a) => a.cask === 'zed'), id: 'a:ahead', name: 'Ahead',
+                                    version: '1.0', cask_version: '0.9,42', newer_than_cask: true });
+            renderView();
+        }""")
+        names = self.page.inner_text(".att:has-text('apps brew could manage')")
+        self.assertIn("Zed", names)
+        self.assertNotIn("Ahead", names)
+        self.page.click('nav button[data-tab="apps"]')
+        self.page.wait_for_selector("[data-adopt]")
+        rows = {r.locator("td.name").inner_text(): r for r in self.page.locator("#view tbody tr").all()}
+        self.assertEqual(rows["Ahead"].locator("[data-adopt]").count(), 0)
+        self.assertIn("zed your copy is newer than the cask's 0.9, so it is not brought into brew: brew would install "
+                      "the older one over it", rows["Ahead"].inner_text())
+        self.assertEqual(rows["Zed"].locator("[data-adopt]").count(), 1)
+        self.assertIn("1 app(s) installed by hand have a matching brew cask", self.page.inner_text("#view"))
 
     def test_apps_tab_moves_an_app_brew_did_not_install_to_the_trash(self):
         self.page.click('nav button[data-tab="apps"]')

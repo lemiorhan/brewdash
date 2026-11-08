@@ -463,13 +463,38 @@ def lookup(table, key):
     return (table or {}).get(key) if isinstance(key, str) else None
 
 
-def plan_job(req, pkgs, apps=None, taps=None, plugins=None):
+# brew install --adopt refuses an app whose version is not the cask's (moved.rb checks it unless the cask
+# updates itself), so the app steps aside for the install: renamed in its own folder, which needs no copy, to a
+# name the app scan's *.app does not match. brew installs into that folder, and brew keeps --appdir for later
+# upgrades. The backup is removed only when brew succeeded AND an app is at the old path: brew exits 0 without
+# installing a cask it counts as installed already. Otherwise the backup goes back, unless brew left something
+# there. Only the .app moves; the script itself touches nothing under ~/Library. The paths, brew and the cask
+# are arguments, so none of them is ever parsed as shell.
+ADOPT_SCRIPT = """\
+app=$1 backup=$2 brew=$3 cask=$4
+if [ -e "$backup" ]; then echo "brewdash: $backup is there from an earlier try; move it away first"; exit 1; fi
+mv "$app" "$backup" || exit 1
+"$brew" install --cask "--appdir=${app%/*}" "$cask"
+rc=$?
+if [ "$rc" -eq 0 ] && [ -e "$app" ]; then
+  rm -rf "$backup" || { echo "brewdash: $cask is installed, but $backup could not be removed"; exit 1; }
+  exit 0
+fi
+if [ "$rc" -eq 0 ]; then echo "brewdash: brew put no app at $app; $cask may be installed somewhere else"; rc=1; fi
+if [ -e "$app" ]; then echo "brewdash: brew left $app behind; your app is kept at $backup"; exit "$rc"; fi
+mv "$backup" "$app" || { echo "brewdash: could not put your app back; it is at $backup"; exit "$rc"; }
+echo "brewdash: $app is back where it was"
+exit "$rc"
+"""
+
+
+def plan_job(req, pkgs, apps=None, taps=None, plugins=None, brew="brew"):
     """Turn an API request into (title, [argv...], snapshot?). Raises ValueError on bad input."""
-    title, cmds, snap = plan_job_msg(req, pkgs, apps, taps, plugins)
+    title, cmds, snap = plan_job_msg(req, pkgs, apps, taps, plugins, brew)
     return render(title), cmds, snap
 
 
-def plan_job_msg(req, pkgs, apps=None, taps=None, plugins=None):
+def plan_job_msg(req, pkgs, apps=None, taps=None, plugins=None, brew="brew"):
     """plan_job with the title as a message."""
     action = req.get("action")
     if action == "plugin_scan":
@@ -486,7 +511,13 @@ def plan_job_msg(req, pkgs, apps=None, taps=None, plugins=None):
         app = lookup(apps, req.get("app"))
         if not app or app["source"] != "manual" or not app["cask"]:
             raise ValueError("only an app with a verified cask, installed outside brew and the App Store, can be adopted")
-        return msg("plan.adopt", name=app["name"]), [["brew", "install", "--cask", "--adopt", app["cask"]]], False
+        if app["newer_than_cask"]:
+            raise ValueError(f"{app['name']} {app['version']} is newer than the {app['cask']} cask's "
+                             f"{app['cask_version']}; brew would install the older one over it")
+        path = Path(app["path"])
+        backup = str(path.with_name(f".{path.name}.brewdash-backup"))
+        return (msg("plan.adopt", name=app["name"]),
+                [["/bin/sh", "-c", ADOPT_SCRIPT, "sh", app["path"], backup, brew, app["cask"]]], False)
     if action == "trash":
         app = lookup(apps, req.get("app"))
         # A cask's app goes through brew uninstall, or brew keeps a record of an app that is gone.
@@ -1319,8 +1350,27 @@ def scan_apps(dirs, brew_paths):
             apps.append({"id": "a:" + path, "name": app.stem, "path": path,
                          "version": plist.get("CFBundleShortVersionString"), "bundle_id": plist.get("CFBundleIdentifier"),
                          "source": source, "brew_id": brew_paths.get(path), "cask": None, "cask_version": None,
-                         "auto_updates": None})
+                         "auto_updates": None, "newer_than_cask": None})
     return apps
+
+
+def _release_key(version):
+    """'2.10.0 (456)' -> (2, 10) and the cask's '3.1,42' -> (3, 1): 1.0 and 1 are one version. None when it is not a
+    string that starts with a number: the cask's 'latest', or an Info.plist that stores the version as a number."""
+    m = re.match(r"\d+(?:\.\d+)*", version if isinstance(version, str) else "")
+    if not m:
+        return None
+    parts = [int(p) for p in m.group().split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def newer_than_cask(version, cask_version):
+    """Only a version read on both sides counts: an app with no version, or a cask that is always 'latest', is not
+    newer."""
+    app, cask = _release_key(version), _release_key(cask_version)
+    return app is not None and cask is not None and app > cask
 
 
 def match_casks(apps, cask_names, brew):
@@ -1336,7 +1386,8 @@ def match_casks(apps, cask_names, brew):
                      if isinstance(v, str)}
         for app in wanted.get(c["token"], []):
             if app["name"] + ".app" in artifacts:
-                app.update(cask=c["full_token"], cask_version=c.get("version"), auto_updates=c.get("auto_updates"))
+                app.update(cask=c["full_token"], cask_version=c.get("version"), auto_updates=c.get("auto_updates"),
+                           newer_than_cask=newer_than_cask(app["version"], c.get("version")))
 
 
 # ---------- shell setup ----------
@@ -1775,12 +1826,12 @@ def make_handler(store, runner, brew, token, port_ref, export, updater):
                     return self._send(200, removal_impact(pkgs, check_targets(body.get("targets"), pkgs)))
                 if path == "/api/plan":
                     title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id(), store.tap_names(),
-                                                     store.scannable())
+                                                     store.scannable(), brew.exe)
                     return self._send(200, {"title": render(title), "title_msg": title,
                                             "commands": [shlex.join(c) for c in cmds], "snapshot": snap})
                 if path == "/api/jobs":
                     title, cmds, snap = plan_job_msg(body, store.by_id(), store.apps_by_id(), store.tap_names(),
-                                                     store.scannable())
+                                                     store.scannable(), brew.exe)
                     return self._send(201, runner.submit(render(title), cmds, snap, title))
                 if path == "/api/list":
                     if body.get("op") == "add":
