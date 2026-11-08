@@ -178,46 +178,55 @@ class LaunchScriptWithTheRealServerTest(unittest.TestCase):
         self.assertFalse(self.opened.exists())
 
     def test_diagnose_how_the_real_server_starts(self):
-        """CI diagnosis only: starts the real server the way launch.sh does, once with this test's env and once
-        with the runner's, and reports when the URL came, what the process did, and its threads if it hung."""
+        """CI diagnosis only: times the name lookups HTTPServer.server_bind makes, then starts the real server the
+        way launch.sh does with every thread's stack dumped each 3 s until its URL comes."""
         root = Path(self.env["HOME"])
         python = root / "bin" / "python3"
+        env = {**self.env, "PATH": f"{root / 'bin'}:/usr/bin:/bin"}
+        probe = ("import socket, time\n"
+                 "for label, fn in [('gethostname', socket.gethostname),\n"
+                 "                  ('getfqdn(127.0.0.1)', lambda: socket.getfqdn('127.0.0.1')),\n"
+                 "                  ('gethostbyaddr(127.0.0.1)', lambda: socket.gethostbyaddr('127.0.0.1')),\n"
+                 "                  ('getfqdn()', socket.getfqdn)]:\n"
+                 "    t = time.monotonic()\n"
+                 "    try:\n"
+                 "        r = fn()\n"
+                 "    except Exception as e:\n"
+                 "        r = repr(e)\n"
+                 "    print(f'[probe] {label}: {time.monotonic() - t:.2f}s -> {r}', flush=True)\n")
+        try:
+            probed = subprocess.run([str(python), "-c", probe], env=env, capture_output=True, text=True, timeout=180)
+            probe_report = probed.stdout + probed.stderr
+        except subprocess.TimeoutExpired as e:
+            probe_report = f"[probe] timed out after 180s: {e.stdout!r}"
         app = subprocess.Popen(["sleep", "300"])
         self.addCleanup(app.wait)
         self.addCleanup(app.kill)
-        envs = {"minimal": {**self.env, "PATH": f"{root / 'bin'}:/usr/bin:/bin"},
-                "runner": {**os.environ, "HOME": self.env["HOME"], "XDG_STATE_HOME": self.env["XDG_STATE_HOME"]}}
-        reports, failed = [], []
-        for name, env in envs.items():
-            log = root / f"diag-{name}.log"
-            start = time.monotonic()
-            with open(log, "w") as out:
-                server = subprocess.Popen([str(python), str(self.server), "--no-browser", "--parent", str(app.pid)],
-                                          env={**env, "PYTHONFAULTHANDLER": "1"}, stdin=subprocess.DEVNULL,
-                                          stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
-            url_after = None
-            while time.monotonic() - start < 60 and server.poll() is None:
-                if "http://127.0.0.1:" in log.read_text(errors="replace"):
-                    url_after = round(time.monotonic() - start, 2)
-                    break
-                time.sleep(0.1)
-            state = "running" if server.poll() is None else f"exited rc={server.returncode}"
-            if url_after is None and server.poll() is None:
-                server.send_signal(signal.SIGABRT)
-                try:
-                    server.wait(15)
-                except subprocess.TimeoutExpired:
-                    pass
-            if server.poll() is None:
-                server.kill()
-                server.wait()
-            reports.append(f"[diag {name}] python={os.path.realpath(python)} url_after={url_after} state={state} "
-                           f"elapsed={time.monotonic() - start:.1f}s\n{log.read_text(errors='replace')[-6000:]}")
-            if url_after is None:
-                failed.append(name)
-        report = "\n".join(reports)
+        wrapper = ("import faulthandler, runpy, sys\n"
+                   "faulthandler.dump_traceback_later(3, repeat=True)\n"
+                   "sys.argv = sys.argv[1:]\n"
+                   "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+        log = root / "diag-server.log"
+        start = time.monotonic()
+        with open(log, "w") as out:
+            server = subprocess.Popen([str(python), "-c", wrapper, str(self.server), "--no-browser",
+                                       "--parent", str(app.pid)], env=env, stdin=subprocess.DEVNULL,
+                                      stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+        url_after = None
+        while time.monotonic() - start < 60 and server.poll() is None:
+            if "http://127.0.0.1:" in log.read_text(errors="replace"):
+                url_after = round(time.monotonic() - start, 2)
+                break
+            time.sleep(0.1)
+        state = "running" if server.poll() is None else f"exited rc={server.returncode}"
+        if server.poll() is None:
+            server.kill()
+            server.wait()
+        text = log.read_text(errors="replace")
+        report = (f"{probe_report}[diag server] python={os.path.realpath(python)} url_after={url_after} "
+                  f"state={state}\n{text[:12000]}\n[diag server] ...last part:\n{text[-4000:]}")
         print(report, file=sys.stderr)
-        self.assertEqual(failed, [], report)
+        self.assertIsNotNone(url_after, report)
 
 
 @unittest.skipUnless(sys.platform == "darwin" and shutil.which("swiftc"), "the Mac app is built with swiftc")
