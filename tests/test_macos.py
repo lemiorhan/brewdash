@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -175,6 +176,48 @@ class LaunchScriptWithTheRealServerTest(unittest.TestCase):
         app.wait()
         wait_for(lambda: not servers_of(self.server))
         self.assertFalse(self.opened.exists())
+
+    def test_diagnose_how_the_real_server_starts(self):
+        """CI diagnosis only: starts the real server the way launch.sh does, once with this test's env and once
+        with the runner's, and reports when the URL came, what the process did, and its threads if it hung."""
+        root = Path(self.env["HOME"])
+        python = root / "bin" / "python3"
+        app = subprocess.Popen(["sleep", "300"])
+        self.addCleanup(app.wait)
+        self.addCleanup(app.kill)
+        envs = {"minimal": {**self.env, "PATH": f"{root / 'bin'}:/usr/bin:/bin"},
+                "runner": {**os.environ, "HOME": self.env["HOME"], "XDG_STATE_HOME": self.env["XDG_STATE_HOME"]}}
+        reports, failed = [], []
+        for name, env in envs.items():
+            log = root / f"diag-{name}.log"
+            start = time.monotonic()
+            with open(log, "w") as out:
+                server = subprocess.Popen([str(python), str(self.server), "--no-browser", "--parent", str(app.pid)],
+                                          env={**env, "PYTHONFAULTHANDLER": "1"}, stdin=subprocess.DEVNULL,
+                                          stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+            url_after = None
+            while time.monotonic() - start < 60 and server.poll() is None:
+                if "http://127.0.0.1:" in log.read_text(errors="replace"):
+                    url_after = round(time.monotonic() - start, 2)
+                    break
+                time.sleep(0.1)
+            state = "running" if server.poll() is None else f"exited rc={server.returncode}"
+            if url_after is None and server.poll() is None:
+                server.send_signal(signal.SIGABRT)
+                try:
+                    server.wait(15)
+                except subprocess.TimeoutExpired:
+                    pass
+            if server.poll() is None:
+                server.kill()
+                server.wait()
+            reports.append(f"[diag {name}] python={os.path.realpath(python)} url_after={url_after} state={state} "
+                           f"elapsed={time.monotonic() - start:.1f}s\n{log.read_text(errors='replace')[-6000:]}")
+            if url_after is None:
+                failed.append(name)
+        report = "\n".join(reports)
+        print(report, file=sys.stderr)
+        self.assertEqual(failed, [], report)
 
 
 @unittest.skipUnless(sys.platform == "darwin" and shutil.which("swiftc"), "the Mac app is built with swiftc")
